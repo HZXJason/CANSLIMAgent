@@ -1,0 +1,28 @@
+services:
+  postgres:
+    image: postgres:15
+    container_name: alphalens-postgres
+    environment:
+      POSTGRES_USER: alphalens
+      POSTGRES_PASSWORD: alphalens
+      POSTGRES_DB: alphalens
+    ports:
+      - "5432:5432"
+    volumes:
+      - alphalens_pg_data:/var/lib/postgresql/data
+
+  sidecar:
+    build: ./sidecar
+    ports:
+      - "127.0.0.1:8765:8765"
+    env_file:
+      - ./sidecar/.env
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8765/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+volumes:
+  alphalens_pg_data:
