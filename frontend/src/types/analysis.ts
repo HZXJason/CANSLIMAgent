@@ -166,6 +166,7 @@ export interface SymbolAnalysisState {
   };
   aiStatus: AIStatus;
   thoughtLines: ThoughtLine[];
+  liveNarration: string;
   reportContent: string;
   aiProgress: AIAgentProgress[];
   aiResults: AIAgentResult[];

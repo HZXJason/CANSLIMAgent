@@ -2,13 +2,15 @@ import asyncio
 import copy
 import json
 import os
+from queue import Empty, Queue
 from datetime import date
-from typing import Any, Iterable
+from typing import Any, AsyncIterator, Iterable
 
 import uvicorn
 from dotenv import load_dotenv
 from fastapi import FastAPI
 from fastapi.responses import StreamingResponse
+from langchain_core.callbacks import BaseCallbackHandler
 from pydantic import BaseModel, Field
 
 load_dotenv()
@@ -52,6 +54,30 @@ REPORT_FIELDS = [
     ("final_trade_decision", "PortfolioManager"),
 ]
 
+AGENT_DISPLAY_NAMES = {
+    "FundamentalsAnalyst": "基本面分析师",
+    "SentimentAnalyst": "情绪分析师",
+    "NewsAnalyst": "新闻分析师",
+    "TechnicalAnalyst": "技术分析师",
+    "ResearchTeam": "研究团队",
+    "Trader": "交易员",
+    "RiskManagement": "风险管理团队",
+    "PortfolioManager": "投资组合经理",
+}
+
+WAITING_NARRATION = [
+    ("AnalysisAgent", "我已经接到分析任务，正在启动多智能体研究流程。\n"),
+    ("DataCollector", "正在收集行情、基本面、新闻和情绪数据；这个阶段可能会慢一些。\n"),
+    ("AnalysisAgent", "分析仍在进行，我会持续更新进度，避免页面长时间空白。\n"),
+    ("ResearchTeam", "各个分析师会先形成独立观点，随后进入多空辩论和风控评估。\n"),
+    ("PortfolioManager", "最终会汇总成操作建议，并保留可写回 N 标签的完整分析摘要。\n"),
+]
+
+REPORT_DELTA_CHARS = int(os.getenv("AI_REPORT_DELTA_CHARS", "3"))
+REPORT_DELTA_DELAY = float(os.getenv("AI_REPORT_DELTA_DELAY", "0.012"))
+NARRATION_DELTA_DELAY = float(os.getenv("AI_NARRATION_DELTA_DELAY", "0.02"))
+NARRATION_INTERVAL_SECONDS = float(os.getenv("AI_NARRATION_INTERVAL_SECONDS", "2.5"))
+
 LLM_API_ENV = {
     "anthropic": "ANTHROPIC_API_KEY",
     "openai": "OPENAI_API_KEY",
@@ -64,6 +90,83 @@ LLM_API_ENV = {
 def sse(event: str, data: dict[str, Any]) -> str:
     payload = json.dumps(data, ensure_ascii=False)
     return f"event: {event}\ndata: {payload}\n\n"
+
+
+def text_chunks(value: str, chunk_size: int) -> Iterable[str]:
+    size = max(1, chunk_size)
+    for index in range(0, len(value), size):
+        yield value[index : index + size]
+
+
+async def stream_delta(
+    event: str,
+    content: str,
+    metadata: dict[str, Any] | None = None,
+    *,
+    chunk_size: int = 1,
+    delay: float = 0.0,
+) -> AsyncIterator[str]:
+    base = metadata or {}
+    for chunk in text_chunks(content, chunk_size):
+        yield sse(event, {**base, "content": chunk})
+        if delay > 0:
+            await asyncio.sleep(delay)
+
+
+def content_to_text(content: Any) -> str:
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        texts: list[str] = []
+        for item in content:
+            if isinstance(item, str):
+                texts.append(item)
+            elif isinstance(item, dict):
+                texts.append(str(item.get("text") or item.get("content") or ""))
+        return "\n".join(text for text in texts if text)
+    return str(content or "")
+
+
+def response_to_text(response: Any) -> str:
+    chunks: list[str] = []
+    for generation_group in getattr(response, "generations", []) or []:
+        if not generation_group:
+            continue
+        generation = generation_group[0]
+        message = getattr(generation, "message", None)
+        if message is not None:
+            text = content_to_text(getattr(message, "content", ""))
+        else:
+            text = content_to_text(getattr(generation, "text", ""))
+        if text.strip():
+            chunks.append(text.strip())
+    return "\n\n".join(chunks)
+
+
+class StreamingCallback(BaseCallbackHandler):
+    def __init__(self, output_queue: Queue[str]) -> None:
+        self.output_queue = output_queue
+
+    def on_llm_end(self, response: Any, **_: Any) -> None:
+        text = response_to_text(response)
+        if text:
+            self.output_queue.put(text)
+
+
+async def drain_model_output(output_queue: Queue[str]) -> AsyncIterator[str]:
+    while True:
+        try:
+            content = output_queue.get_nowait()
+        except Empty:
+            return
+        async for event in stream_delta(
+            "narration_delta",
+            "\n\n" + content + "\n",
+            {"agent": "Model"},
+            chunk_size=REPORT_DELTA_CHARS,
+            delay=REPORT_DELTA_DELAY,
+        ):
+            yield event
 
 
 def selected_analysts(request: AnalysisRequest) -> tuple[str, ...]:
@@ -92,7 +195,7 @@ def apply_request_api_keys(request: AnalysisRequest) -> None:
         os.environ["OPENAI_COMPATIBLE_API_KEY"] = gateway_key
 
 
-def configured_graph(request: AnalysisRequest):
+def configured_graph(request: AnalysisRequest, callbacks: list[Any] | None = None):
     apply_request_api_keys(request)
 
     from tradingagents.default_config import DEFAULT_CONFIG
@@ -113,11 +216,12 @@ def configured_graph(request: AnalysisRequest):
         selected_analysts=selected_analysts(request),
         debug=False,
         config=config,
+        callbacks=callbacks,
     )
 
 
-def run_analysis(request: AnalysisRequest) -> tuple[dict[str, Any], Any]:
-    graph = configured_graph(request)
+def run_analysis(request: AnalysisRequest, callbacks: list[Any] | None = None) -> tuple[dict[str, Any], Any]:
+    graph = configured_graph(request, callbacks=callbacks)
     state, decision = graph.propagate(request.ticker.strip().upper(), date.today().isoformat())
     return state, decision
 
@@ -136,6 +240,19 @@ def iter_reports(state: dict[str, Any]) -> Iterable[tuple[str, str]]:
         value = get_nested(state, field)
         if value:
             yield agent, str(value)
+
+
+def report_heading(agent: str) -> str:
+    return AGENT_DISPLAY_NAMES.get(agent, agent)
+
+
+def compose_report(state: dict[str, Any]) -> str:
+    sections: list[str] = []
+    for agent, content in iter_reports(state):
+        normalized = content.strip()
+        if normalized:
+            sections.append(f"## {report_heading(agent)}\n\n{normalized}")
+    return "\n\n".join(sections)
 
 
 def normalize_action(decision: Any) -> str:
@@ -182,18 +299,49 @@ async def analysis_events(request: AnalysisRequest):
     ]:
         yield sse("progress", {"agent": agent, "status": "pending", "message": message})
 
+    model_output_queue: Queue[str] = Queue()
+    callbacks = [StreamingCallback(model_output_queue)]
     loop = asyncio.get_running_loop()
-    future = loop.run_in_executor(None, run_analysis, request)
+    future = loop.run_in_executor(None, run_analysis, request, callbacks)
 
     try:
+        narration_index = 0
         while not future.done():
+            emitted_model_output = False
+            async for event in drain_model_output(model_output_queue):
+                emitted_model_output = True
+                yield event
+            if not emitted_model_output:
+                agent, message = WAITING_NARRATION[narration_index % len(WAITING_NARRATION)]
+                narration_index += 1
+                yield sse("progress", {"agent": agent, "status": "running", "message": message.strip()})
+                async for event in stream_delta(
+                    "narration_delta",
+                    message,
+                    {"agent": agent},
+                    chunk_size=1,
+                    delay=NARRATION_DELTA_DELAY,
+                ):
+                    yield event
             yield sse("heartbeat", {})
-            await asyncio.sleep(2)
+            await asyncio.sleep(NARRATION_INTERVAL_SECONDS)
 
         state, decision = await future
-        for agent, content in iter_reports(state):
+        async for event in drain_model_output(model_output_queue):
+            yield event
+        for agent, _ in iter_reports(state):
             yield sse("progress", {"agent": agent, "status": "done", "message": "分析完成"})
-            yield sse("result", {"agent": agent, "content": content})
+
+        report = compose_report(state)
+        if report:
+            yield sse("report_start", {})
+            async for event in stream_delta(
+                "report_delta",
+                report,
+                chunk_size=REPORT_DELTA_CHARS,
+                delay=REPORT_DELTA_DELAY,
+            ):
+                yield event
 
         action = normalize_action(decision)
         summary = str(state.get("final_trade_decision") or decision or "")

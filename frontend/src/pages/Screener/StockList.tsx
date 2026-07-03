@@ -1,4 +1,4 @@
-import { BarChart3, SearchX } from 'lucide-react';
+import { BadgeCheck, BarChart3, SearchX } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { Badge } from '../../components/ui/badge';
 import { Card } from '../../components/ui/card';
@@ -40,6 +40,19 @@ function LabelBadge({ label }: { label: LabelResult }) {
   return (
     <Tooltip content={label.key + '：' + labelStatusText(label.status) + '，原始值 ' + formatValue(label)}>
       <Badge variant={label.status === 'pass' ? 'pass' : 'fail'}>{label.key}</Badge>
+    </Tooltip>
+  );
+}
+
+function NLabelBadge() {
+  return (
+    <Tooltip content="N：AI 分析已写回的 New 标签">
+      <Badge variant="pass">
+        <span className="inline-flex items-center gap-1">
+          <BadgeCheck className="h-3 w-3" />
+          N
+        </span>
+      </Badge>
     </Tooltip>
   );
 }
@@ -103,6 +116,7 @@ export default function StockList({ stocks, hasRawData, filtered }: StockListPro
               {tagOrder.map((tag) => (
                 <LabelBadge key={tag} label={stock.labels[tag]} />
               ))}
+              {stock.metrics.n ? <NLabelBadge /> : null}
             </span>
             <span className="text-sm text-slate-400">{marketLabel[stock.market]}</span>
             <span className="text-right text-sm text-slate-300">

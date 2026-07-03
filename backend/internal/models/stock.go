@@ -56,7 +56,7 @@ type ThresholdPreset struct {
 
 func ValidMarket(market string) bool {
 	switch market {
-	case MarketSP500, MarketNASDAQ100:
+	case MarketSP500, MarketNASDAQ100, MarketRUSSELL2000:
 		return true
 	default:
 		return false
@@ -64,15 +64,12 @@ func ValidMarket(market string) bool {
 }
 
 func MarketDisabledReason(market string) string {
-	if market == MarketRUSSELL2000 {
-		return "罗素 2000 暂未开放：当前数据源尚未接入稳定成分股列表"
-	}
 	return "不支持的市场"
 }
 
 func DefaultThresholdPreset() ThresholdPreset {
 	return ThresholdPreset{
-		Name:         "奥尼尔默认",
+		Name:         "欧奈尔默认",
 		IsDefault:    true,
 		CMinGrowth:   25,
 		AMinGrowth:   25,

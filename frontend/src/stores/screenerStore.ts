@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import type { LabelKey, Market, ScanProgress, StockWithMetrics, ThresholdConfig, ThresholdPreset } from '../types';
+import type { Market, ScanProgress, ScreenerFilterKey, StockWithMetrics, ThresholdConfig, ThresholdPreset } from '../types';
 
 export const DEFAULT_THRESHOLDS: ThresholdConfig = {
   c_min_growth: 25,
@@ -24,8 +24,9 @@ interface ScreenerStore {
   thresholdPanelOpen: boolean;
   toggleThresholdPanel: () => void;
   rawStocks: StockWithMetrics[];
-  setRawStocks: (stocks: StockWithMetrics[]) => void;
+  setMarketStocks: (market: Market, stocks: StockWithMetrics[]) => void;
   addStockResult: (stock: StockWithMetrics) => void;
+  clearMarketResults: (market: Market) => void;
   clearResults: () => void;
   scanProgress: ScanProgress;
   setScanProgress: (progress: ScanProgress) => void;
@@ -33,8 +34,12 @@ interface ScreenerStore {
   setDataAsOf: (value: string | null) => void;
   isScanning: boolean;
   setIsScanning: (value: boolean) => void;
-  activeTagFilters: LabelKey[];
-  toggleTagFilter: (tag: LabelKey) => void;
+  activeTagFilters: ScreenerFilterKey[];
+  toggleTagFilter: (tag: ScreenerFilterKey) => void;
+}
+
+function stockKey(stock: StockWithMetrics) {
+  return stock.market + ':' + stock.symbol;
 }
 
 export const useScreenerStore = create<ScreenerStore>((set) => ({
@@ -62,18 +67,32 @@ export const useScreenerStore = create<ScreenerStore>((set) => ({
   thresholdPanelOpen: false,
   toggleThresholdPanel: () => set((state) => ({ thresholdPanelOpen: !state.thresholdPanelOpen })),
   rawStocks: [],
-  setRawStocks: (stocks) =>
-    set({
-      rawStocks: stocks,
-      dataAsOf: stocks[0]?.data_as_of ?? null,
-      scanProgress: { analyzed: stocks.length, total: stocks.length }
+  setMarketStocks: (market, stocks) =>
+    set((state) => {
+      const nextMarketStocks = stocks.filter((stock) => stock.market === market);
+      const otherMarketStocks = state.rawStocks.filter((stock) => stock.market !== market);
+      const merged = new Map<string, StockWithMetrics>();
+      [...otherMarketStocks, ...nextMarketStocks].forEach((stock) => {
+        merged.set(stockKey(stock), stock);
+      });
+      return {
+        rawStocks: Array.from(merged.values()),
+        dataAsOf: nextMarketStocks[0]?.data_as_of ?? null,
+        scanProgress: { analyzed: nextMarketStocks.length, total: nextMarketStocks.length }
+      };
     }),
   addStockResult: (stock) =>
     set((state) => {
-      const next = state.rawStocks.filter((item) => item.symbol !== stock.symbol);
+      const next = state.rawStocks.filter((item) => stockKey(item) !== stockKey(stock));
       next.push(stock);
       return { rawStocks: next, dataAsOf: stock.data_as_of };
     }),
+  clearMarketResults: (market) =>
+    set((state) => ({
+      rawStocks: state.rawStocks.filter((stock) => stock.market !== market),
+      scanProgress: { analyzed: 0, total: 0 },
+      dataAsOf: null
+    })),
   clearResults: () => set({ rawStocks: [], scanProgress: { analyzed: 0, total: 0 }, dataAsOf: null }),
   scanProgress: { analyzed: 0, total: 0 },
   setScanProgress: (progress) => set({ scanProgress: progress }),

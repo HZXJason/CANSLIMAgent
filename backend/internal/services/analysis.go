@@ -25,6 +25,8 @@ const (
 
 type AnalysisService struct {
 	db       *gorm.DB
+	sec      *SECClient
+	stooq    *StooqClient
 	fmp      *FMPClient
 	polygon  *PolygonClient
 	yahoo    *YahooClient
@@ -118,9 +120,11 @@ type candleSourceResult struct {
 	candles []Candle
 }
 
-func NewAnalysisService(database *gorm.DB, fmp *FMPClient, polygon *PolygonClient, yahoo *YahooClient, yfinance *YFinanceClient) *AnalysisService {
+func NewAnalysisService(database *gorm.DB, sec *SECClient, stooq *StooqClient, fmp *FMPClient, polygon *PolygonClient, yahoo *YahooClient, yfinance *YFinanceClient) *AnalysisService {
 	return &AnalysisService{
 		db:       database,
+		sec:      sec,
+		stooq:    stooq,
 		fmp:      fmp,
 		polygon:  polygon,
 		yahoo:    yahoo,
@@ -215,6 +219,20 @@ func (s *AnalysisService) EPSQuarterly(ctx context.Context, symbol string) (EPSD
 	symbol = normalizeSymbol(symbol)
 	failures := []string{}
 
+	if s.sec != nil && s.sec.Configured() {
+		data, err := s.sec.FetchEPSQuarterly(ctx, symbol)
+		if err == nil && len(data.Quarters) > 0 {
+			return data, nil
+		}
+		if err != nil {
+			failures = append(failures, "SEC EDGAR: "+err.Error())
+		} else {
+			failures = append(failures, "SEC EDGAR: EPS data is empty")
+		}
+	} else {
+		failures = append(failures, "SEC EDGAR: not configured")
+	}
+
 	if s.fmp != nil && s.fmp.Configured() {
 		data, err := s.fetchFMPQuarterlyEPS(ctx, symbol)
 		if err == nil && len(data.Quarters) > 0 {
@@ -284,6 +302,20 @@ func (s *AnalysisService) RevenueAnnual(ctx context.Context, symbol string) (Rev
 	symbol = normalizeSymbol(symbol)
 	failures := []string{}
 
+	if s.sec != nil && s.sec.Configured() {
+		data, err := s.sec.FetchRevenueAnnual(ctx, symbol)
+		if err == nil && len(data.Years) > 0 {
+			return data, nil
+		}
+		if err != nil {
+			failures = append(failures, "SEC EDGAR: "+err.Error())
+		} else {
+			failures = append(failures, "SEC EDGAR: annual revenue data is empty")
+		}
+	} else {
+		failures = append(failures, "SEC EDGAR: not configured")
+	}
+
 	if s.fmp != nil && s.fmp.Configured() {
 		data, err := s.fetchFMPAnnualRevenue(ctx, symbol)
 		if err == nil && len(data.Years) > 0 {
@@ -348,6 +380,20 @@ func (s *AnalysisService) GrossMarginQuarterly(ctx context.Context, symbol strin
 	symbol = normalizeSymbol(symbol)
 	failures := []string{}
 
+	if s.sec != nil && s.sec.Configured() {
+		data, err := s.sec.FetchGrossMarginQuarterly(ctx, symbol)
+		if err == nil && len(data.Quarters) > 0 {
+			return data, nil
+		}
+		if err != nil {
+			failures = append(failures, "SEC EDGAR: "+err.Error())
+		} else {
+			failures = append(failures, "SEC EDGAR: gross margin data is empty")
+		}
+	} else {
+		failures = append(failures, "SEC EDGAR: not configured")
+	}
+
 	if s.fmp != nil && s.fmp.Configured() {
 		data, err := s.fetchFMPGrossMarginQuarterly(ctx, symbol)
 		if err == nil && len(data.Quarters) > 0 {
@@ -410,6 +456,13 @@ func (s *AnalysisService) fetchFMPGrossMarginQuarterly(ctx context.Context, symb
 
 func (s *AnalysisService) fetchCandles(ctx context.Context, symbol string, period string) (candleSourceResult, error) {
 	var lastErr error
+	if s.stooq != nil && s.stooq.Configured() {
+		if candles, err := s.stooq.FetchCandles(ctx, symbol, period); err == nil && len(candles) > 0 {
+			return candleSourceResult{source: "Stooq", candles: candles}, nil
+		} else if err != nil {
+			lastErr = err
+		}
+	}
 	if s.polygon != nil && s.polygon.Configured() {
 		if candles, err := s.polygon.FetchCandles(ctx, symbol, period); err == nil && len(candles) > 0 {
 			return candleSourceResult{source: "Polygon.io", candles: candles}, nil

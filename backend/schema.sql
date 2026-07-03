@@ -48,7 +48,7 @@ CREATE TABLE IF NOT EXISTS threshold_presets (
 );
 
 INSERT INTO threshold_presets (name, is_default)
-VALUES ('奥尼尔默认', TRUE)
+VALUES ('欧奈尔默认', TRUE)
 ON CONFLICT (name) DO UPDATE SET is_default = TRUE;
 
 CREATE EXTENSION IF NOT EXISTS pgcrypto;

@@ -58,6 +58,23 @@ function handleStreamEvent(symbol: string, parsed: ParsedSSEEvent) {
 
   if (parsed.event === 'heartbeat') return;
 
+  if (parsed.event === 'narration_delta') {
+    const payload = parseJSON<{ agent: string; content: string }>(parsed.data, { agent: 'AnalysisAgent', content: '' });
+    if (payload.content) store.appendLiveNarration(symbol, payload.content);
+    return;
+  }
+
+  if (parsed.event === 'report_start') {
+    store.clearLiveNarration(symbol);
+    return;
+  }
+
+  if (parsed.event === 'report_delta') {
+    const payload = parseJSON<{ content: string }>(parsed.data, { content: '' });
+    if (payload.content) store.appendReport(symbol, payload.content);
+    return;
+  }
+
   if (parsed.event === 'progress') {
     const payload = parseJSON<{ agent: string; status: 'pending' | 'running' | 'done' | 'error'; message: string }>(parsed.data, {
       agent: 'AnalysisAgent',

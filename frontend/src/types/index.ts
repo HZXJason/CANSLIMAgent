@@ -1,5 +1,6 @@
 export type Market = 'SP500' | 'NASDAQ100' | 'RUSSELL2000';
 export type LabelKey = 'C' | 'A' | 'S' | 'L' | 'I';
+export type ScreenerFilterKey = LabelKey | 'N';
 export type LabelStatus = 'pass' | 'fail' | 'insufficient';
 
 export interface Metric<T> {
@@ -61,6 +62,7 @@ export interface ScanProgress {
 
 export type ScanEvent =
   | { type: 'stock_result'; data: StockWithMetrics }
+  | { type: 'scan_status'; data: { message: string; symbol?: string } }
   | { type: 'scan_progress'; data: ScanProgress }
   | { type: 'scan_complete'; data: ScanProgress }
   | { type: 'scan_error'; data: { message: string } };

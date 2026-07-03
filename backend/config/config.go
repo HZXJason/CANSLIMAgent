@@ -14,6 +14,10 @@ type Config struct {
 	DatabaseURL            string
 	FMPAPIKey              string
 	PolygonAPIKey          string
+	EnableFreeUniverse     bool
+	EnableSECData          bool
+	SECUserAgent           string
+	EnableStooqData        bool
 	EnableYahooFallback    bool
 	EnableYFinanceFallback bool
 	YFinancePython         string
@@ -31,6 +35,10 @@ func Load() Config {
 		DatabaseURL:            os.Getenv("DATABASE_URL"),
 		FMPAPIKey:              os.Getenv("FMP_API_KEY"),
 		PolygonAPIKey:          os.Getenv("POLYGON_API_KEY"),
+		EnableFreeUniverse:     getEnvBool("ENABLE_FREE_UNIVERSE", true),
+		EnableSECData:          getEnvBool("ENABLE_SEC_DATA", true),
+		SECUserAgent:           getEnv("SEC_USER_AGENT", "CANSLIMAgent/1.0 (local research; set SEC_USER_AGENT for contact)"),
+		EnableStooqData:        getEnvBool("ENABLE_STOOQ_DATA", true),
 		EnableYahooFallback:    getEnvBool("ENABLE_YAHOO_FALLBACK", true),
 		EnableYFinanceFallback: getEnvBool("ENABLE_YFINANCE_FALLBACK", true),
 		YFinancePython:         getEnv("YFINANCE_PYTHON", "python"),

@@ -24,18 +24,24 @@ func main() {
 
 	fmpClient := services.NewFMPClient(cfg.FMPAPIKey, cfg.RequestTimeout)
 	polygonClient := services.NewPolygonClient(cfg.PolygonAPIKey, cfg.RequestTimeout)
+	freeUniverseClient := services.NewFreeUniverseClient(cfg.EnableFreeUniverse, cfg.RequestTimeout)
+	secClient := services.NewSECClient(cfg.EnableSECData, cfg.SECUserAgent, cfg.RequestTimeout)
+	stooqClient := services.NewStooqClient(cfg.EnableStooqData, cfg.RequestTimeout)
 	yahooClient := services.NewYahooClient(cfg.EnableYahooFallback, cfg.RequestTimeout)
 	yfinanceClient := services.NewYFinanceClient(cfg.EnableYFinanceFallback, cfg.YFinancePython, cfg.RequestTimeout)
 
 	scanner := services.NewScannerService(
 		database,
+		freeUniverseClient,
+		secClient,
+		stooqClient,
 		fmpClient,
 		polygonClient,
 		yahooClient,
 		yfinanceClient,
 		cfg.ScanDelay,
 	)
-	analysisService := services.NewAnalysisService(database, fmpClient, polygonClient, yahooClient, yfinanceClient)
+	analysisService := services.NewAnalysisService(database, secClient, stooqClient, fmpClient, polygonClient, yahooClient, yfinanceClient)
 	screenerHandler := handlers.NewScreenerHandler(scanner)
 	presetHandler := handlers.NewPresetHandler(database)
 	chartsHandler := handlers.NewChartsHandler(analysisService)

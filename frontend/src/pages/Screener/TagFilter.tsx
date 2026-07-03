@@ -1,12 +1,12 @@
-import type { LabelKey } from '../../types';
+import type { ScreenerFilterKey } from '../../types';
 import { cn } from '../../lib/utils';
-import { ACTIVE_LABEL_KEYS } from '../../lib/computeLabels';
+import { SCREENER_FILTER_KEYS } from '../../lib/computeLabels';
 
-const tags: LabelKey[] = ACTIVE_LABEL_KEYS;
+const tags: ScreenerFilterKey[] = SCREENER_FILTER_KEYS;
 
 interface TagFilterProps {
-  activeTags: LabelKey[];
-  onToggle: (tag: LabelKey) => void;
+  activeTags: ScreenerFilterKey[];
+  onToggle: (tag: ScreenerFilterKey) => void;
 }
 
 export default function TagFilter({ activeTags, onToggle }: TagFilterProps) {
@@ -23,6 +23,7 @@ export default function TagFilter({ activeTags, onToggle }: TagFilterProps) {
               : 'border-slate-700 bg-slate-900/70 text-slate-500 hover:border-cyan-400/50 hover:text-slate-200'
           )}
           onClick={() => onToggle(tag)}
+          aria-pressed={activeTags.includes(tag)}
         >
           {tag}
         </button>

@@ -2,6 +2,7 @@ services:
   postgres:
     image: postgres:15
     container_name: alphalens-postgres
+    restart: unless-stopped
     environment:
       POSTGRES_USER: alphalens
       POSTGRES_PASSWORD: alphalens
@@ -10,6 +11,11 @@ services:
       - "5432:5432"
     volumes:
       - alphalens_pg_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U alphalens -d alphalens"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
   sidecar:
     build: ./sidecar

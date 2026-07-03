@@ -1,7 +1,8 @@
-import type { ComputedStock, LabelKey, LabelResult, LabelStatus, Metric, StockWithMetrics, ThresholdConfig } from '../types';
+import type { ComputedStock, LabelKey, LabelResult, LabelStatus, Metric, ScreenerFilterKey, StockWithMetrics, ThresholdConfig } from '../types';
 
 export const WEIGHTS: Record<LabelKey, number> = { C: 3, A: 3, L: 2, S: 1, I: 1 };
 export const ACTIVE_LABEL_KEYS: LabelKey[] = ['C', 'A', 'S', 'L'];
+export const SCREENER_FILTER_KEYS: ScreenerFilterKey[] = [...ACTIVE_LABEL_KEYS, 'N'];
 
 function scalarLabel(key: LabelKey, metric: Metric<number>, threshold: number): LabelResult {
   if (!metric.sufficient) {
@@ -41,6 +42,11 @@ export function computeStock(stock: StockWithMetrics, thresholds: ThresholdConfi
   const passCount = entries.filter(([, label]) => label.status === 'pass').length;
   const weightSum = entries.reduce((sum, [key, label]) => (label.status === 'pass' ? sum + WEIGHTS[key] : sum), 0);
   return { ...stock, labels, passCount, weightSum };
+}
+
+export function stockPassesFilter(stock: ComputedStock, tag: ScreenerFilterKey) {
+  if (tag === 'N') return stock.metrics.n === true;
+  return stock.labels[tag].status === 'pass';
 }
 
 export function labelStatusText(status: LabelStatus) {

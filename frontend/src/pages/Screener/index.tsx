@@ -4,7 +4,7 @@ import { Activity, DatabaseZap, RefreshCw, ShieldCheck } from 'lucide-react';
 import { Button } from '../../components/ui/button';
 import { Card, CardHeader, CardTitle } from '../../components/ui/card';
 import { API_BASE_URL, createPreset, deletePreset, fetchCachedResults, fetchPresets, fetchRefreshJob, refreshMarket } from '../../lib/api';
-import { ACTIVE_LABEL_KEYS, computeStock } from '../../lib/computeLabels';
+import { computeStock, stockPassesFilter } from '../../lib/computeLabels';
 import { sortStocks } from '../../lib/sortStocks';
 import { formatDateCN } from '../../lib/utils';
 import { useScreenerStore } from '../../stores/screenerStore';
@@ -15,13 +15,19 @@ import StockList from './StockList';
 import TagFilter from './TagFilter';
 import ThresholdPanel from './ThresholdPanel';
 
+const SCAN_STALL_TIMEOUT_MS = 45_000;
+
 export default function ScreenerPage() {
   const queryClient = useQueryClient();
   const eventSourceRef = useRef<EventSource | null>(null);
   const retryRef = useRef(0);
+  const scanRunRef = useRef(0);
+  const scanTimeoutRef = useRef<number | null>(null);
+  const activeScanMarketRef = useRef<Market | null>(null);
   const defaultPresetAppliedRef = useRef(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const [scanStatus, setScanStatus] = useState<string | null>(null);
 
   const {
     selectedMarket,
@@ -35,12 +41,11 @@ export default function ScreenerPage() {
     thresholdPanelOpen,
     toggleThresholdPanel,
     rawStocks,
-    setRawStocks,
+    setMarketStocks,
     addStockResult,
-    clearResults,
+    clearMarketResults,
     scanProgress,
     setScanProgress,
-    dataAsOf,
     isScanning,
     setIsScanning,
     activeTagFilters,
@@ -57,18 +62,29 @@ export default function ScreenerPage() {
     queryFn: fetchPresets
   });
 
-  useEffect(() => {
-    if (cachedQuery.data && !isScanning) {
-      setRawStocks(cachedQuery.data);
-      setErrorMessage(null);
-    }
-  }, [cachedQuery.data, isScanning, setRawStocks]);
+  const appliedCacheAtRef = useRef<Record<Market, number>>({
+    SP500: 0,
+    NASDAQ100: 0,
+    RUSSELL2000: 0
+  });
 
   useEffect(() => {
-    if (cachedQuery.isError && rawStocks.length === 0) {
+    if (
+      cachedQuery.data &&
+      activeScanMarketRef.current !== selectedMarket &&
+      appliedCacheAtRef.current[selectedMarket] !== cachedQuery.dataUpdatedAt
+    ) {
+      appliedCacheAtRef.current[selectedMarket] = cachedQuery.dataUpdatedAt;
+      setMarketStocks(selectedMarket, cachedQuery.data);
+      setErrorMessage(null);
+    }
+  }, [cachedQuery.data, cachedQuery.dataUpdatedAt, selectedMarket, setMarketStocks]);
+
+  useEffect(() => {
+    if (cachedQuery.isError && !rawStocks.some((stock) => stock.market === selectedMarket)) {
       setErrorMessage('数据获取失败，请检查网络连接');
     }
-  }, [cachedQuery.isError, rawStocks.length]);
+  }, [cachedQuery.isError, rawStocks, selectedMarket]);
 
   useEffect(() => {
     if (presetsQuery.data) {
@@ -82,23 +98,28 @@ export default function ScreenerPage() {
   }, [applyPreset, presetsQuery.data, setPresets]);
 
   useEffect(() => {
-    return () => eventSourceRef.current?.close();
+    return () => {
+      eventSourceRef.current?.close();
+      if (scanTimeoutRef.current !== null) {
+        window.clearTimeout(scanTimeoutRef.current);
+      }
+    };
   }, []);
 
   const computedStocks = useMemo(() => {
     return sortStocks(rawStocks.map((stock) => computeStock(stock, thresholds)));
   }, [rawStocks, thresholds]);
 
-  const filteredStocks = useMemo(() => {
-    if (activeTagFilters.length === 0) return computedStocks;
-    return computedStocks.filter((stock) => activeTagFilters.every((tag) => stock.labels[tag].status === 'pass'));
-  }, [activeTagFilters, computedStocks]);
+  const selectedMarketStocks = useMemo(() => {
+    return computedStocks.filter((stock) => stock.market === selectedMarket);
+  }, [computedStocks, selectedMarket]);
 
-  const labelResults = useMemo(() => computedStocks.flatMap((stock) => ACTIVE_LABEL_KEYS.map((key) => stock.labels[key])), [computedStocks]);
-  const dataCompleteness = labelResults.length
-    ? Math.round((labelResults.filter((label) => label.sufficient).length / labelResults.length) * 100)
-    : 0;
-  const filteredRate = computedStocks.length ? Math.round((filteredStocks.length / computedStocks.length) * 100) : 0;
+  const filteredStocks = useMemo(() => {
+    if (activeTagFilters.length === 0) return selectedMarketStocks;
+    return selectedMarketStocks.filter((stock) => activeTagFilters.every((tag) => stockPassesFilter(stock, tag)));
+  }, [activeTagFilters, selectedMarketStocks]);
+
+  const selectedMarketDataAsOf = selectedMarketStocks[0]?.data_as_of ?? null;
 
   const marketLabel: Record<Market, string> = {
     SP500: '标普 500',
@@ -106,77 +127,138 @@ export default function ScreenerPage() {
     RUSSELL2000: '罗素 2000'
   };
 
+  const clearScanTimeout = useCallback(() => {
+    if (scanTimeoutRef.current !== null) {
+      window.clearTimeout(scanTimeoutRef.current);
+      scanTimeoutRef.current = null;
+    }
+  }, []);
+
+  const stopScanWithError = useCallback(
+    (message: string) => {
+      eventSourceRef.current?.close();
+      eventSourceRef.current = null;
+      clearScanTimeout();
+      activeScanMarketRef.current = null;
+      setIsScanning(false);
+      setScanStatus(null);
+      setNotice(null);
+      setErrorMessage(message);
+    },
+    [clearScanTimeout, setIsScanning]
+  );
+
+  const armScanTimeout = useCallback(
+    (runID: number) => {
+      clearScanTimeout();
+      scanTimeoutRef.current = window.setTimeout(() => {
+        if (scanRunRef.current !== runID) return;
+        stopScanWithError('数据源连接超时，请检查网络连接、代理或后端服务状态后重试');
+        void queryClient.invalidateQueries({ queryKey: ['screener-results', selectedMarket] });
+      }, SCAN_STALL_TIMEOUT_MS);
+    },
+    [clearScanTimeout, queryClient, selectedMarket, stopScanWithError]
+  );
+
   const startScan = useCallback(() => {
     eventSourceRef.current?.close();
+    clearScanTimeout();
     retryRef.current = 0;
-    clearResults();
+    scanRunRef.current += 1;
+    const runID = scanRunRef.current;
     setErrorMessage(null);
     setNotice(null);
+    setScanStatus(null);
+
+    if (typeof navigator !== 'undefined' && !navigator.onLine) {
+      setErrorMessage('当前浏览器处于离线状态，请检查网络连接后重试');
+      return;
+    }
+
+    activeScanMarketRef.current = selectedMarket;
+    clearMarketResults(selectedMarket);
     setIsScanning(true);
     setScanProgress({ analyzed: 0, total: 0 });
+    setScanStatus('正在连接后端服务');
+    armScanTimeout(runID);
 
     const connect = () => {
+      if (scanRunRef.current !== runID) return;
       const source = new EventSource(API_BASE_URL + '/screener/scan?market=' + selectedMarket);
       eventSourceRef.current = source;
 
+      source.onopen = () => {
+        if (scanRunRef.current !== runID) return;
+        setScanStatus('已连接后端，正在请求数据源');
+        armScanTimeout(runID);
+      };
+
       source.onmessage = (message) => {
+        if (scanRunRef.current !== runID) return;
+        armScanTimeout(runID);
         try {
           const event = JSON.parse(message.data) as ScanEvent;
           if (event.type === 'stock_result') {
             addStockResult(event.data);
           }
+          if (event.type === 'scan_status') {
+            setScanStatus(event.data.message);
+          }
           if (event.type === 'scan_progress') {
             setScanProgress(event.data);
+            if (event.data.total > 0) {
+              setScanStatus(null);
+            }
           }
           if (event.type === 'scan_complete') {
+            clearScanTimeout();
             setScanProgress(event.data);
             setIsScanning(false);
+            setScanStatus(null);
+            activeScanMarketRef.current = null;
             source.close();
+            eventSourceRef.current = null;
             void queryClient.invalidateQueries({ queryKey: ['screener-results', selectedMarket] });
           }
           if (event.type === 'scan_error') {
-            setIsScanning(false);
-            setErrorMessage(event.data.message || '数据获取失败，请检查网络连接');
+            stopScanWithError(event.data.message || '数据获取失败，请检查网络连接或后端服务状态');
             source.close();
           }
         } catch {
-          setErrorMessage('数据格式异常，请稍后重试');
+          stopScanWithError('数据格式异常，请稍后重试');
         }
       };
 
       source.onerror = () => {
+        if (scanRunRef.current !== runID) return;
         source.close();
         if (retryRef.current < 3) {
           retryRef.current += 1;
-          setNotice('连接中断，正在第 ' + retryRef.current + ' 次自动重连');
+          setScanStatus('连接中断，正在第 ' + retryRef.current + ' 次自动重连');
+          armScanTimeout(runID);
           window.setTimeout(connect, 700 * retryRef.current);
           return;
         }
-        setIsScanning(false);
-        setErrorMessage('数据获取失败，请检查网络连接');
-        void cachedQuery.refetch();
+        stopScanWithError('数据获取失败，请检查网络连接或后端服务状态');
+        void queryClient.invalidateQueries({ queryKey: ['screener-results', selectedMarket] });
       };
     };
 
     connect();
   }, [
     addStockResult,
-    cachedQuery,
-    clearResults,
+    armScanTimeout,
+    clearScanTimeout,
+    clearMarketResults,
     queryClient,
     selectedMarket,
     setIsScanning,
-    setScanProgress
+    setScanProgress,
+    stopScanWithError
   ]);
 
   const handleMarketChange = (market: Market) => {
     if (market === selectedMarket) return;
-    if (rawStocks.length > 0 && !window.confirm('切换市场将清空当前结果，是否继续？')) {
-      return;
-    }
-    eventSourceRef.current?.close();
-    setIsScanning(false);
-    clearResults();
     setErrorMessage(null);
     setNotice(null);
     setMarket(market);
@@ -197,10 +279,10 @@ export default function ScreenerPage() {
 
   const handleDeletePreset = async (preset: ThresholdPreset) => {
     if (preset.is_default) {
-      setErrorMessage('奥尼尔默认方案不可删除');
+      setErrorMessage('欧奈尔默认方案不可删除');
       return;
     }
-    if (!window.confirm('确认删除阈值方案「' + preset.name + '」？')) return;
+    if (!window.confirm('确认删除阈值方案「' + preset.name.replace(/奥尼尔/g, '欧奈尔') + '」？')) return;
     try {
       await deletePreset(preset.id);
       setNotice('阈值方案已删除');
@@ -252,7 +334,7 @@ export default function ScreenerPage() {
             <div className="flex flex-wrap items-center gap-3">
               <span className="rounded-full bg-emerald-400 px-4 py-2 text-sm font-bold text-slate-950">{marketLabel[selectedMarket]}</span>
               <span className="rounded-full border border-slate-700 bg-slate-950/30 px-4 py-2 text-sm text-slate-400">
-                数据截止 {formatDateCN(dataAsOf)}
+                数据截止 {formatDateCN(selectedMarketDataAsOf)}
               </span>
               <Button variant="outline" onClick={handleRefresh}>
                 <RefreshCw className="h-4 w-4" />
@@ -261,43 +343,6 @@ export default function ScreenerPage() {
             </div>
           </header>
 
-          <section className="mt-6 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-            <Card>
-              <div className="flex items-center gap-2 text-sm text-slate-400">
-                <span className="h-2.5 w-2.5 rounded-full bg-cyan-300" />
-                候选股票
-              </div>
-              <p className="mt-4 text-3xl font-black text-white">{computedStocks.length}</p>
-              <p className="mt-3 text-sm text-slate-500">来自缓存与实时扫描结果</p>
-            </Card>
-            <Card>
-              <div className="flex items-center gap-2 text-sm text-slate-400">
-                <span className="h-2.5 w-2.5 rounded-full bg-emerald-400" />
-                当前入选率
-              </div>
-              <p className="mt-4 text-3xl font-black text-white">{filteredRate}%</p>
-              <p className="mt-3 text-sm text-slate-500">受标签 AND 条件影响</p>
-            </Card>
-            <Card>
-              <div className="flex items-center gap-2 text-sm text-slate-400">
-                <span className="h-2.5 w-2.5 rounded-full bg-amber-300" />
-                数据完整度
-              </div>
-              <p className="mt-4 text-3xl font-black text-white">{dataCompleteness}%</p>
-              <p className="mt-3 text-sm text-slate-500">黄色 ? 表示指标不足</p>
-            </Card>
-            <Card>
-              <div className="flex items-center gap-2 text-sm text-slate-400">
-                <span className="h-2.5 w-2.5 rounded-full bg-finance-blue" />
-                扫描进度
-              </div>
-              <p className="mt-4 text-3xl font-black text-white">
-                {scanProgress.analyzed}/{scanProgress.total}
-              </p>
-              <p className="mt-3 text-sm text-slate-500">SSE 流式返回结果</p>
-            </Card>
-          </section>
-
           <Card className="mt-6">
             <CardHeader>
               <CardTitle className="flex items-center gap-3">
@@ -305,15 +350,14 @@ export default function ScreenerPage() {
                   <ShieldCheck className="h-5 w-5 text-cyan-100" />
                 </span>
                 <span>
-                  <span className="block text-lg">市场选择</span>
-                  <span className="mt-1 block text-sm font-normal text-slate-400">把三类股票池升级为可解释的市场卡片</span>
+                  <span className="block text-lg">市场筛选</span>
                 </span>
               </CardTitle>
             </CardHeader>
             <MarketSelector selectedMarket={selectedMarket} onChange={handleMarketChange} />
           </Card>
 
-          <section className="mt-6 grid gap-6 xl:grid-cols-2">
+          <section className="mt-6 space-y-6">
             <ThresholdPanel
               open={thresholdPanelOpen}
               thresholds={thresholds}
@@ -326,7 +370,7 @@ export default function ScreenerPage() {
               onDeletePreset={handleDeletePreset}
             />
 
-            <Card className="h-full">
+            <Card>
               <CardHeader>
                 <CardTitle className="flex items-center gap-3">
                   <span className="flex h-10 w-10 items-center justify-center rounded-2xl bg-cyan-400 text-slate-950">
@@ -334,13 +378,12 @@ export default function ScreenerPage() {
                   </span>
                   <span>
                     <span className="block text-lg">扫描控制台</span>
-                    <span className="mt-1 block text-sm font-normal text-slate-400">实时进度、缓存信息和主要操作集中到同一卡片</span>
                   </span>
                 </CardTitle>
               </CardHeader>
-              <div className="space-y-5">
-                <ScanProgress progress={scanProgress} isScanning={isScanning} />
-                <div className="flex flex-wrap gap-3">
+              <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-center">
+                <ScanProgress progress={scanProgress} isScanning={isScanning} statusMessage={scanStatus} />
+                <div className="flex flex-wrap gap-3 lg:justify-end">
                   <Button onClick={startScan} disabled={isScanning}>
                     <Activity className="h-4 w-4" />
                     {isScanning ? '筛选中' : '开始筛选'}
@@ -350,6 +393,8 @@ export default function ScreenerPage() {
                     刷新数据
                   </Button>
                 </div>
+              </div>
+              <div className="mt-5 grid gap-3 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-center">
                 <div className="rounded-2xl border border-slate-800 bg-slate-950/35 p-4 text-sm text-slate-400">
                   建议：扫描结果进入表格前先进行 C/A/L 权重排序，再允许用标签 AND 过滤。
                 </div>
@@ -373,7 +418,7 @@ export default function ScreenerPage() {
           </Card>
 
           <div className="mt-6">
-            <StockList stocks={filteredStocks} hasRawData={rawStocks.length > 0} filtered={activeTagFilters.length > 0} />
+            <StockList stocks={filteredStocks} hasRawData={selectedMarketStocks.length > 0} filtered={activeTagFilters.length > 0} />
           </div>
     </section>
   );

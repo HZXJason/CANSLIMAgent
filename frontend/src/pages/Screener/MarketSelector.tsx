@@ -4,7 +4,7 @@ import { cn } from '../../lib/utils';
 const markets: Array<{ value: Market; label: string; description: string; hint: string; disabled?: boolean }> = [
   { value: 'SP500', label: '标普 500', description: '大型核心股票池', hint: '稳健 CANSLIM 初筛' },
   { value: 'NASDAQ100', label: '纳指 100', description: '科技成长股票池', hint: '高动量成长扫描' },
-  { value: 'RUSSELL2000', label: '罗素 2000', description: '暂未开放', hint: '等待稳定成分股数据源接入', disabled: true }
+  { value: 'RUSSELL2000', label: '罗素 2000', description: '小盘成长股票池', hint: 'IWM 持仓代理 universe' }
 ];
 
 interface MarketSelectorProps {
@@ -41,7 +41,7 @@ export default function MarketSelector({ selectedMarket, onChange }: MarketSelec
                 : 'border-slate-700 bg-slate-900 text-slate-400'
             )}
           >
-            {market.disabled ? '暂未开放' : selectedMarket === market.value ? '已选' : '可选'}
+            {market.disabled ? '暂未开放' : selectedMarket === market.value ? '筛选中' : '筛选'}
           </span>
           <span className="mt-3 text-lg font-bold text-white">{market.label}</span>
           <span className="mt-1 text-sm text-slate-400">{market.description}</span>

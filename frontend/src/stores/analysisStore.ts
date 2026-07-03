@@ -31,6 +31,7 @@ export function createInitialAnalysisState(): SymbolAnalysisState {
     chartStatus: { ...initialChartStatus },
     aiStatus: 'idle',
     thoughtLines: [],
+    liveNarration: '',
     reportContent: '',
     aiProgress: [],
     aiResults: [],
@@ -48,6 +49,8 @@ interface AnalysisStore {
   updateChartStatus: (symbol: string, key: keyof SymbolAnalysisState['chartStatus'], status: ChartStatus) => void;
   setKLinePeriod: (symbol: string, period: KLinePeriod) => void;
   appendThought: (symbol: string, line: ThoughtLine) => void;
+  appendLiveNarration: (symbol: string, content: string) => void;
+  clearLiveNarration: (symbol: string) => void;
   appendReport: (symbol: string, content: string) => void;
   upsertAIProgress: (symbol: string, progress: Omit<AIAgentProgress, 'timestamp'>) => void;
   appendAIResult: (symbol: string, result: Omit<AIAgentResult, 'timestamp'>) => void;
@@ -99,6 +102,20 @@ export const useAnalysisStore = create<AnalysisStore>((set, get) => ({
         thoughtLines: [...current.thoughtLines, line]
       }))
     })),
+  appendLiveNarration: (symbol, content) =>
+    set((state) => ({
+      analysisStates: withSymbolState(state.analysisStates, symbol, (current) => ({
+        ...current,
+        liveNarration: current.liveNarration + content
+      }))
+    })),
+  clearLiveNarration: (symbol) =>
+    set((state) => ({
+      analysisStates: withSymbolState(state.analysisStates, symbol, (current) => ({
+        ...current,
+        liveNarration: ''
+      }))
+    })),
   appendReport: (symbol, content) =>
     set((state) => ({
       analysisStates: withSymbolState(state.analysisStates, symbol, (current) => ({
@@ -142,11 +159,17 @@ export const useAnalysisStore = create<AnalysisStore>((set, get) => ({
     })),
   setAIDecision: (symbol, decision) =>
     set((state) => ({
-      analysisStates: withSymbolState(state.analysisStates, symbol, (current) => ({
-        ...current,
-        aiDecision: decision,
-        reportContent: current.reportContent + '\n\n## 最终决策\n\n' + decision.summary
-      }))
+      analysisStates: withSymbolState(state.analysisStates, symbol, (current) => {
+        const decisionSection = '\n\n## 最终决策\n\n' + decision.summary;
+        const reportContent = decision.summary && current.reportContent.includes(decision.summary)
+          ? current.reportContent
+          : current.reportContent + decisionSection;
+        return {
+          ...current,
+          aiDecision: decision,
+          reportContent
+        };
+      })
     })),
   resetAI: (symbol) =>
     set((state) => ({
@@ -154,6 +177,7 @@ export const useAnalysisStore = create<AnalysisStore>((set, get) => ({
         ...current,
         aiStatus: 'streaming',
         thoughtLines: [],
+        liveNarration: '',
         reportContent: '',
         aiProgress: [],
         aiResults: [],

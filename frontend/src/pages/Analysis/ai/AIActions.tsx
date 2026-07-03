@@ -1,5 +1,6 @@
 import { Check, RefreshCw, Tag } from 'lucide-react';
 import { useState } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
 import { Button } from '../../../components/ui/button';
 import { ConfirmDialog } from '../../../components/ui/confirm-dialog';
 import { updateNLabel } from '../../../lib/api';
@@ -13,6 +14,7 @@ interface AIActionsProps {
 }
 
 export default function AIActions({ symbol, reportContent, nLabelWritten, onRegenerate }: AIActionsProps) {
+  const queryClient = useQueryClient();
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [writing, setWriting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -34,6 +36,7 @@ export default function AIActions({ symbol, reportContent, nLabelWritten, onRege
           }
         });
       }
+      void queryClient.invalidateQueries({ queryKey: ['screener-results'] });
     } catch (requestError) {
       setError(requestError instanceof Error ? requestError.message : 'N 标签写回失败');
     } finally {

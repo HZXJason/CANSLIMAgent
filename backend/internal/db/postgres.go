@@ -28,6 +28,15 @@ func OpenPostgres(databaseURL string) (*gorm.DB, error) {
 
 func seedDefaultPreset(database *gorm.DB) error {
 	preset := models.DefaultThresholdPreset()
+	var existingDefault models.ThresholdPreset
+	if err := database.Where("is_default = ?", true).First(&existingDefault).Error; err == nil {
+		return database.Model(&existingDefault).Updates(map[string]interface{}{
+			"name":       preset.Name,
+			"is_default": true,
+		}).Error
+	} else if !errors.Is(err, gorm.ErrRecordNotFound) {
+		return err
+	}
 	return database.Clauses(clause.OnConflict{
 		Columns:   []clause.Column{{Name: "name"}},
 		DoUpdates: clause.AssignmentColumns([]string{"is_default"}),

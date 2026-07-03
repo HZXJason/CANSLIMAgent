@@ -60,7 +60,7 @@ func (h *PresetHandler) Delete(c *gin.Context) {
 		return
 	}
 	if preset.IsDefault {
-		Fail(c, http.StatusBadRequest, "奥尼尔默认方案不可删除")
+		Fail(c, http.StatusBadRequest, "欧奈尔默认方案不可删除")
 		return
 	}
 	if err := h.db.WithContext(c.Request.Context()).Delete(&preset).Error; err != nil {

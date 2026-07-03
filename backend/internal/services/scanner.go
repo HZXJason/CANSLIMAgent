@@ -59,23 +59,29 @@ type pendingMetric struct {
 }
 
 type ScannerService struct {
-	db        *gorm.DB
-	fmp       *FMPClient
-	polygon   *PolygonClient
-	yahoo     *YahooClient
-	yfinance  *YFinanceClient
-	scanDelay time.Duration
-	jobs      sync.Map
+	db           *gorm.DB
+	freeUniverse *FreeUniverseClient
+	sec          *SECClient
+	stooq        *StooqClient
+	fmp          *FMPClient
+	polygon      *PolygonClient
+	yahoo        *YahooClient
+	yfinance     *YFinanceClient
+	scanDelay    time.Duration
+	jobs         sync.Map
 }
 
-func NewScannerService(database *gorm.DB, fmp *FMPClient, polygon *PolygonClient, yahoo *YahooClient, yfinance *YFinanceClient, scanDelay time.Duration) *ScannerService {
+func NewScannerService(database *gorm.DB, freeUniverse *FreeUniverseClient, sec *SECClient, stooq *StooqClient, fmp *FMPClient, polygon *PolygonClient, yahoo *YahooClient, yfinance *YFinanceClient, scanDelay time.Duration) *ScannerService {
 	return &ScannerService{
-		db:        database,
-		fmp:       fmp,
-		polygon:   polygon,
-		yahoo:     yahoo,
-		yfinance:  yfinance,
-		scanDelay: scanDelay,
+		db:           database,
+		freeUniverse: freeUniverse,
+		sec:          sec,
+		stooq:        stooq,
+		fmp:          fmp,
+		polygon:      polygon,
+		yahoo:        yahoo,
+		yfinance:     yfinance,
+		scanDelay:    scanDelay,
 	}
 }
 
@@ -88,16 +94,20 @@ func (s *ScannerService) Scan(ctx context.Context, market string) (<-chan ScanEv
 	go func() {
 		defer close(events)
 
+		if !sendScanEvent(ctx, events, ScanEvent{Type: "scan_status", Data: map[string]interface{}{"message": "正在连接数据源并获取成分股列表"}}) {
+			return
+		}
+
 		candidates, err := s.fetchUniverse(ctx, market)
 		if err != nil {
-			events <- ScanEvent{Type: "scan_error", Data: map[string]interface{}{"message": err.Error()}}
+			sendScanEvent(ctx, events, ScanEvent{Type: "scan_error", Data: map[string]interface{}{"message": err.Error()}})
 			return
 		}
 
 		if err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 			return deleteStocksNotInUniverse(tx, market, candidates)
 		}); err != nil {
-			events <- ScanEvent{Type: "scan_error", Data: map[string]interface{}{"message": err.Error()}}
+			sendScanEvent(ctx, events, ScanEvent{Type: "scan_error", Data: map[string]interface{}{"message": err.Error()}})
 			return
 		}
 
@@ -105,12 +115,19 @@ func (s *ScannerService) Scan(ctx context.Context, market string) (<-chan ScanEv
 		analyzed := 0
 		pending := make([]pendingMetric, 0, len(candidates))
 
-		events <- ScanEvent{Type: "scan_progress", Data: map[string]interface{}{"total": total, "analyzed": analyzed}}
+		if !sendScanEvent(ctx, events, ScanEvent{Type: "scan_progress", Data: map[string]interface{}{"total": total, "analyzed": analyzed}}) {
+			return
+		}
 		for _, candidate := range candidates {
 			select {
 			case <-ctx.Done():
 				return
 			default:
+			}
+
+			symbol := strings.ToUpper(strings.TrimSpace(candidate.Symbol))
+			if symbol != "" && !sendScanEvent(ctx, events, ScanEvent{Type: "scan_status", Data: map[string]interface{}{"message": "正在获取 " + symbol + " 指标数据", "symbol": symbol}}) {
+				return
 			}
 
 			item, ok := s.buildPendingMetric(ctx, market, candidate)
@@ -120,33 +137,51 @@ func (s *ScannerService) Scan(ctx context.Context, market string) (<-chan ScanEv
 			if err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 				return upsertStockWithMetric(tx, item.stock, item.metric)
 			}); err != nil {
-				events <- ScanEvent{Type: "scan_error", Data: map[string]interface{}{"message": err.Error()}}
+				sendScanEvent(ctx, events, ScanEvent{Type: "scan_error", Data: map[string]interface{}{"message": err.Error()}})
 				return
 			}
 			pending = append(pending, item)
-			events <- ScanEvent{Type: "stock_result", Data: pendingToStockResult(item)}
+			if !sendScanEvent(ctx, events, ScanEvent{Type: "stock_result", Data: pendingToStockResult(item)}) {
+				return
+			}
 			analyzed++
-			events <- ScanEvent{Type: "scan_progress", Data: map[string]interface{}{"total": total, "analyzed": analyzed}}
+			if !sendScanEvent(ctx, events, ScanEvent{Type: "scan_progress", Data: map[string]interface{}{"total": total, "analyzed": analyzed}}) {
+				return
+			}
 
 			if s.scanDelay > 0 {
 				time.Sleep(s.scanDelay)
 			}
 		}
 
+		if !sendScanEvent(ctx, events, ScanEvent{Type: "scan_status", Data: map[string]interface{}{"message": "正在计算相对强度排名"}}) {
+			return
+		}
 		applyRSRatings(pending)
 		for _, item := range pending {
 			if err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 				return upsertStockWithMetric(tx, item.stock, item.metric)
 			}); err != nil {
-				events <- ScanEvent{Type: "scan_error", Data: map[string]interface{}{"message": err.Error()}}
+				sendScanEvent(ctx, events, ScanEvent{Type: "scan_error", Data: map[string]interface{}{"message": err.Error()}})
 				return
 			}
-			events <- ScanEvent{Type: "stock_result", Data: pendingToStockResult(item)}
+			if !sendScanEvent(ctx, events, ScanEvent{Type: "stock_result", Data: pendingToStockResult(item)}) {
+				return
+			}
 		}
-		events <- ScanEvent{Type: "scan_complete", Data: map[string]interface{}{"total": total, "analyzed": analyzed}}
+		sendScanEvent(ctx, events, ScanEvent{Type: "scan_complete", Data: map[string]interface{}{"total": total, "analyzed": analyzed}})
 	}()
 
 	return events, nil
+}
+
+func sendScanEvent(ctx context.Context, events chan<- ScanEvent, event ScanEvent) bool {
+	select {
+	case <-ctx.Done():
+		return false
+	case events <- event:
+		return true
+	}
 }
 
 func (s *ScannerService) GetCachedResults(ctx context.Context, market string) ([]StockResult, error) {
@@ -328,6 +363,12 @@ func (s *ScannerService) buildPendingMetric(ctx context.Context, market string, 
 }
 
 func (s *ScannerService) fetchUniverse(ctx context.Context, market string) ([]StockCandidate, error) {
+	if s.freeUniverse != nil && s.freeUniverse.Configured() {
+		candidates, err := s.freeUniverse.FetchUniverse(ctx, market)
+		if err == nil && len(candidates) > 0 {
+			return candidates, nil
+		}
+	}
 	if s.fmp != nil && s.fmp.Configured() {
 		candidates, err := s.fmp.FetchUniverse(ctx, market)
 		if err == nil && len(candidates) > 0 {
@@ -340,12 +381,12 @@ func (s *ScannerService) fetchUniverse(ctx context.Context, market string) ([]St
 			return candidates, nil
 		}
 	}
-	return nil, errors.New("无法从真实数据源获取成分股列表")
+	return nil, errors.New("无法连接真实数据源获取成分股列表，请检查网络连接、代理或 API Key 配置")
 }
 
 func (s *ScannerService) applyEPSFallback(ctx context.Context, symbol string, metric *models.StockMetric) {
-	if s.yfinance != nil && s.yfinance.Configured() {
-		quarter, quarterSufficient, annual, years, annualSufficient, asOf, err := s.yfinance.FetchEPSGrowth(ctx, symbol)
+	if s.sec != nil && s.sec.Configured() {
+		quarter, quarterSufficient, annual, years, annualSufficient, asOf, err := s.sec.FetchEPSGrowth(ctx, symbol)
 		if err == nil {
 			metric.CEPSGrowthPct = quarter
 			metric.CDataSufficient = quarter != nil && quarterSufficient
@@ -373,9 +414,30 @@ func (s *ScannerService) applyEPSFallback(ctx context.Context, symbol string, me
 			return
 		}
 	}
+
+	if s.yfinance != nil && s.yfinance.Configured() {
+		quarter, quarterSufficient, annual, years, annualSufficient, asOf, err := s.yfinance.FetchEPSGrowth(ctx, symbol)
+		if err == nil {
+			metric.CEPSGrowthPct = quarter
+			metric.CDataSufficient = quarter != nil && quarterSufficient
+			metric.AAnnualEPSGrowth = annual
+			metric.AYearsAvailable = years
+			metric.ADataSufficient = len(annual) >= 3 && annualSufficient
+			if !asOf.IsZero() {
+				metric.DataAsOf = asOf
+			}
+			return
+		}
+	}
 }
 
 func (s *ScannerService) fetchPriceSignal(ctx context.Context, symbol string, asOf time.Time) (priceSignal, bool) {
+	if s.stooq != nil && s.stooq.Configured() {
+		price, err := s.stooq.FetchPriceSignal(ctx, symbol, asOf)
+		if err == nil && price.Sufficient {
+			return price, true
+		}
+	}
 	if s.polygon != nil && s.polygon.Configured() {
 		price, err := s.polygon.FetchPriceSignal(ctx, symbol, asOf)
 		if err == nil && price.Sufficient {

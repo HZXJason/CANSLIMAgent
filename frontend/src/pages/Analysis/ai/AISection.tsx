@@ -21,6 +21,7 @@ export default function AISection({ symbol, state }: AISectionProps) {
   const isAnalyzing = state.aiStatus === 'streaming';
   const hasOutput =
     state.thoughtLines.length > 0 ||
+    state.liveNarration.length > 0 ||
     state.reportContent.length > 0 ||
     state.aiProgress.length > 0 ||
     state.aiResults.length > 0 ||
@@ -77,6 +78,7 @@ export default function AISection({ symbol, state }: AISectionProps) {
               results={state.aiResults}
               decision={state.aiDecision}
               error={state.aiError}
+              liveNarration={state.liveNarration}
               fallbackReport={state.reportContent}
             />
             {state.aiStatus === 'done' || state.aiStatus === 'error' ? (

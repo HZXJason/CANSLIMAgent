@@ -14,6 +14,7 @@ interface AIAnalysisStreamProps {
   }[];
   decision: AIDecision | null;
   error: string | null;
+  liveNarration: string;
   fallbackReport: string;
 }
 
@@ -73,13 +74,14 @@ function MarkdownContent({ content }: { content: string }) {
   );
 }
 
-export default function AIAnalysisStream({ status, progress, results, decision, error, fallbackReport }: AIAnalysisStreamProps) {
+export default function AIAnalysisStream({ status, progress, results, decision, error, liveNarration, fallbackReport }: AIAnalysisStreamProps) {
   const progressByAgent = new Map(progress.map((item) => [item.agent, item]));
   const isStreaming = status === 'streaming';
   const hasStructuredResults = results.length > 0;
   const showFallbackReport = !hasStructuredResults && fallbackReport;
+  const showLiveNarration = !showFallbackReport && !hasStructuredResults && liveNarration;
 
-  if (status === 'idle' && !hasStructuredResults && !fallbackReport && !decision) {
+  if (status === 'idle' && !hasStructuredResults && !fallbackReport && !liveNarration && !decision) {
     return (
       <div className="flex min-h-40 flex-col items-center justify-center rounded-xl border border-slate-800 bg-slate-900/45 text-center text-sm text-slate-500">
         等待启动 AI 分析
@@ -134,6 +136,13 @@ export default function AIAnalysisStream({ status, progress, results, decision, 
             </Collapsible>
           ))}
         </section>
+      ) : null}
+
+      {showLiveNarration ? (
+        <Collapsible title="实时生成" defaultOpen>
+          <MarkdownContent content={liveNarration} />
+          {status === 'streaming' ? <span className="analysis-cursor ml-1 inline-block h-4 w-2 translate-y-0.5 bg-cyan-300" /> : null}
+        </Collapsible>
       ) : null}
 
       {showFallbackReport ? (
