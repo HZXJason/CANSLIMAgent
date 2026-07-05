@@ -1,6 +1,7 @@
 import type { APIResponse, Market, RefreshJob, RefreshJobResponse, StockWithMetrics, ThresholdConfig, ThresholdPreset } from '../types';
 import type {
   AIAnalysisConfigResponse,
+  CompanyProfile,
   EPSData,
   GrossMarginData,
   KLineData,
@@ -11,6 +12,7 @@ import type {
   StockSummary
 } from '../types/analysis';
 import type { JournalEntry, JournalReflectionInput, NewJournalEntryInput } from '../types/journal';
+import type { ExecuteTradePlanInput, ExecuteTradePlanResponse, NewTradePlanInput, TradePlan, TradePlanFilters, TradePlanUpdateInput } from '../types/tradePlan';
 
 export const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:8080/api/v1';
 
@@ -69,6 +71,10 @@ export function fetchStockSummary(symbol: string) {
   return request<StockSummary>('/stocks/' + encodeURIComponent(symbol) + '/summary');
 }
 
+export function fetchCompanyProfile(symbol: string) {
+  return request<CompanyProfile>('/stocks/' + encodeURIComponent(symbol) + '/profile');
+}
+
 export function fetchKLine(symbol: string, period: KLinePeriod) {
   return request<KLineData>('/stocks/' + encodeURIComponent(symbol) + '/kline?period=' + period);
 }
@@ -118,6 +124,39 @@ export function createJournalEntry(input: NewJournalEntryInput) {
 export function updateJournalReflection(id: string, input: JournalReflectionInput) {
   return request<JournalEntry>('/journal/' + encodeURIComponent(id), {
     method: 'PATCH',
+    body: JSON.stringify(input)
+  });
+}
+
+export function fetchTradePlans(filters: TradePlanFilters = {}) {
+  const params = new URLSearchParams();
+  if (filters.ticker) params.set('ticker', filters.ticker);
+  if (filters.status) params.set('status', filters.status);
+  const query = params.toString();
+  return request<TradePlan[]>('/trade-plans' + (query ? '?' + query : ''));
+}
+
+export function fetchTradePlan(id: string) {
+  return request<TradePlan>('/trade-plans/' + encodeURIComponent(id));
+}
+
+export function createTradePlan(input: NewTradePlanInput) {
+  return request<TradePlan>('/trade-plans', {
+    method: 'POST',
+    body: JSON.stringify(input)
+  });
+}
+
+export function updateTradePlan(id: string, input: TradePlanUpdateInput) {
+  return request<TradePlan>('/trade-plans/' + encodeURIComponent(id), {
+    method: 'PATCH',
+    body: JSON.stringify(input)
+  });
+}
+
+export function executeTradePlan(id: string, input: ExecuteTradePlanInput) {
+  return request<ExecuteTradePlanResponse>('/trade-plans/' + encodeURIComponent(id) + '/execute', {
+    method: 'POST',
     body: JSON.stringify(input)
   });
 }

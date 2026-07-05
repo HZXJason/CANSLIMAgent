@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/url"
 	"sort"
+	"strings"
 	"time"
 )
 
@@ -267,6 +268,59 @@ func (c *FMPClient) FetchPriceSignal(ctx context.Context, symbol string, asOf ti
 		Sufficient:        true,
 		DataAsOf:          &dataAsOf,
 	}, nil
+}
+
+func (c *FMPClient) FetchCompanyProfile(ctx context.Context, symbol string) (CompanyProfile, error) {
+	if !c.Configured() {
+		return CompanyProfile{}, errors.New("FMP_API_KEY 未配置")
+	}
+
+	stableQuery := url.Values{}
+	stableQuery.Set("symbol", symbol)
+	attempts := []struct {
+		path  string
+		query url.Values
+	}{
+		{path: "/stable/profile", query: stableQuery},
+		{path: fmt.Sprintf("/api/v3/profile/%s", symbol), query: url.Values{}},
+	}
+
+	var lastErr error
+	for _, attempt := range attempts {
+		var rows []struct {
+			Symbol      string `json:"symbol"`
+			Name        string `json:"companyName"`
+			Description string `json:"description"`
+			Sector      string `json:"sector"`
+			Industry    string `json:"industry"`
+			Website     string `json:"website"`
+		}
+		if err := c.getJSON(ctx, attempt.path, attempt.query, &rows); err != nil {
+			lastErr = err
+			continue
+		}
+		if len(rows) == 0 {
+			continue
+		}
+		row := rows[0]
+		profile := CompanyProfile{
+			Symbol:      normalizeSymbol(firstNonEmpty(row.Symbol, symbol)),
+			Name:        strings.TrimSpace(row.Name),
+			Description: cleanDescription(row.Description),
+			Sector:      strings.TrimSpace(row.Sector),
+			Industry:    strings.TrimSpace(row.Industry),
+			Website:     strings.TrimSpace(row.Website),
+			Source:      "FMP",
+			UpdatedAt:   time.Now().UTC().Format("2006-01-02"),
+		}
+		if profile.Description != "" {
+			return profile, nil
+		}
+	}
+	if lastErr != nil {
+		return CompanyProfile{}, lastErr
+	}
+	return CompanyProfile{}, errors.New("FMP 公司简介为空")
 }
 
 func (c *FMPClient) getJSON(ctx context.Context, path string, query url.Values, target interface{}) error {

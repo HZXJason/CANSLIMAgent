@@ -5,6 +5,7 @@ import (
 	"errors"
 	"math"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -42,6 +43,16 @@ type ScanEvent struct {
 	Data interface{} `json:"data"`
 }
 
+type scanStatusPayload struct {
+	Message string `json:"message"`
+	Symbol  string `json:"symbol,omitempty"`
+}
+
+type scanProgressPayload struct {
+	Total    int `json:"total"`
+	Analyzed int `json:"analyzed"`
+}
+
 type RefreshJob struct {
 	ID         string     `json:"id"`
 	Market     string     `json:"market"`
@@ -58,6 +69,18 @@ type pendingMetric struct {
 	rsSufficient bool
 }
 
+type scanRun struct {
+	id          string
+	market      string
+	createdAt   time.Time
+	finishedAt  *time.Time
+	status      string
+	errorText   string
+	events      []ScanEvent
+	subscribers map[chan ScanEvent]struct{}
+	mu          sync.Mutex
+}
+
 type ScannerService struct {
 	db           *gorm.DB
 	freeUniverse *FreeUniverseClient
@@ -69,6 +92,8 @@ type ScannerService struct {
 	yfinance     *YFinanceClient
 	scanDelay    time.Duration
 	jobs         sync.Map
+	scanMu       sync.Mutex
+	scanRuns     map[string]*scanRun
 }
 
 func NewScannerService(database *gorm.DB, freeUniverse *FreeUniverseClient, sec *SECClient, stooq *StooqClient, fmp *FMPClient, polygon *PolygonClient, yahoo *YahooClient, yfinance *YFinanceClient, scanDelay time.Duration) *ScannerService {
@@ -82,6 +107,7 @@ func NewScannerService(database *gorm.DB, freeUniverse *FreeUniverseClient, sec 
 		yahoo:        yahoo,
 		yfinance:     yfinance,
 		scanDelay:    scanDelay,
+		scanRuns:     make(map[string]*scanRun),
 	}
 }
 
@@ -90,98 +116,245 @@ func (s *ScannerService) Scan(ctx context.Context, market string) (<-chan ScanEv
 		return nil, errors.New(models.MarketDisabledReason(market))
 	}
 
-	events := make(chan ScanEvent)
+	run := s.scanRunForMarket(market)
+	return run.subscribe(ctx), nil
+}
+
+func (s *ScannerService) scanRunForMarket(market string) *scanRun {
+	s.scanMu.Lock()
+	defer s.scanMu.Unlock()
+
+	if run, ok := s.scanRuns[market]; ok && run.isRunning() {
+		return run
+	}
+
+	run := newScanRun(market)
+	s.scanRuns[market] = run
+	go s.runResumableScan(run)
+	return run
+}
+
+func newScanRun(market string) *scanRun {
+	return &scanRun{
+		id:          uuid.NewString(),
+		market:      market,
+		createdAt:   time.Now().UTC(),
+		status:      "running",
+		events:      make([]ScanEvent, 0, 256),
+		subscribers: make(map[chan ScanEvent]struct{}),
+	}
+}
+
+func (r *scanRun) isRunning() bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.status == "running"
+}
+
+func (r *scanRun) subscribe(ctx context.Context) <-chan ScanEvent {
+	r.mu.Lock()
+	bufferSize := len(r.events) + 256
+	if bufferSize < 512 {
+		bufferSize = 512
+	}
+	events := make(chan ScanEvent, bufferSize)
+	for _, event := range r.events {
+		events <- event
+	}
+	if r.status != "running" {
+		r.mu.Unlock()
+		close(events)
+		return events
+	}
+	r.subscribers[events] = struct{}{}
+	r.mu.Unlock()
+
 	go func() {
-		defer close(events)
+		<-ctx.Done()
+		r.unsubscribe(events)
+	}()
+	return events
+}
 
-		if !sendScanEvent(ctx, events, ScanEvent{Type: "scan_status", Data: map[string]interface{}{"message": "正在连接数据源并获取成分股列表"}}) {
-			return
+func (r *scanRun) unsubscribe(events chan ScanEvent) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if _, ok := r.subscribers[events]; !ok {
+		return
+	}
+	delete(r.subscribers, events)
+	close(events)
+}
+
+func (r *scanRun) emit(event ScanEvent) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.events = append(r.events, event)
+	for events := range r.subscribers {
+		select {
+		case events <- event:
+		default:
+		}
+	}
+}
+
+func (r *scanRun) finish(status string, err error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.status = status
+	if err != nil {
+		r.errorText = err.Error()
+	}
+	finishedAt := time.Now().UTC()
+	r.finishedAt = &finishedAt
+	for events := range r.subscribers {
+		close(events)
+		delete(r.subscribers, events)
+	}
+}
+
+func (s *ScannerService) runResumableScan(run *scanRun) {
+	ctx := context.Background()
+	fail := func(err error) {
+		run.emit(ScanEvent{Type: "scan_error", Data: scanStatusPayload{Message: err.Error()}})
+		run.finish("failed", err)
+	}
+
+	run.emit(ScanEvent{Type: "scan_status", Data: scanStatusPayload{Message: "正在连接数据源并获取成分股列表"}})
+	candidates, err := s.fetchUniverse(ctx, run.market)
+	if err != nil {
+		fail(err)
+		return
+	}
+
+	run.emit(ScanEvent{Type: "scan_status", Data: scanStatusPayload{Message: "正在读取本地缓存，准备断点接续"}})
+	cached, cachedSymbols, err := s.cachedResultsForUniverse(ctx, run.market, candidates)
+	if err != nil {
+		fail(err)
+		return
+	}
+
+	total := len(candidates)
+	analyzed := len(cachedSymbols)
+	for _, result := range cached {
+		run.emit(ScanEvent{Type: "stock_result", Data: result})
+	}
+	run.emit(ScanEvent{Type: "scan_progress", Data: scanProgressPayload{Total: total, Analyzed: analyzed}})
+	if analyzed > 0 && analyzed < total {
+		run.emit(ScanEvent{Type: "scan_status", Data: scanStatusPayload{Message: "已保留 " + intText(analyzed) + " 支缓存结果，继续补齐剩余股票"}})
+	}
+
+	pending := make([]pendingMetric, 0, total-analyzed)
+	for _, candidate := range candidates {
+		symbol := strings.ToUpper(strings.TrimSpace(candidate.Symbol))
+		if symbol == "" {
+			continue
+		}
+		if _, ok := cachedSymbols[symbol]; ok {
+			continue
 		}
 
-		candidates, err := s.fetchUniverse(ctx, market)
-		if err != nil {
-			sendScanEvent(ctx, events, ScanEvent{Type: "scan_error", Data: map[string]interface{}{"message": err.Error()}})
-			return
+		run.emit(ScanEvent{Type: "scan_status", Data: scanStatusPayload{Message: "正在获取 " + symbol + " 指标数据", Symbol: symbol}})
+		item, ok := s.buildPendingMetric(ctx, run.market, candidate)
+		if !ok {
+			continue
 		}
-
 		if err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-			return deleteStocksNotInUniverse(tx, market, candidates)
+			return upsertStockWithMetric(tx, item.stock, item.metric)
 		}); err != nil {
-			sendScanEvent(ctx, events, ScanEvent{Type: "scan_error", Data: map[string]interface{}{"message": err.Error()}})
+			fail(err)
 			return
 		}
 
-		total := len(candidates)
-		analyzed := 0
-		pending := make([]pendingMetric, 0, len(candidates))
+		pending = append(pending, item)
+		run.emit(ScanEvent{Type: "stock_result", Data: pendingToStockResult(item)})
+		analyzed++
+		run.emit(ScanEvent{Type: "scan_progress", Data: scanProgressPayload{Total: total, Analyzed: analyzed}})
 
-		if !sendScanEvent(ctx, events, ScanEvent{Type: "scan_progress", Data: map[string]interface{}{"total": total, "analyzed": analyzed}}) {
-			return
+		if s.scanDelay > 0 {
+			time.Sleep(s.scanDelay)
 		}
-		for _, candidate := range candidates {
-			select {
-			case <-ctx.Done():
-				return
-			default:
-			}
+	}
 
-			symbol := strings.ToUpper(strings.TrimSpace(candidate.Symbol))
-			if symbol != "" && !sendScanEvent(ctx, events, ScanEvent{Type: "scan_status", Data: map[string]interface{}{"message": "正在获取 " + symbol + " 指标数据", "symbol": symbol}}) {
-				return
-			}
-
-			item, ok := s.buildPendingMetric(ctx, market, candidate)
-			if !ok {
-				continue
-			}
-			if err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-				return upsertStockWithMetric(tx, item.stock, item.metric)
-			}); err != nil {
-				sendScanEvent(ctx, events, ScanEvent{Type: "scan_error", Data: map[string]interface{}{"message": err.Error()}})
-				return
-			}
-			pending = append(pending, item)
-			if !sendScanEvent(ctx, events, ScanEvent{Type: "stock_result", Data: pendingToStockResult(item)}) {
-				return
-			}
-			analyzed++
-			if !sendScanEvent(ctx, events, ScanEvent{Type: "scan_progress", Data: map[string]interface{}{"total": total, "analyzed": analyzed}}) {
-				return
-			}
-
-			if s.scanDelay > 0 {
-				time.Sleep(s.scanDelay)
-			}
-		}
-
-		if !sendScanEvent(ctx, events, ScanEvent{Type: "scan_status", Data: map[string]interface{}{"message": "正在计算相对强度排名"}}) {
-			return
-		}
+	if len(pending) > 0 {
+		run.emit(ScanEvent{Type: "scan_status", Data: scanStatusPayload{Message: "正在计算新增股票的相对强度排名"}})
 		applyRSRatings(pending)
 		for _, item := range pending {
 			if err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 				return upsertStockWithMetric(tx, item.stock, item.metric)
 			}); err != nil {
-				sendScanEvent(ctx, events, ScanEvent{Type: "scan_error", Data: map[string]interface{}{"message": err.Error()}})
+				fail(err)
 				return
 			}
-			if !sendScanEvent(ctx, events, ScanEvent{Type: "stock_result", Data: pendingToStockResult(item)}) {
-				return
-			}
+			run.emit(ScanEvent{Type: "stock_result", Data: pendingToStockResult(item)})
 		}
-		sendScanEvent(ctx, events, ScanEvent{Type: "scan_complete", Data: map[string]interface{}{"total": total, "analyzed": analyzed}})
-	}()
+	} else {
+		run.emit(ScanEvent{Type: "scan_status", Data: scanStatusPayload{Message: "本地缓存已覆盖该市场；如需覆盖重算，请使用刷新数据"}})
+	}
 
-	return events, nil
+	run.emit(ScanEvent{Type: "scan_complete", Data: scanProgressPayload{Total: total, Analyzed: analyzed}})
+	run.finish("completed", nil)
 }
 
-func sendScanEvent(ctx context.Context, events chan<- ScanEvent, event ScanEvent) bool {
-	select {
-	case <-ctx.Done():
-		return false
-	case events <- event:
-		return true
+func (s *ScannerService) cachedResultsForUniverse(ctx context.Context, market string, candidates []StockCandidate) ([]StockResult, map[string]struct{}, error) {
+	candidateSymbols := make([]string, 0, len(candidates))
+	seenCandidates := make(map[string]struct{}, len(candidates))
+	for _, candidate := range candidates {
+		symbol := strings.ToUpper(strings.TrimSpace(candidate.Symbol))
+		if symbol == "" {
+			continue
+		}
+		if _, ok := seenCandidates[symbol]; ok {
+			continue
+		}
+		seenCandidates[symbol] = struct{}{}
+		candidateSymbols = append(candidateSymbols, symbol)
 	}
+
+	cachedSymbols := make(map[string]struct{}, len(candidateSymbols))
+	if len(candidateSymbols) == 0 {
+		return nil, cachedSymbols, nil
+	}
+
+	var stocks []models.Stock
+	if err := s.db.WithContext(ctx).
+		Preload("Metric").
+		Where("market = ? AND symbol IN ?", market, candidateSymbols).
+		Find(&stocks).Error; err != nil {
+		return nil, nil, err
+	}
+
+	resultsBySymbol := make(map[string]StockResult, len(stocks))
+	for _, stock := range stocks {
+		if !isCompleteCachedMetric(stock.Metric) {
+			continue
+		}
+		result := toStockResult(stock)
+		resultsBySymbol[result.Symbol] = result
+		cachedSymbols[result.Symbol] = struct{}{}
+	}
+
+	results := make([]StockResult, 0, len(resultsBySymbol))
+	for _, symbol := range candidateSymbols {
+		if result, ok := resultsBySymbol[symbol]; ok {
+			results = append(results, result)
+		}
+	}
+	return results, cachedSymbols, nil
+}
+
+func intText(value int) string {
+	return strconv.Itoa(value)
+}
+
+func isCompleteCachedMetric(metric models.StockMetric) bool {
+	if metric.ID == 0 {
+		return false
+	}
+	if metric.SDataSufficient && metric.LRSRating == nil {
+		return false
+	}
+	return true
 }
 
 func (s *ScannerService) GetCachedResults(ctx context.Context, market string) ([]StockResult, error) {

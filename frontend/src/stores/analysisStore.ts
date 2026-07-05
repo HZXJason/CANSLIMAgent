@@ -12,6 +12,7 @@ import type {
 
 const initialChartStatus: SymbolAnalysisState['chartStatus'] = {
   summary: 'loading',
+  profile: 'loading',
   kline: 'loading',
   rs: 'loading',
   eps: 'loading',
@@ -22,6 +23,7 @@ const initialChartStatus: SymbolAnalysisState['chartStatus'] = {
 export function createInitialAnalysisState(): SymbolAnalysisState {
   return {
     stockSummary: null,
+    companyProfile: null,
     klineData: null,
     klinePeriod: 'daily',
     rsData: null,

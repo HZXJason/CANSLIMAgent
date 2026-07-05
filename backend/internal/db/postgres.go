@@ -17,7 +17,7 @@ func OpenPostgres(databaseURL string) (*gorm.DB, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := database.AutoMigrate(&models.Stock{}, &models.StockMetric{}, &models.ThresholdPreset{}, &models.TradeJournalEntry{}); err != nil {
+	if err := database.AutoMigrate(&models.Stock{}, &models.StockMetric{}, &models.ThresholdPreset{}, &models.TradeJournalEntry{}, &models.TradePlan{}); err != nil {
 		return nil, err
 	}
 	if err := seedDefaultPreset(database); err != nil {

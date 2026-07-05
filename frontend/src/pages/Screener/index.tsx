@@ -23,11 +23,9 @@ export default function ScreenerPage() {
   const retryRef = useRef(0);
   const scanRunRef = useRef(0);
   const scanTimeoutRef = useRef<number | null>(null);
-  const activeScanMarketRef = useRef<Market | null>(null);
   const defaultPresetAppliedRef = useRef(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
-  const [scanStatus, setScanStatus] = useState<string | null>(null);
 
   const {
     selectedMarket,
@@ -43,9 +41,12 @@ export default function ScreenerPage() {
     rawStocks,
     setMarketStocks,
     addStockResult,
-    clearMarketResults,
     scanProgress,
     setScanProgress,
+    scanStatus,
+    setScanStatus,
+    activeScanMarket,
+    setActiveScanMarket,
     isScanning,
     setIsScanning,
     activeTagFilters,
@@ -71,14 +72,14 @@ export default function ScreenerPage() {
   useEffect(() => {
     if (
       cachedQuery.data &&
-      activeScanMarketRef.current !== selectedMarket &&
+      activeScanMarket !== selectedMarket &&
       appliedCacheAtRef.current[selectedMarket] !== cachedQuery.dataUpdatedAt
     ) {
       appliedCacheAtRef.current[selectedMarket] = cachedQuery.dataUpdatedAt;
       setMarketStocks(selectedMarket, cachedQuery.data);
       setErrorMessage(null);
     }
-  }, [cachedQuery.data, cachedQuery.dataUpdatedAt, selectedMarket, setMarketStocks]);
+  }, [activeScanMarket, cachedQuery.data, cachedQuery.dataUpdatedAt, selectedMarket, setMarketStocks]);
 
   useEffect(() => {
     if (cachedQuery.isError && !rawStocks.some((stock) => stock.market === selectedMarket)) {
@@ -103,6 +104,7 @@ export default function ScreenerPage() {
       if (scanTimeoutRef.current !== null) {
         window.clearTimeout(scanTimeoutRef.current);
       }
+      eventSourceRef.current = null;
     };
   }, []);
 
@@ -139,63 +141,42 @@ export default function ScreenerPage() {
       eventSourceRef.current?.close();
       eventSourceRef.current = null;
       clearScanTimeout();
-      activeScanMarketRef.current = null;
+      setActiveScanMarket(null);
       setIsScanning(false);
       setScanStatus(null);
       setNotice(null);
       setErrorMessage(message);
     },
-    [clearScanTimeout, setIsScanning]
+    [clearScanTimeout, setActiveScanMarket, setIsScanning, setScanStatus]
   );
 
   const armScanTimeout = useCallback(
-    (runID: number) => {
+    (runID: number, market: Market) => {
       clearScanTimeout();
       scanTimeoutRef.current = window.setTimeout(() => {
         if (scanRunRef.current !== runID) return;
         stopScanWithError('数据源连接超时，请检查网络连接、代理或后端服务状态后重试');
-        void queryClient.invalidateQueries({ queryKey: ['screener-results', selectedMarket] });
+        void queryClient.invalidateQueries({ queryKey: ['screener-results', market] });
       }, SCAN_STALL_TIMEOUT_MS);
     },
-    [clearScanTimeout, queryClient, selectedMarket, stopScanWithError]
+    [clearScanTimeout, queryClient, stopScanWithError]
   );
 
-  const startScan = useCallback(() => {
-    eventSourceRef.current?.close();
-    clearScanTimeout();
-    retryRef.current = 0;
-    scanRunRef.current += 1;
-    const runID = scanRunRef.current;
-    setErrorMessage(null);
-    setNotice(null);
-    setScanStatus(null);
-
-    if (typeof navigator !== 'undefined' && !navigator.onLine) {
-      setErrorMessage('当前浏览器处于离线状态，请检查网络连接后重试');
-      return;
-    }
-
-    activeScanMarketRef.current = selectedMarket;
-    clearMarketResults(selectedMarket);
-    setIsScanning(true);
-    setScanProgress({ analyzed: 0, total: 0 });
-    setScanStatus('正在连接后端服务');
-    armScanTimeout(runID);
-
-    const connect = () => {
+  const connectToScan = useCallback(
+    function connectToScan(runID: number, market: Market) {
       if (scanRunRef.current !== runID) return;
-      const source = new EventSource(API_BASE_URL + '/screener/scan?market=' + selectedMarket);
+      const source = new EventSource(API_BASE_URL + '/screener/scan?market=' + market);
       eventSourceRef.current = source;
 
       source.onopen = () => {
         if (scanRunRef.current !== runID) return;
         setScanStatus('已连接后端，正在请求数据源');
-        armScanTimeout(runID);
+        armScanTimeout(runID, market);
       };
 
       source.onmessage = (message) => {
         if (scanRunRef.current !== runID) return;
-        armScanTimeout(runID);
+        armScanTimeout(runID, market);
         try {
           const event = JSON.parse(message.data) as ScanEvent;
           if (event.type === 'stock_result') {
@@ -215,10 +196,10 @@ export default function ScreenerPage() {
             setScanProgress(event.data);
             setIsScanning(false);
             setScanStatus(null);
-            activeScanMarketRef.current = null;
+            setActiveScanMarket(null);
             source.close();
             eventSourceRef.current = null;
-            void queryClient.invalidateQueries({ queryKey: ['screener-results', selectedMarket] });
+            void queryClient.invalidateQueries({ queryKey: ['screener-results', market] });
           }
           if (event.type === 'scan_error') {
             stopScanWithError(event.data.message || '数据获取失败，请检查网络连接或后端服务状态');
@@ -235,27 +216,72 @@ export default function ScreenerPage() {
         if (retryRef.current < 3) {
           retryRef.current += 1;
           setScanStatus('连接中断，正在第 ' + retryRef.current + ' 次自动重连');
-          armScanTimeout(runID);
-          window.setTimeout(connect, 700 * retryRef.current);
+          armScanTimeout(runID, market);
+          window.setTimeout(() => connectToScan(runID, market), 700 * retryRef.current);
           return;
         }
         stopScanWithError('数据获取失败，请检查网络连接或后端服务状态');
-        void queryClient.invalidateQueries({ queryKey: ['screener-results', selectedMarket] });
+        void queryClient.invalidateQueries({ queryKey: ['screener-results', market] });
       };
-    };
+    },
+    [
+      addStockResult,
+      armScanTimeout,
+      clearScanTimeout,
+      queryClient,
+      setActiveScanMarket,
+      setIsScanning,
+      setScanProgress,
+      setScanStatus,
+      stopScanWithError
+    ]
+  );
 
-    connect();
+  const startScan = useCallback(() => {
+    eventSourceRef.current?.close();
+    clearScanTimeout();
+    retryRef.current = 0;
+    scanRunRef.current += 1;
+    const runID = scanRunRef.current;
+    setErrorMessage(null);
+    setNotice(null);
+    setScanStatus(null);
+
+    if (typeof navigator !== 'undefined' && !navigator.onLine) {
+      setErrorMessage('当前浏览器处于离线状态，请检查网络连接后重试');
+      return;
+    }
+
+    setActiveScanMarket(selectedMarket);
+    setIsScanning(true);
+    setScanProgress({ analyzed: selectedMarketStocks.length, total: Math.max(scanProgress.total, selectedMarketStocks.length) });
+    setScanStatus('正在连接后端服务，准备断点接续');
+    armScanTimeout(runID, selectedMarket);
+    connectToScan(runID, selectedMarket);
   }, [
-    addStockResult,
     armScanTimeout,
     clearScanTimeout,
-    clearMarketResults,
-    queryClient,
+    connectToScan,
+    scanProgress.total,
     selectedMarket,
+    selectedMarketStocks.length,
+    setActiveScanMarket,
     setIsScanning,
     setScanProgress,
-    stopScanWithError
+    setScanStatus
   ]);
+
+  useEffect(() => {
+    if (!isScanning || eventSourceRef.current) return;
+    const market = activeScanMarket ?? selectedMarket;
+    retryRef.current = 0;
+    scanRunRef.current += 1;
+    const runID = scanRunRef.current;
+    setActiveScanMarket(market);
+    setScanStatus('正在接回后台扫描');
+    armScanTimeout(runID, market);
+    connectToScan(runID, market);
+  }, [activeScanMarket, armScanTimeout, connectToScan, isScanning, selectedMarket, setActiveScanMarket, setScanStatus]);
 
   const handleMarketChange = (market: Market) => {
     if (market === selectedMarket) return;
@@ -336,9 +362,9 @@ export default function ScreenerPage() {
               <span className="rounded-full border border-slate-700 bg-slate-950/30 px-4 py-2 text-sm text-slate-400">
                 数据截止 {formatDateCN(selectedMarketDataAsOf)}
               </span>
-              <Button variant="outline" onClick={handleRefresh}>
+              <Button variant="outline" onClick={handleRefresh} disabled={isScanning}>
                 <RefreshCw className="h-4 w-4" />
-                刷新数据
+                刷新覆盖
               </Button>
             </div>
           </header>
@@ -354,7 +380,7 @@ export default function ScreenerPage() {
                 </span>
               </CardTitle>
             </CardHeader>
-            <MarketSelector selectedMarket={selectedMarket} onChange={handleMarketChange} />
+            <MarketSelector selectedMarket={selectedMarket} onChange={handleMarketChange} disabled={isScanning} />
           </Card>
 
           <section className="mt-6 space-y-6">
@@ -386,11 +412,11 @@ export default function ScreenerPage() {
                 <div className="flex flex-wrap gap-3 lg:justify-end">
                   <Button onClick={startScan} disabled={isScanning}>
                     <Activity className="h-4 w-4" />
-                    {isScanning ? '筛选中' : '开始筛选'}
+                    {isScanning ? '扫描中' : '开始/继续扫描'}
                   </Button>
-                  <Button variant="outline" onClick={handleRefresh}>
+                  <Button variant="outline" onClick={handleRefresh} disabled={isScanning}>
                     <RefreshCw className="h-4 w-4" />
-                    刷新数据
+                    刷新覆盖
                   </Button>
                 </div>
               </div>

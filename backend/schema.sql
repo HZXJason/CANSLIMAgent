@@ -72,3 +72,28 @@ CREATE TABLE IF NOT EXISTS trade_journal_entries (
 );
 
 CREATE INDEX IF NOT EXISTS idx_trade_journal_created_at ON trade_journal_entries (created_at DESC);
+
+-- 交易计划：发生在交易日志之前的预案，可执行后关联到日志
+CREATE TABLE IF NOT EXISTS trade_plans (
+  id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  ticker              TEXT NOT NULL,
+  direction           TEXT NOT NULL CHECK (direction IN ('buy', 'sell', 'watch')),
+  status              TEXT NOT NULL DEFAULT 'draft' CHECK (status IN ('draft', 'waiting', 'executed', 'cancelled', 'expired')),
+  plan_date           DATE NOT NULL,
+  valid_until         DATE,
+  entry_trigger       TEXT,
+  entry_price         NUMERIC(12, 4),
+  stop_loss           NUMERIC(12, 4),
+  take_profit         NUMERIC(12, 4),
+  position_size       NUMERIC(6, 2),
+  rationale           TEXT,
+  ai_summary          TEXT,
+  notes               TEXT,
+  executed_journal_id UUID REFERENCES trade_journal_entries(id) ON DELETE SET NULL,
+  executed_at         TIMESTAMPTZ
+);
+
+CREATE INDEX IF NOT EXISTS idx_trade_plans_created_at ON trade_plans (created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_trade_plans_ticker_status ON trade_plans (ticker, status);

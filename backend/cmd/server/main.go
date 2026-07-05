@@ -22,6 +22,8 @@ func main() {
 		log.Fatalf("数据库初始化失败：%v", err)
 	}
 
+	alphaVantageClient := services.NewAlphaVantageClient(cfg.AlphaVantageAPIKey, cfg.RequestTimeout)
+	translationClient := services.NewTranslationClient(cfg.EnableProfileTranslate, cfg.RequestTimeout)
 	fmpClient := services.NewFMPClient(cfg.FMPAPIKey, cfg.RequestTimeout)
 	polygonClient := services.NewPolygonClient(cfg.PolygonAPIKey, cfg.RequestTimeout)
 	freeUniverseClient := services.NewFreeUniverseClient(cfg.EnableFreeUniverse, cfg.RequestTimeout)
@@ -41,13 +43,14 @@ func main() {
 		yfinanceClient,
 		cfg.ScanDelay,
 	)
-	analysisService := services.NewAnalysisService(database, secClient, stooqClient, fmpClient, polygonClient, yahooClient, yfinanceClient)
+	analysisService := services.NewAnalysisService(database, alphaVantageClient, translationClient, secClient, stooqClient, fmpClient, polygonClient, yahooClient, yfinanceClient)
 	screenerHandler := handlers.NewScreenerHandler(scanner)
 	presetHandler := handlers.NewPresetHandler(database)
 	chartsHandler := handlers.NewChartsHandler(analysisService)
 	analysisHandler := handlers.NewAnalysisHandler(analysisService, cfg.AIStreamURL)
 	aiAnalysisHandler := handlers.NewAIAnalysisHandler()
 	journalHandler := handlers.NewJournalHandler(database)
+	tradePlanHandler := handlers.NewTradePlanHandler(database)
 
 	router := gin.Default()
 	router.Use(cors.New(cors.Config{
@@ -70,6 +73,7 @@ func main() {
 		api.POST("/screener/refresh", screenerHandler.Refresh)
 		api.GET("/screener/refresh/:jobID", screenerHandler.RefreshJob)
 		api.GET("/stocks/:symbol/summary", chartsHandler.Summary)
+		api.GET("/stocks/:symbol/profile", chartsHandler.Profile)
 		api.GET("/stocks/:symbol/kline", chartsHandler.KLine)
 		api.GET("/stocks/:symbol/rs", chartsHandler.RS)
 		api.GET("/stocks/:symbol/eps/quarterly", chartsHandler.EPSQuarterly)
@@ -96,6 +100,11 @@ func main() {
 		api.POST("/journal", journalHandler.Create)
 		api.GET("/journal/:id", journalHandler.Get)
 		api.PATCH("/journal/:id", journalHandler.Patch)
+		api.GET("/trade-plans", tradePlanHandler.List)
+		api.POST("/trade-plans", tradePlanHandler.Create)
+		api.GET("/trade-plans/:id", tradePlanHandler.Get)
+		api.PATCH("/trade-plans/:id", tradePlanHandler.Patch)
+		api.POST("/trade-plans/:id/execute", tradePlanHandler.Execute)
 	}
 
 	log.Printf("AlphaLens 后端已启动：http://localhost:%s", cfg.Port)

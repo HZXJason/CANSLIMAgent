@@ -12,6 +12,7 @@ import (
 type Config struct {
 	Port                   string
 	DatabaseURL            string
+	AlphaVantageAPIKey     string
 	FMPAPIKey              string
 	PolygonAPIKey          string
 	EnableFreeUniverse     bool
@@ -20,6 +21,7 @@ type Config struct {
 	EnableStooqData        bool
 	EnableYahooFallback    bool
 	EnableYFinanceFallback bool
+	EnableProfileTranslate bool
 	YFinancePython         string
 	AIStreamURL            string
 	AllowedOrigins         []string
@@ -33,6 +35,7 @@ func Load() Config {
 	return Config{
 		Port:                   getEnv("PORT", "8080"),
 		DatabaseURL:            os.Getenv("DATABASE_URL"),
+		AlphaVantageAPIKey:     os.Getenv("ALPHA_VANTAGE_API_KEY"),
 		FMPAPIKey:              os.Getenv("FMP_API_KEY"),
 		PolygonAPIKey:          os.Getenv("POLYGON_API_KEY"),
 		EnableFreeUniverse:     getEnvBool("ENABLE_FREE_UNIVERSE", true),
@@ -41,6 +44,7 @@ func Load() Config {
 		EnableStooqData:        getEnvBool("ENABLE_STOOQ_DATA", true),
 		EnableYahooFallback:    getEnvBool("ENABLE_YAHOO_FALLBACK", true),
 		EnableYFinanceFallback: getEnvBool("ENABLE_YFINANCE_FALLBACK", true),
+		EnableProfileTranslate: getEnvBool("ENABLE_PROFILE_TRANSLATION", true),
 		YFinancePython:         getEnv("YFINANCE_PYTHON", "python"),
 		AIStreamURL:            os.Getenv("AI_STREAM_URL"),
 		AllowedOrigins:         splitOrigins(getEnv("ALLOWED_ORIGINS", "http://localhost:5173,http://127.0.0.1:5173")),

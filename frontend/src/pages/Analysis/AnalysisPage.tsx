@@ -1,13 +1,15 @@
 import { useEffect } from 'react';
-import { fetchEPSQuarterly, fetchGrossMarginQuarterly, fetchRevenueAnnual, fetchRS, fetchStockSummary } from '../../lib/api';
+import { fetchCompanyProfile, fetchEPSQuarterly, fetchGrossMarginQuarterly, fetchRevenueAnnual, fetchRS, fetchStockSummary } from '../../lib/api';
 import { useAnalysisStore } from '../../stores/analysisStore';
 import type { ChartStatus } from '../../types/analysis';
 import AISection from './ai/AISection';
+import CompanyProfileCard from './CompanyProfileCard';
 import EPSChart from './charts/EPSChart';
 import GrossMarginChart from './charts/GrossMarginChart';
 import RSChart from './charts/RSChart';
 import RevenueChart from './charts/RevenueChart';
 import StockHeader from './StockHeader';
+import TradePlanPanel from './TradePlanPanel';
 
 interface AnalysisPageProps {
   symbol: string;
@@ -45,6 +47,27 @@ export default function AnalysisPage({ symbol, tabName }: AnalysisPageProps) {
       cancelled = true;
     };
   }, [normalized, setSummary, updateChartStatus]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const current = useAnalysisStore.getState().getStateForSymbol(normalized);
+    if (current.companyProfile && current.chartStatus.profile === 'success') return;
+
+    updateChartStatus(normalized, 'profile', 'loading');
+    fetchCompanyProfile(normalized)
+      .then((profile) => {
+        if (cancelled) return;
+        updateState(normalized, { companyProfile: profile });
+        updateChartStatus(normalized, 'profile', profile.description ? 'success' : 'insufficient');
+      })
+      .catch(() => {
+        if (!cancelled) updateChartStatus(normalized, 'profile', 'error');
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [normalized, updateChartStatus, updateState]);
 
   useEffect(() => {
     let cancelled = false;
@@ -121,6 +144,7 @@ export default function AnalysisPage({ symbol, tabName }: AnalysisPageProps) {
     <div className="space-y-6">
       <StockHeader symbol={normalized} tabName={tabName} summary={state.stockSummary} />
       <section className="space-y-6">
+        <CompanyProfileCard data={state.companyProfile} status={state.chartStatus.profile} />
         <RSChart data={state.rsData} status={state.chartStatus.rs} period={state.klinePeriod} />
         <div className="grid gap-6 xl:grid-cols-3">
           <EPSChart data={state.epsData} status={state.chartStatus.eps} />
@@ -128,6 +152,7 @@ export default function AnalysisPage({ symbol, tabName }: AnalysisPageProps) {
           <GrossMarginChart data={state.grossMarginData} status={state.chartStatus.grossMargin} />
         </div>
       </section>
+      <TradePlanPanel symbol={normalized} aiSummary={state.aiDecision?.summary ?? undefined} />
       <AISection symbol={normalized} state={state} />
     </div>
   );

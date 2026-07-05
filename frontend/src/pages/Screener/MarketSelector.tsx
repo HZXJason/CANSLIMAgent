@@ -10,31 +10,32 @@ const markets: Array<{ value: Market; label: string; description: string; hint: 
 interface MarketSelectorProps {
   selectedMarket: Market;
   onChange: (market: Market) => void;
+  disabled?: boolean;
 }
 
-export default function MarketSelector({ selectedMarket, onChange }: MarketSelectorProps) {
+export default function MarketSelector({ selectedMarket, onChange, disabled = false }: MarketSelectorProps) {
   return (
     <div className="grid gap-4 md:grid-cols-3">
       {markets.map((market) => (
         <button
           key={market.value}
-          disabled={market.disabled}
+          disabled={market.disabled || disabled}
           className={cn(
             'group flex min-h-36 flex-col items-start justify-between rounded-[1.25rem] border p-4 text-left transition duration-200',
-            market.disabled
+            market.disabled || disabled
               ? 'cursor-not-allowed border-slate-800 bg-slate-950/20 opacity-55'
               : selectedMarket === market.value
               ? 'border-cyan-400 bg-finance-blue/70 shadow-glow'
               : 'border-slate-800 bg-slate-950/20 hover:border-cyan-400/40 hover:bg-slate-800/60'
           )}
           onClick={() => {
-            if (!market.disabled) onChange(market.value);
+            if (!market.disabled && !disabled) onChange(market.value);
           }}
         >
           <span
             className={cn(
               'rounded-full border px-3 py-1 text-xs font-semibold',
-              market.disabled
+              market.disabled || disabled
                 ? 'border-slate-700 bg-slate-900 text-slate-500'
                 : selectedMarket === market.value
                 ? 'border-emerald-300/50 bg-emerald-400 text-slate-950'

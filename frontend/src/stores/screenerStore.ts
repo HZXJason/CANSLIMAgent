@@ -30,6 +30,10 @@ interface ScreenerStore {
   clearResults: () => void;
   scanProgress: ScanProgress;
   setScanProgress: (progress: ScanProgress) => void;
+  scanStatus: string | null;
+  setScanStatus: (value: string | null) => void;
+  activeScanMarket: Market | null;
+  setActiveScanMarket: (market: Market | null) => void;
   dataAsOf: string | null;
   setDataAsOf: (value: string | null) => void;
   isScanning: boolean;
@@ -96,6 +100,10 @@ export const useScreenerStore = create<ScreenerStore>((set) => ({
   clearResults: () => set({ rawStocks: [], scanProgress: { analyzed: 0, total: 0 }, dataAsOf: null }),
   scanProgress: { analyzed: 0, total: 0 },
   setScanProgress: (progress) => set({ scanProgress: progress }),
+  scanStatus: null,
+  setScanStatus: (value) => set({ scanStatus: value }),
+  activeScanMarket: null,
+  setActiveScanMarket: (market) => set({ activeScanMarket: market }),
   dataAsOf: null,
   setDataAsOf: (value) => set({ dataAsOf: value }),
   isScanning: false,

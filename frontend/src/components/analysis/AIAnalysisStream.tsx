@@ -1,7 +1,6 @@
 import { AlertCircle } from 'lucide-react';
-import ReactMarkdown from 'react-markdown';
-import rehypeSanitize from 'rehype-sanitize';
 import { Collapsible } from '../ui/collapsible';
+import MarkdownContent from './MarkdownContent';
 import type { AIAgentProgress, AIDecision, AIStatus } from '../../types/analysis';
 
 interface AIAnalysisStreamProps {
@@ -49,29 +48,6 @@ function decisionClass(action: string) {
   if (normalized === 'BUY') return 'border-emerald-400/40 bg-emerald-400/10 text-emerald-100';
   if (normalized === 'SELL') return 'border-red-400/40 bg-red-400/10 text-red-100';
   return 'border-amber-300/40 bg-amber-300/10 text-amber-100';
-}
-
-function MarkdownContent({ content }: { content: string }) {
-  return (
-    <div className="text-sm leading-7 text-slate-300">
-      <ReactMarkdown
-        rehypePlugins={[rehypeSanitize]}
-        components={{
-          h1: ({ children }) => <h1 className="mb-4 text-xl font-black text-white">{children}</h1>,
-          h2: ({ children }) => <h2 className="mb-2 mt-5 text-base font-bold text-cyan-100">{children}</h2>,
-          h3: ({ children }) => <h3 className="mb-2 mt-4 text-sm font-bold text-slate-100">{children}</h3>,
-          p: ({ children }) => <p className="my-2 text-slate-300">{children}</p>,
-          ul: ({ children }) => <ul className="my-3 space-y-2 pl-5 text-slate-300">{children}</ul>,
-          ol: ({ children }) => <ol className="my-3 list-decimal space-y-2 pl-5 text-slate-300">{children}</ol>,
-          li: ({ children }) => <li className="list-disc">{children}</li>,
-          strong: ({ children }) => <strong className="font-bold text-white">{children}</strong>,
-          code: ({ children }) => <code className="rounded bg-slate-900 px-1.5 py-0.5 text-cyan-100">{children}</code>
-        }}
-      >
-        {content}
-      </ReactMarkdown>
-    </div>
-  );
 }
 
 export default function AIAnalysisStream({ status, progress, results, decision, error, liveNarration, fallbackReport }: AIAnalysisStreamProps) {

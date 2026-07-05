@@ -314,6 +314,32 @@ def gross_margin_quarterly(symbol):
     return 0
 
 
+def profile(symbol):
+    ticker = yf.Ticker(symbol)
+    try:
+        info = ticker.get_info()
+    except AttributeError:
+        info = ticker.info
+    if not info:
+        return fail("yfinance 公司简介为空")
+
+    description = str(info.get("longBusinessSummary") or "").strip()
+    if not description:
+        return fail("yfinance 公司简介为空")
+
+    emit(
+        {
+            "symbol": str(info.get("symbol") or symbol).strip().upper(),
+            "name": str(info.get("longName") or info.get("shortName") or "").strip(),
+            "description": " ".join(description.split()),
+            "sector": str(info.get("sector") or "").strip(),
+            "industry": str(info.get("industry") or "").strip(),
+            "website": str(info.get("website") or "").strip(),
+        }
+    )
+    return 0
+
+
 def normalize_symbol(value):
     return str(value).strip().replace(".", "-").upper()
 
@@ -376,6 +402,8 @@ def main():
         return annual_revenue(symbol)
     if command == "gross_margin_quarterly":
         return gross_margin_quarterly(symbol)
+    if command == "profile":
+        return profile(symbol)
     if command == "candles":
         period = sys.argv[3].lower() if len(sys.argv) >= 4 else "daily"
         return candles(symbol, period)

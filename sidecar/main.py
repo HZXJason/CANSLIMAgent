@@ -65,17 +65,8 @@ AGENT_DISPLAY_NAMES = {
     "PortfolioManager": "投资组合经理",
 }
 
-WAITING_NARRATION = [
-    ("AnalysisAgent", "我已经接到分析任务，正在启动多智能体研究流程。\n"),
-    ("DataCollector", "正在收集行情、基本面、新闻和情绪数据；这个阶段可能会慢一些。\n"),
-    ("AnalysisAgent", "分析仍在进行，我会持续更新进度，避免页面长时间空白。\n"),
-    ("ResearchTeam", "各个分析师会先形成独立观点，随后进入多空辩论和风控评估。\n"),
-    ("PortfolioManager", "最终会汇总成操作建议，并保留可写回 N 标签的完整分析摘要。\n"),
-]
-
 REPORT_DELTA_CHARS = int(os.getenv("AI_REPORT_DELTA_CHARS", "3"))
 REPORT_DELTA_DELAY = float(os.getenv("AI_REPORT_DELTA_DELAY", "0.012"))
-NARRATION_DELTA_DELAY = float(os.getenv("AI_NARRATION_DELTA_DELAY", "0.02"))
 NARRATION_INTERVAL_SECONDS = float(os.getenv("AI_NARRATION_INTERVAL_SECONDS", "2.5"))
 
 LLM_API_ENV = {
@@ -305,24 +296,9 @@ async def analysis_events(request: AnalysisRequest):
     future = loop.run_in_executor(None, run_analysis, request, callbacks)
 
     try:
-        narration_index = 0
         while not future.done():
-            emitted_model_output = False
             async for event in drain_model_output(model_output_queue):
-                emitted_model_output = True
                 yield event
-            if not emitted_model_output:
-                agent, message = WAITING_NARRATION[narration_index % len(WAITING_NARRATION)]
-                narration_index += 1
-                yield sse("progress", {"agent": agent, "status": "running", "message": message.strip()})
-                async for event in stream_delta(
-                    "narration_delta",
-                    message,
-                    {"agent": agent},
-                    chunk_size=1,
-                    delay=NARRATION_DELTA_DELAY,
-                ):
-                    yield event
             yield sse("heartbeat", {})
             await asyncio.sleep(NARRATION_INTERVAL_SECONDS)
 

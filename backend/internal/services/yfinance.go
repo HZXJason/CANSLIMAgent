@@ -208,6 +208,42 @@ func (c *YFinanceClient) FetchGrossMarginQuarterly(ctx context.Context, symbol s
 	}, nil
 }
 
+func (c *YFinanceClient) FetchCompanyProfile(ctx context.Context, symbol string) (CompanyProfile, error) {
+	if err := c.ensureAvailable(); err != nil {
+		return CompanyProfile{}, err
+	}
+
+	var payload struct {
+		Error       string `json:"error"`
+		Symbol      string `json:"symbol"`
+		Name        string `json:"name"`
+		Description string `json:"description"`
+		Sector      string `json:"sector"`
+		Industry    string `json:"industry"`
+		Website     string `json:"website"`
+	}
+	if err := c.runJSON(ctx, &payload, "profile", symbol); err != nil {
+		return CompanyProfile{}, err
+	}
+	if payload.Error != "" {
+		return CompanyProfile{}, errors.New(payload.Error)
+	}
+	profile := CompanyProfile{
+		Symbol:      normalizeSymbol(firstNonEmpty(payload.Symbol, symbol)),
+		Name:        strings.TrimSpace(payload.Name),
+		Description: cleanDescription(payload.Description),
+		Sector:      strings.TrimSpace(payload.Sector),
+		Industry:    strings.TrimSpace(payload.Industry),
+		Website:     strings.TrimSpace(payload.Website),
+		Source:      "yfinance",
+		UpdatedAt:   time.Now().UTC().Format("2006-01-02"),
+	}
+	if profile.Description == "" {
+		return CompanyProfile{}, errors.New("yfinance 公司简介为空")
+	}
+	return profile, nil
+}
+
 func (c *YFinanceClient) ensureAvailable() error {
 	if !c.Configured() {
 		return errors.New("yfinance 兜底未启用")

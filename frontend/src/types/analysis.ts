@@ -51,6 +51,17 @@ export interface StockSummary {
   n_analysis_summary: string;
 }
 
+export interface CompanyProfile {
+  symbol: string;
+  name: string;
+  description: string;
+  sector: string;
+  industry: string;
+  website: string;
+  source: string;
+  updated_at: string;
+}
+
 export interface Candle {
   date: string;
   open: number;
@@ -150,6 +161,7 @@ export interface AIDecision {
 
 export interface SymbolAnalysisState {
   stockSummary: StockSummary | null;
+  companyProfile: CompanyProfile | null;
   klineData: KLineData | null;
   klinePeriod: KLinePeriod;
   rsData: RSData | null;
@@ -158,6 +170,7 @@ export interface SymbolAnalysisState {
   grossMarginData: GrossMarginData | null;
   chartStatus: {
     summary: ChartStatus;
+    profile: ChartStatus;
     kline: ChartStatus;
     rs: ChartStatus;
     eps: ChartStatus;

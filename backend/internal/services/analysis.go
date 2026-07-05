@@ -24,13 +24,15 @@ const (
 )
 
 type AnalysisService struct {
-	db       *gorm.DB
-	sec      *SECClient
-	stooq    *StooqClient
-	fmp      *FMPClient
-	polygon  *PolygonClient
-	yahoo    *YahooClient
-	yfinance *YFinanceClient
+	db           *gorm.DB
+	alphaVantage *AlphaVantageClient
+	translator   *TranslationClient
+	sec          *SECClient
+	stooq        *StooqClient
+	fmp          *FMPClient
+	polygon      *PolygonClient
+	yahoo        *YahooClient
+	yfinance     *YFinanceClient
 }
 
 type StockSummary struct {
@@ -41,6 +43,17 @@ type StockSummary struct {
 	DataAsOf         string         `json:"data_as_of"`
 	NAnalysisAt      *time.Time     `json:"n_analysis_at"`
 	NAnalysisSummary string         `json:"n_analysis_summary"`
+}
+
+type CompanyProfile struct {
+	Symbol      string `json:"symbol"`
+	Name        string `json:"name"`
+	Description string `json:"description"`
+	Sector      string `json:"sector"`
+	Industry    string `json:"industry"`
+	Website     string `json:"website"`
+	Source      string `json:"source"`
+	UpdatedAt   string `json:"updated_at"`
 }
 
 type Candle struct {
@@ -120,15 +133,17 @@ type candleSourceResult struct {
 	candles []Candle
 }
 
-func NewAnalysisService(database *gorm.DB, sec *SECClient, stooq *StooqClient, fmp *FMPClient, polygon *PolygonClient, yahoo *YahooClient, yfinance *YFinanceClient) *AnalysisService {
+func NewAnalysisService(database *gorm.DB, alphaVantage *AlphaVantageClient, translator *TranslationClient, sec *SECClient, stooq *StooqClient, fmp *FMPClient, polygon *PolygonClient, yahoo *YahooClient, yfinance *YFinanceClient) *AnalysisService {
 	return &AnalysisService{
-		db:       database,
-		sec:      sec,
-		stooq:    stooq,
-		fmp:      fmp,
-		polygon:  polygon,
-		yahoo:    yahoo,
-		yfinance: yfinance,
+		db:           database,
+		alphaVantage: alphaVantage,
+		translator:   translator,
+		sec:          sec,
+		stooq:        stooq,
+		fmp:          fmp,
+		polygon:      polygon,
+		yahoo:        yahoo,
+		yfinance:     yfinance,
 	}
 }
 
@@ -157,6 +172,46 @@ func (s *AnalysisService) StockSummary(ctx context.Context, symbol string) (Stoc
 		NAnalysisAt:      stock.Metric.NAnalysisAt,
 		NAnalysisSummary: stock.Metric.NAnalysisSummary,
 	}, nil
+}
+
+func (s *AnalysisService) CompanyProfile(ctx context.Context, symbol string) (CompanyProfile, error) {
+	symbol = normalizeSymbol(symbol)
+	if symbol == "" {
+		return CompanyProfile{}, errors.New("股票代码不能为空")
+	}
+
+	failures := []string{}
+	if s.alphaVantage != nil && s.alphaVantage.Configured() {
+		profile, err := s.alphaVantage.FetchCompanyProfile(ctx, symbol)
+		if err == nil {
+			return s.localizeCompanyProfile(ctx, ensureProfileName(ctx, s.db, profile)), nil
+		}
+		failures = append(failures, "Alpha Vantage: "+err.Error())
+	} else {
+		failures = append(failures, "Alpha Vantage: not configured")
+	}
+
+	if s.yfinance != nil && s.yfinance.Configured() {
+		profile, err := s.yfinance.FetchCompanyProfile(ctx, symbol)
+		if err == nil {
+			return s.localizeCompanyProfile(ctx, ensureProfileName(ctx, s.db, profile)), nil
+		}
+		failures = append(failures, "yfinance: "+err.Error())
+	} else {
+		failures = append(failures, "yfinance: not configured")
+	}
+
+	if s.fmp != nil && s.fmp.Configured() {
+		profile, err := s.fmp.FetchCompanyProfile(ctx, symbol)
+		if err == nil {
+			return s.localizeCompanyProfile(ctx, ensureProfileName(ctx, s.db, profile)), nil
+		}
+		failures = append(failures, "FMP: "+err.Error())
+	} else {
+		failures = append(failures, "FMP: not configured")
+	}
+
+	return CompanyProfile{}, errors.New(strings.Join(failures, "；"))
 }
 
 func (s *AnalysisService) KLine(ctx context.Context, symbol string, period string) (KLineData, error) {
@@ -863,11 +918,21 @@ func buildRSLine(stockCandles []Candle, benchmarkCandles []Candle, period string
 		}
 		stockReturn := (current.Close - stockBase.Close) / math.Abs(stockBase.Close) * 100
 		benchmarkReturn := (benchmarkCurrent.Close - benchmarkBase.Close) / math.Abs(benchmarkBase.Close) * 100
-		value := 50 + (stockReturn-benchmarkReturn)*0.8
-		value = math.Max(1, math.Min(99, value))
-		line = append(line, RSPoint{Date: current.Date, Value: round2(value)})
+		line = append(line, RSPoint{Date: current.Date, Value: round2(rsScore(stockReturn, benchmarkReturn))})
 	}
 	return line
+}
+
+func rsScore(stockReturn float64, benchmarkReturn float64) float64 {
+	const (
+		scoreRange   = 98
+		neutralSlope = 0.8
+	)
+
+	relativeReturn := stockReturn - benchmarkReturn
+	scale := scoreRange / (math.Pi * neutralSlope)
+	value := 50 + (scoreRange/math.Pi)*math.Atan(relativeReturn/scale)
+	return math.Max(1, math.Min(99, value))
 }
 
 func lastRSDate(points []RSPoint) string {
@@ -910,4 +975,66 @@ func statementQuarter(row incomeStatement) string {
 	}
 	quarter := int((date.Month()-1)/3) + 1
 	return fmt.Sprintf("%dQ%d", year, quarter)
+}
+
+func ensureProfileName(ctx context.Context, db *gorm.DB, profile CompanyProfile) CompanyProfile {
+	profile.Symbol = normalizeSymbol(profile.Symbol)
+	profile.Description = cleanDescription(profile.Description)
+	profile.Sector = strings.TrimSpace(profile.Sector)
+	profile.Industry = strings.TrimSpace(profile.Industry)
+	profile.Website = strings.TrimSpace(profile.Website)
+	if profile.Name != "" || db == nil || profile.Symbol == "" {
+		return profile
+	}
+
+	var stock models.Stock
+	if err := db.WithContext(ctx).Where("symbol = ?", profile.Symbol).Order("market asc").First(&stock).Error; err == nil {
+		profile.Name = stock.Name
+	}
+	return profile
+}
+
+func (s *AnalysisService) localizeCompanyProfile(ctx context.Context, profile CompanyProfile) CompanyProfile {
+	if s.translator == nil || !s.translator.Configured() {
+		return profile
+	}
+
+	translated := false
+	if value, err := s.translator.TranslateToChinese(ctx, profile.Description); err == nil && strings.TrimSpace(value) != "" {
+		if value != profile.Description {
+			translated = true
+		}
+		profile.Description = value
+	}
+	if value, err := s.translator.TranslateToChinese(ctx, profile.Sector); err == nil && strings.TrimSpace(value) != "" {
+		if value != profile.Sector {
+			translated = true
+		}
+		profile.Sector = value
+	}
+	if value, err := s.translator.TranslateToChinese(ctx, profile.Industry); err == nil && strings.TrimSpace(value) != "" {
+		if value != profile.Industry {
+			translated = true
+		}
+		profile.Industry = value
+	}
+	if translated && profile.Source != "" && !strings.Contains(profile.Source, "Google Translate") {
+		profile.Source = profile.Source + " · Google Translate"
+	}
+	return profile
+}
+
+func cleanDescription(value string) string {
+	value = strings.TrimSpace(value)
+	value = strings.Join(strings.Fields(value), " ")
+	return value
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return strings.TrimSpace(value)
+		}
+	}
+	return ""
 }

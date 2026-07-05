@@ -26,6 +26,16 @@ func (h *ChartsHandler) Summary(c *gin.Context) {
 	OK(c, data)
 }
 
+func (h *ChartsHandler) Profile(c *gin.Context) {
+	symbol := normalizeSymbolParam(c.Param("symbol"))
+	data, err := h.analysis.CompanyProfile(c.Request.Context(), symbol)
+	if err != nil {
+		Fail(c, http.StatusBadRequest, err.Error())
+		return
+	}
+	OK(c, data)
+}
+
 func (h *ChartsHandler) KLine(c *gin.Context) {
 	symbol := normalizeSymbolParam(c.Param("symbol"))
 	period := c.DefaultQuery("period", services.PeriodDaily)

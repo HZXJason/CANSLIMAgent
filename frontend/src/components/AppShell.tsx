@@ -1,10 +1,11 @@
-import { BarChart3, BookOpenCheck, Filter, Settings } from 'lucide-react';
+import { BarChart3, BookOpenCheck, ClipboardList, Filter, Settings } from 'lucide-react';
 import { NavLink, Outlet } from 'react-router-dom';
 import { cn } from '../lib/utils';
 
 const topItems = [
   { to: '/screener', label: '筛选器', icon: Filter },
   { to: '/analysis', label: '个股分析', icon: BarChart3 },
+  { to: '/trade-plans', label: '交易计划', icon: ClipboardList },
   { to: '/journal', label: '交易日志', icon: BookOpenCheck }
 ];
 
