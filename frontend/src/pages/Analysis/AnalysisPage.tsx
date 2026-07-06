@@ -1,11 +1,12 @@
-import { useEffect } from 'react';
-import { fetchCompanyProfile, fetchEPSQuarterly, fetchGrossMarginQuarterly, fetchRevenueAnnual, fetchRS, fetchStockSummary } from '../../lib/api';
-import { useAnalysisStore } from '../../stores/analysisStore';
+import { useEffect, useMemo } from 'react';
+import { fetchCompanyProfile, fetchEPSQuarterly, fetchGrossMarginQuarterly, fetchKLine, fetchRevenueAnnual, fetchRS, fetchSecondLayerData, fetchStockSummary } from '../../lib/api';
+import { createInitialAnalysisState, useAnalysisStore } from '../../stores/analysisStore';
 import type { ChartStatus } from '../../types/analysis';
 import AISection from './ai/AISection';
 import CompanyProfileCard from './CompanyProfileCard';
 import EPSChart from './charts/EPSChart';
 import GrossMarginChart from './charts/GrossMarginChart';
+import KLineChart from './charts/KLineChart';
 import RSChart from './charts/RSChart';
 import RevenueChart from './charts/RevenueChart';
 import StockHeader from './StockHeader';
@@ -22,8 +23,10 @@ function statusForLength(length: number): ChartStatus {
 
 export default function AnalysisPage({ symbol, tabName }: AnalysisPageProps) {
   const normalized = symbol.toUpperCase();
-  const state = useAnalysisStore((store) => store.analysisStates[normalized] ?? store.getStateForSymbol(normalized));
+  const fallbackState = useMemo(() => createInitialAnalysisState(), [normalized]);
+  const state = useAnalysisStore((store) => store.analysisStates[normalized]) ?? fallbackState;
   const setSummary = useAnalysisStore((store) => store.setSummary);
+  const setKLinePeriod = useAnalysisStore((store) => store.setKLinePeriod);
   const updateState = useAnalysisStore((store) => store.updateState);
   const updateChartStatus = useAnalysisStore((store) => store.updateChartStatus);
 
@@ -51,7 +54,7 @@ export default function AnalysisPage({ symbol, tabName }: AnalysisPageProps) {
   useEffect(() => {
     let cancelled = false;
     const current = useAnalysisStore.getState().getStateForSymbol(normalized);
-    if (current.companyProfile && current.chartStatus.profile === 'success') return;
+    if (current.companyProfile && current.chartStatus.profile !== 'loading') return;
 
     updateChartStatus(normalized, 'profile', 'loading');
     fetchCompanyProfile(normalized)
@@ -68,6 +71,29 @@ export default function AnalysisPage({ symbol, tabName }: AnalysisPageProps) {
       cancelled = true;
     };
   }, [normalized, updateChartStatus, updateState]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const period = state.klinePeriod;
+    const current = useAnalysisStore.getState().getStateForSymbol(normalized);
+    if (current.klineData?.period === period) return;
+
+    updateChartStatus(normalized, 'kline', 'loading');
+
+    fetchKLine(normalized, period)
+      .then((data) => {
+        if (cancelled) return;
+        updateState(normalized, { klineData: data });
+        updateChartStatus(normalized, 'kline', statusForLength(data.candles.length));
+      })
+      .catch(() => {
+        if (!cancelled) updateChartStatus(normalized, 'kline', 'error');
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [normalized, state.klinePeriod, updateChartStatus, updateState]);
 
   useEffect(() => {
     let cancelled = false;
@@ -95,6 +121,19 @@ export default function AnalysisPage({ symbol, tabName }: AnalysisPageProps) {
   useEffect(() => {
     let cancelled = false;
     const current = useAnalysisStore.getState().getStateForSymbol(normalized);
+
+    if (!current.secondLayerData) {
+      updateChartStatus(normalized, 'secondLayer', 'loading');
+      fetchSecondLayerData(normalized)
+        .then((data) => {
+          if (cancelled) return;
+          updateState(normalized, { secondLayerData: data });
+          updateChartStatus(normalized, 'secondLayer', data ? 'success' : 'insufficient');
+        })
+        .catch(() => {
+          if (!cancelled) updateChartStatus(normalized, 'secondLayer', 'error');
+        });
+    }
 
     if (!current.epsData) {
       updateChartStatus(normalized, 'eps', 'loading');
@@ -145,6 +184,7 @@ export default function AnalysisPage({ symbol, tabName }: AnalysisPageProps) {
       <StockHeader symbol={normalized} tabName={tabName} summary={state.stockSummary} />
       <section className="space-y-6">
         <CompanyProfileCard data={state.companyProfile} status={state.chartStatus.profile} />
+        <KLineChart data={state.klineData} status={state.chartStatus.kline} period={state.klinePeriod} onPeriodChange={(period) => setKLinePeriod(normalized, period)} />
         <RSChart data={state.rsData} status={state.chartStatus.rs} period={state.klinePeriod} />
         <div className="grid gap-6 xl:grid-cols-3">
           <EPSChart data={state.epsData} status={state.chartStatus.eps} />

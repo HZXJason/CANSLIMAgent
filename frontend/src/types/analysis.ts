@@ -17,6 +17,42 @@ export interface AnalysisConfig {
   api_keys: Record<string, string>;
 }
 
+export interface AIKLineContext {
+  symbol: string;
+  period: KLinePeriod;
+  source: string;
+  data_as_of: string;
+  recent_candles: Candle[];
+}
+
+export interface AIAnalysisContext {
+  stock_summary: StockSummary | null;
+  company_profile: CompanyProfile | null;
+  second_layer_data: SecondLayerData | null;
+  kline: AIKLineContext | null;
+  rs: RSData | null;
+  eps: EPSData | null;
+  revenue: RevenueData | null;
+  gross_margin: GrossMarginData | null;
+  chart_status: Record<string, ChartStatus>;
+  derived: Record<string, unknown>;
+}
+
+export interface SecondLayerData {
+  symbol?: string;
+  name?: string;
+  source?: string;
+  data_as_of?: string | null;
+  company?: Record<string, unknown>;
+  supply?: Record<string, unknown>;
+  valuation?: Record<string, unknown>;
+  analyst_expectations?: Record<string, unknown>;
+  financial_quality?: Record<string, unknown>;
+  events?: Record<string, unknown>;
+  earnings_history?: Array<Record<string, unknown>>;
+  [key: string]: unknown;
+}
+
 export interface AIProviderConfig {
   id: string;
   name: string;
@@ -32,6 +68,7 @@ export interface AIAnalystConfig {
   id: string;
   name: string;
   description: string;
+  default_enabled?: boolean;
 }
 
 export interface AIAnalysisConfigResponse {
@@ -168,6 +205,7 @@ export interface SymbolAnalysisState {
   epsData: EPSData | null;
   revenueData: RevenueData | null;
   grossMarginData: GrossMarginData | null;
+  secondLayerData: SecondLayerData | null;
   chartStatus: {
     summary: ChartStatus;
     profile: ChartStatus;
@@ -176,6 +214,7 @@ export interface SymbolAnalysisState {
     eps: ChartStatus;
     revenue: ChartStatus;
     grossMargin: ChartStatus;
+    secondLayer: ChartStatus;
   };
   aiStatus: AIStatus;
   thoughtLines: ThoughtLine[];

@@ -5,6 +5,7 @@ import AIAnalysisStream from '../../../components/analysis/AIAnalysisStream';
 import { Card } from '../../../components/ui/card';
 import { ConfirmDialog } from '../../../components/ui/confirm-dialog';
 import { useAIStream } from '../../../hooks/useAIStream';
+import { buildAIAnalysisContext } from '../../../lib/aiAnalysisContext';
 import type { SymbolAnalysisState } from '../../../types/analysis';
 import AIActions from './AIActions';
 
@@ -29,7 +30,7 @@ export default function AISection({ symbol, state }: AISectionProps) {
 
   const runAnalysis = (config: AnalysisConfig) => {
     lastConfigRef.current = config;
-    start(config);
+    start(config, buildAIAnalysisContext(state));
   };
 
   const requestAnalysis = (config: AnalysisConfig) => {

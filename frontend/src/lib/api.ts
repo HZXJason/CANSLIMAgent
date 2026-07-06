@@ -9,6 +9,7 @@ import type {
   NLabelResponse,
   RevenueData,
   RSData,
+  SecondLayerData,
   StockSummary
 } from '../types/analysis';
 import type { JournalEntry, JournalReflectionInput, NewJournalEntryInput } from '../types/journal';
@@ -93,6 +94,10 @@ export function fetchRevenueAnnual(symbol: string) {
 
 export function fetchGrossMarginQuarterly(symbol: string) {
   return request<GrossMarginData>('/stocks/' + encodeURIComponent(symbol) + '/margin/gross/quarterly');
+}
+
+export function fetchSecondLayerData(symbol: string) {
+  return request<SecondLayerData>('/stocks/' + encodeURIComponent(symbol) + '/second-layer-data');
 }
 
 export function fetchAIAnalysisConfig() {

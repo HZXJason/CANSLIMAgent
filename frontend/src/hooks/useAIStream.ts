@@ -1,7 +1,7 @@
 import { useCallback } from 'react';
 import { API_BASE_URL } from '../lib/api';
 import { useAnalysisStore } from '../stores/analysisStore';
-import type { AnalysisConfig } from '../types/analysis';
+import type { AIAnalysisContext, AnalysisConfig } from '../types/analysis';
 
 interface StreamConnection {
   abortController: AbortController;
@@ -12,7 +12,15 @@ interface ParsedSSEEvent {
   data: string;
 }
 
+interface StreamTextBuffer {
+  narration: string;
+  report: string;
+  timer: ReturnType<typeof setTimeout> | null;
+}
+
 const connections = new Map<string, StreamConnection>();
+const textBuffers = new Map<string, StreamTextBuffer>();
+const STREAM_FLUSH_MS = 120;
 
 function normalizeSymbol(symbol: string) {
   return symbol.trim().toUpperCase();
@@ -45,12 +53,63 @@ function parseSSEBlock(block: string): ParsedSSEEvent | null {
   return { event, data: dataLines.join('\n') };
 }
 
+function getTextBuffer(symbol: string) {
+  const normalized = normalizeSymbol(symbol);
+  let buffer = textBuffers.get(normalized);
+  if (!buffer) {
+    buffer = { narration: '', report: '', timer: null };
+    textBuffers.set(normalized, buffer);
+  }
+  return buffer;
+}
+
+function flushTextBuffer(symbol: string) {
+  const normalized = normalizeSymbol(symbol);
+  const buffer = textBuffers.get(normalized);
+  if (!buffer) return;
+  if (buffer.timer) {
+    clearTimeout(buffer.timer);
+    buffer.timer = null;
+  }
+  const narration = buffer.narration;
+  const report = buffer.report;
+  buffer.narration = '';
+  buffer.report = '';
+  if (!narration && !report) return;
+
+  const store = useAnalysisStore.getState();
+  if (narration) store.appendLiveNarration(normalized, narration);
+  if (report) store.appendReport(normalized, report);
+}
+
+function clearTextBuffer(symbol: string) {
+  const normalized = normalizeSymbol(symbol);
+  const buffer = textBuffers.get(normalized);
+  if (buffer?.timer) clearTimeout(buffer.timer);
+  textBuffers.delete(normalized);
+}
+
+function scheduleTextFlush(symbol: string) {
+  const buffer = getTextBuffer(symbol);
+  if (buffer.timer) return;
+  buffer.timer = setTimeout(() => flushTextBuffer(symbol), STREAM_FLUSH_MS);
+}
+
+function appendBufferedText(symbol: string, key: 'narration' | 'report', content: string) {
+  if (!content) return;
+  const buffer = getTextBuffer(symbol);
+  buffer[key] += content;
+  scheduleTextFlush(symbol);
+}
+
 function closeConnection(symbol: string) {
   const normalized = normalizeSymbol(symbol);
   const connection = connections.get(normalized);
-  if (!connection) return;
-  connection.abortController.abort();
-  connections.delete(normalized);
+  if (connection) {
+    connection.abortController.abort();
+    connections.delete(normalized);
+  }
+  clearTextBuffer(normalized);
 }
 
 function handleStreamEvent(symbol: string, parsed: ParsedSSEEvent) {
@@ -60,18 +119,19 @@ function handleStreamEvent(symbol: string, parsed: ParsedSSEEvent) {
 
   if (parsed.event === 'narration_delta') {
     const payload = parseJSON<{ agent: string; content: string }>(parsed.data, { agent: 'AnalysisAgent', content: '' });
-    if (payload.content) store.appendLiveNarration(symbol, payload.content);
+    appendBufferedText(symbol, 'narration', payload.content);
     return;
   }
 
   if (parsed.event === 'report_start') {
+    flushTextBuffer(symbol);
     store.clearLiveNarration(symbol);
     return;
   }
 
   if (parsed.event === 'report_delta') {
     const payload = parseJSON<{ content: string }>(parsed.data, { content: '' });
-    if (payload.content) store.appendReport(symbol, payload.content);
+    appendBufferedText(symbol, 'report', payload.content);
     return;
   }
 
@@ -127,6 +187,7 @@ function handleStreamEvent(symbol: string, parsed: ParsedSSEEvent) {
   }
 
   if (parsed.event === 'done') {
+    flushTextBuffer(symbol);
     store.markDone(symbol);
     closeConnection(symbol);
     return;
@@ -134,6 +195,7 @@ function handleStreamEvent(symbol: string, parsed: ParsedSSEEvent) {
 
   if (parsed.event === 'error') {
     const payload = parseJSON<{ message: string }>(parsed.data, { message: '分析中断，请检查 AI 服务配置后重试' });
+    flushTextBuffer(symbol);
     store.markAIError(symbol, payload.message);
     closeConnection(symbol);
   }
@@ -148,20 +210,21 @@ async function readErrorMessage(response: Response) {
   }
 }
 
-async function connect(symbol: string, config: AnalysisConfig) {
+async function connect(symbol: string, config: AnalysisConfig, context?: AIAnalysisContext) {
   const normalized = normalizeSymbol(symbol);
   closeConnection(normalized);
 
   const abortController = new AbortController();
   connections.set(normalized, { abortController });
   const store = useAnalysisStore.getState();
+  clearTextBuffer(normalized);
   store.resetAI(normalized);
 
   try {
     const response = await fetch(API_BASE_URL + '/analysis/' + encodeURIComponent(normalized) + '/ai', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(config),
+      body: JSON.stringify(context ? { ...config, analysis_context: context } : config),
       signal: abortController.signal
     });
 
@@ -196,10 +259,12 @@ async function connect(symbol: string, config: AnalysisConfig) {
 
     const current = useAnalysisStore.getState().getStateForSymbol(normalized);
     if (current.aiStatus === 'streaming') {
+      flushTextBuffer(normalized);
       store.markDone(normalized);
     }
   } catch (error) {
     if (abortController.signal.aborted) return;
+    flushTextBuffer(normalized);
     store.markAIError(normalized, error instanceof Error ? error.message : '分析中断，请检查网络连接后重新生成');
   } finally {
     const active = connections.get(normalized);
@@ -217,8 +282,8 @@ export function useAIStream(symbol: string) {
   const normalized = normalizeSymbol(symbol);
 
   const start = useCallback(
-    (config: AnalysisConfig) => {
-      void connect(normalized, config);
+    (config: AnalysisConfig, context?: AIAnalysisContext) => {
+      void connect(normalized, config, context);
     },
     [normalized]
   );
