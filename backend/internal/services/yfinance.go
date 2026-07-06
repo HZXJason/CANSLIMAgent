@@ -244,6 +244,24 @@ func (c *YFinanceClient) FetchCompanyProfile(ctx context.Context, symbol string)
 	return profile, nil
 }
 
+func (c *YFinanceClient) FetchSecondLayerData(ctx context.Context, symbol string) (SecondLayerData, error) {
+	if err := c.ensureAvailable(); err != nil {
+		return SecondLayerData{}, err
+	}
+
+	var payload map[string]interface{}
+	if err := c.runJSON(ctx, &payload, "second_layer", symbol); err != nil {
+		return SecondLayerData{}, err
+	}
+	if message, ok := payload["error"].(string); ok && strings.TrimSpace(message) != "" {
+		return SecondLayerData{}, errors.New(message)
+	}
+	if len(payload) == 0 {
+		return SecondLayerData{}, errors.New("yfinance 二层筛选数据为空")
+	}
+	return SecondLayerData(payload), nil
+}
+
 func (c *YFinanceClient) ensureAvailable() error {
 	if !c.Configured() {
 		return errors.New("yfinance 兜底未启用")

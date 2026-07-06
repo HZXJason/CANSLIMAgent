@@ -1,14 +1,20 @@
+import { memo, useCallback, useEffect, useMemo, useState } from 'react';
 import { BadgeCheck, BarChart3, SearchX } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { Badge } from '../../components/ui/badge';
+import { Button } from '../../components/ui/button';
 import { Card } from '../../components/ui/card';
 import { Tooltip } from '../../components/ui/tooltip';
-import { ACTIVE_LABEL_KEYS, labelStatusText } from '../../lib/computeLabels';
+import { SCORE_LABEL_KEYS, SCREENER_FILTER_KEYS, labelStatusText } from '../../lib/computeLabels';
 import { cn } from '../../lib/utils';
 import { useTabStore } from '../../stores/tabStore';
-import type { ComputedStock, LabelKey, LabelResult, Market } from '../../types';
+import type { ComputedStock, LabelResult, Market, ScreenerFilterKey } from '../../types';
 
-const tagOrder: LabelKey[] = ACTIVE_LABEL_KEYS;
+const tagOrder: ScreenerFilterKey[] = SCREENER_FILTER_KEYS;
+const scoreDenominator = SCORE_LABEL_KEYS.length;
+const INITIAL_VISIBLE_STOCKS = 160;
+const VISIBLE_STOCK_INCREMENT = 160;
+const ROW_ANIMATION_LIMIT = 24;
 
 const marketLabel: Record<Market, string> = {
   SP500: '标普500',
@@ -44,7 +50,15 @@ function LabelBadge({ label }: { label: LabelResult }) {
   );
 }
 
-function NLabelBadge() {
+function NLabelBadge({ written }: { written: boolean | null }) {
+  if (!written) {
+    return (
+      <Tooltip content="N：AI 分析尚未写回 New 标签">
+        <Badge variant="neutral">N</Badge>
+      </Tooltip>
+    );
+  }
+
   return (
     <Tooltip content="N：AI 分析已写回的 New 标签">
       <Badge variant="pass">
@@ -69,9 +83,69 @@ function EmptyState({ filtered }: { filtered: boolean }) {
   );
 }
 
+function FilterBadge({ stock, tag }: { stock: ComputedStock; tag: ScreenerFilterKey }) {
+  if (tag === 'N') return <NLabelBadge written={stock.metrics.n} />;
+  return <LabelBadge label={stock.labels[tag]} />;
+}
+
+function stockIdentity(stock: ComputedStock) {
+  return stock.market + ':' + stock.symbol;
+}
+
+interface StockRowProps {
+  stock: ComputedStock;
+  index: number;
+  onOpen: (stock: ComputedStock) => void;
+}
+
+const StockRow = memo(function StockRow({ stock, index, onOpen }: StockRowProps) {
+  const animated = index < ROW_ANIMATION_LIMIT;
+
+  return (
+    <button
+      className={cn(
+        'grid w-full grid-cols-[1fr_1.5fr_2fr_1fr_0.8fr] items-center gap-4 px-5 py-4 text-left transition hover:bg-slate-800/70',
+        animated ? 'animate-fade-in opacity-0' : 'opacity-100'
+      )}
+      style={animated ? { animationDelay: index * 16 + 'ms' } : undefined}
+      onClick={() => onOpen(stock)}
+    >
+      <span className="flex items-center gap-2 font-semibold text-white">
+        <BarChart3 className="h-4 w-4 text-finance-blue" />
+        {stock.symbol}
+      </span>
+      <span className="truncate text-slate-300">{stock.name}</span>
+      <span className="flex flex-wrap gap-2">
+        {tagOrder.map((tag) => (
+          <FilterBadge key={tag} stock={stock} tag={tag} />
+        ))}
+      </span>
+      <span className="text-sm text-slate-400">{marketLabel[stock.market]}</span>
+      <span className="text-right text-sm text-slate-300">
+        {stock.passCount}/{scoreDenominator} · {stock.weightSum}
+      </span>
+    </button>
+  );
+});
+
 export default function StockList({ stocks, hasRawData, filtered }: StockListProps) {
   const navigate = useNavigate();
   const openTab = useTabStore((state) => state.openTab);
+  const [visibleCount, setVisibleCount] = useState(INITIAL_VISIBLE_STOCKS);
+
+  useEffect(() => {
+    setVisibleCount(INITIAL_VISIBLE_STOCKS);
+  }, [stocks]);
+
+  const visibleStocks = useMemo(() => stocks.slice(0, visibleCount), [stocks, visibleCount]);
+  const hiddenCount = stocks.length - visibleStocks.length;
+  const handleOpenStock = useCallback(
+    (stock: ComputedStock) => {
+      openTab(stock.symbol, stock.name);
+      navigate('/analysis/' + stock.symbol, { state: { name: stock.name } });
+    },
+    [navigate, openTab]
+  );
 
   if (!hasRawData || stocks.length === 0) {
     return <EmptyState filtered={filtered && hasRawData} />;
@@ -84,7 +158,9 @@ export default function StockList({ stocks, hasRawData, filtered }: StockListPro
           <p className="text-xs font-semibold uppercase tracking-[0.22em] text-cyan-300/70">Results</p>
           <h2 className="mt-1 text-lg font-bold text-white">候选股票结果</h2>
         </div>
-        <span className="rounded-full border border-slate-700 bg-slate-950/50 px-3 py-1 text-xs text-slate-400">{stocks.length} 支</span>
+        <span className="rounded-full border border-slate-700 bg-slate-950/50 px-3 py-1 text-xs text-slate-400">
+          已显示 {visibleStocks.length}/{stocks.length} 支
+        </span>
       </div>
       <div className="hidden grid-cols-[1fr_1.4fr_2fr_1fr_0.8fr] gap-4 border-b border-slate-800 px-5 py-3 text-xs font-semibold uppercase tracking-wide text-slate-500 md:grid">
         <span>代码</span>
@@ -94,37 +170,20 @@ export default function StockList({ stocks, hasRawData, filtered }: StockListPro
         <span className="text-right">得分</span>
       </div>
       <div className="divide-y divide-slate-900">
-        {stocks.map((stock, index) => (
-          <button
-            key={stock.symbol}
-            className={cn(
-              'grid w-full grid-cols-[1fr_1.5fr_2fr_1fr_0.8fr] items-center gap-4 px-5 py-4 text-left transition hover:bg-slate-800/70',
-              'animate-fade-in opacity-0'
-            )}
-            style={{ animationDelay: index * 35 + 'ms' }}
-            onClick={() => {
-              openTab(stock.symbol, stock.name);
-              navigate('/analysis/' + stock.symbol, { state: { name: stock.name } });
-            }}
-          >
-            <span className="flex items-center gap-2 font-semibold text-white">
-              <BarChart3 className="h-4 w-4 text-finance-blue" />
-              {stock.symbol}
-            </span>
-            <span className="truncate text-slate-300">{stock.name}</span>
-            <span className="flex flex-wrap gap-2">
-              {tagOrder.map((tag) => (
-                <LabelBadge key={tag} label={stock.labels[tag]} />
-              ))}
-              {stock.metrics.n ? <NLabelBadge /> : null}
-            </span>
-            <span className="text-sm text-slate-400">{marketLabel[stock.market]}</span>
-            <span className="text-right text-sm text-slate-300">
-              {stock.passCount}/{tagOrder.length} · {stock.weightSum}
-            </span>
-          </button>
+        {visibleStocks.map((stock, index) => (
+          <StockRow key={stockIdentity(stock)} stock={stock} index={index} onOpen={handleOpenStock} />
         ))}
       </div>
+      {hiddenCount > 0 ? (
+        <div className="border-t border-slate-800 px-5 py-4 text-center">
+          <Button
+            variant="outline"
+            onClick={() => setVisibleCount((count) => Math.min(count + VISIBLE_STOCK_INCREMENT, stocks.length))}
+          >
+            再显示 {Math.min(VISIBLE_STOCK_INCREMENT, hiddenCount)} 支
+          </Button>
+        </div>
+      ) : null}
     </Card>
   );
 }

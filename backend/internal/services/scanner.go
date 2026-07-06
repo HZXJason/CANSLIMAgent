@@ -82,32 +82,34 @@ type scanRun struct {
 }
 
 type ScannerService struct {
-	db           *gorm.DB
-	freeUniverse *FreeUniverseClient
-	sec          *SECClient
-	stooq        *StooqClient
-	fmp          *FMPClient
-	polygon      *PolygonClient
-	yahoo        *YahooClient
-	yfinance     *YFinanceClient
-	scanDelay    time.Duration
-	jobs         sync.Map
-	scanMu       sync.Mutex
-	scanRuns     map[string]*scanRun
+	db            *gorm.DB
+	freeUniverse  *FreeUniverseClient
+	sec           *SECClient
+	institutional *InstitutionalClient
+	stooq         *StooqClient
+	fmp           *FMPClient
+	polygon       *PolygonClient
+	yahoo         *YahooClient
+	yfinance      *YFinanceClient
+	scanDelay     time.Duration
+	jobs          sync.Map
+	scanMu        sync.Mutex
+	scanRuns      map[string]*scanRun
 }
 
-func NewScannerService(database *gorm.DB, freeUniverse *FreeUniverseClient, sec *SECClient, stooq *StooqClient, fmp *FMPClient, polygon *PolygonClient, yahoo *YahooClient, yfinance *YFinanceClient, scanDelay time.Duration) *ScannerService {
+func NewScannerService(database *gorm.DB, freeUniverse *FreeUniverseClient, sec *SECClient, institutional *InstitutionalClient, stooq *StooqClient, fmp *FMPClient, polygon *PolygonClient, yahoo *YahooClient, yfinance *YFinanceClient, scanDelay time.Duration) *ScannerService {
 	return &ScannerService{
-		db:           database,
-		freeUniverse: freeUniverse,
-		sec:          sec,
-		stooq:        stooq,
-		fmp:          fmp,
-		polygon:      polygon,
-		yahoo:        yahoo,
-		yfinance:     yfinance,
-		scanDelay:    scanDelay,
-		scanRuns:     make(map[string]*scanRun),
+		db:            database,
+		freeUniverse:  freeUniverse,
+		sec:           sec,
+		institutional: institutional,
+		stooq:         stooq,
+		fmp:           fmp,
+		polygon:       polygon,
+		yahoo:         yahoo,
+		yfinance:      yfinance,
+		scanDelay:     scanDelay,
+		scanRuns:      make(map[string]*scanRun),
 	}
 }
 
@@ -326,7 +328,7 @@ func (s *ScannerService) cachedResultsForUniverse(ctx context.Context, market st
 
 	resultsBySymbol := make(map[string]StockResult, len(stocks))
 	for _, stock := range stocks {
-		if !isCompleteCachedMetric(stock.Metric) {
+		if !isCompleteCachedMetric(stock.Metric, s.institutional != nil && s.institutional.Configured()) {
 			continue
 		}
 		result := toStockResult(stock)
@@ -347,11 +349,20 @@ func intText(value int) string {
 	return strconv.Itoa(value)
 }
 
-func isCompleteCachedMetric(metric models.StockMetric) bool {
+func isCompleteCachedMetric(metric models.StockMetric, institutionalRequired bool) bool {
 	if metric.ID == 0 {
 		return false
 	}
-	if metric.SDataSufficient && metric.LRSRating == nil {
+	if metric.SDataSufficient && metric.SVolumeRatio == nil {
+		return false
+	}
+	if metric.LDataSufficient && metric.LRSRating == nil {
+		return false
+	}
+	if institutionalRequired && metric.IInstitutionDelta == nil {
+		return false
+	}
+	if metric.IDataSufficient && metric.IInstitutionDelta == nil {
 		return false
 	}
 	return true
@@ -516,6 +527,7 @@ func (s *ScannerService) buildPendingMetric(ctx context.Context, market string, 
 	rsSufficient := false
 
 	s.applyEPSFallback(ctx, stock.Symbol, &metric)
+	s.applyInstitutionalSignal(ctx, stock.Symbol, &metric)
 
 	price, ok := s.fetchPriceSignal(ctx, stock.Symbol, metric.DataAsOf)
 	if ok {
@@ -533,6 +545,18 @@ func (s *ScannerService) buildPendingMetric(ctx context.Context, market string, 
 	}
 
 	return pendingMetric{stock: stock, metric: metric, rsBase: rsBase, rsSufficient: rsSufficient}, true
+}
+
+func (s *ScannerService) applyInstitutionalSignal(ctx context.Context, symbol string, metric *models.StockMetric) {
+	if s.institutional == nil || !s.institutional.Configured() {
+		return
+	}
+	signal, err := s.institutional.FetchInstitutionalSignal(ctx, symbol)
+	if err != nil || !signal.Sufficient || signal.Delta == nil {
+		return
+	}
+	metric.IInstitutionDelta = signal.Delta
+	metric.IDataSufficient = true
 }
 
 func (s *ScannerService) fetchUniverse(ctx context.Context, market string) ([]StockCandidate, error) {
@@ -704,11 +728,11 @@ func toStockResult(stock models.Stock) StockResult {
 		Name:   stock.Name,
 		Market: stock.Market,
 		Metrics: MetricsPayload{
-			C: MetricPayload{Value: floatValue(metric.CEPSGrowthPct), Sufficient: metric.CDataSufficient},
-			A: MetricPayload{Value: metric.AAnnualEPSGrowth, Sufficient: metric.ADataSufficient},
-			S: MetricPayload{Value: floatValue(metric.SVolumeRatio), Sufficient: metric.SDataSufficient},
-			L: MetricPayload{Value: intValue(metric.LRSRating), Sufficient: metric.LDataSufficient},
-			I: MetricPayload{Value: intValue(metric.IInstitutionDelta), Sufficient: metric.IDataSufficient},
+			C: MetricPayload{Value: floatValue(metric.CEPSGrowthPct), Sufficient: metric.CDataSufficient && metric.CEPSGrowthPct != nil},
+			A: MetricPayload{Value: metric.AAnnualEPSGrowth, Sufficient: metric.ADataSufficient && len(metric.AAnnualEPSGrowth) > 0},
+			S: MetricPayload{Value: floatValue(metric.SVolumeRatio), Sufficient: metric.SDataSufficient && metric.SVolumeRatio != nil},
+			L: MetricPayload{Value: intValue(metric.LRSRating), Sufficient: metric.LDataSufficient && metric.LRSRating != nil},
+			I: MetricPayload{Value: intValue(metric.IInstitutionDelta), Sufficient: metric.IDataSufficient && metric.IInstitutionDelta != nil},
 			N: metric.NLabel,
 		},
 		DataAsOf: metric.DataAsOf.Format("2006-01-02"),

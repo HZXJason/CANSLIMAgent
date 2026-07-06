@@ -137,6 +137,70 @@ def pick_statement_row(frame, candidates):
     return None
 
 
+def info_number(info, key, digits=2):
+    return clean_float(info.get(key))
+
+
+def info_percent(info, key):
+    value = clean_float(info.get(key))
+    if value is None:
+        return None
+    return round(value * 100, 2)
+
+
+def info_int(info, key):
+    value = clean_float(info.get(key))
+    if value is None:
+        return None
+    return int(value)
+
+
+def date_text(value):
+    try:
+        if value is None or pd.isna(value):
+            return None
+    except Exception:
+        if value is None:
+            return None
+    try:
+        if isinstance(value, (int, float)):
+            return pd.to_datetime(value, unit="s").date().isoformat()
+        return pd.Timestamp(value).date().isoformat()
+    except Exception:
+        text = str(value).strip()
+        return text or None
+
+
+def pick_scalar(series, date, candidates):
+    if series is None:
+        return None
+    for key in candidates:
+        if key in series.index:
+            try:
+                return clean_float(series.loc[key, date])
+            except Exception:
+                try:
+                    return clean_float(series.loc[key])
+                except Exception:
+                    continue
+    return None
+
+
+def frame_dates(*frames):
+    dates = []
+    seen = set()
+    for frame in frames:
+        if frame is None or frame.empty:
+            continue
+        for column in frame.columns:
+            key = str(column)
+            if key not in seen:
+                seen.add(key)
+                dates.append(column)
+    dates.sort(key=lambda value: pd.Timestamp(value), reverse=True)
+    return dates
+
+
 def eps(symbol):
     ticker = yf.Ticker(symbol)
     quarterly = pick_eps_row(ticker.quarterly_income_stmt)
@@ -340,6 +404,207 @@ def profile(symbol):
     return 0
 
 
+def quarterly_financial_quality(ticker):
+    income = ticker.quarterly_income_stmt
+    cashflow = ticker.quarterly_cashflow
+    balance = ticker.quarterly_balance_sheet
+    dates = frame_dates(income, cashflow, balance)[:8]
+
+    rows = []
+    by_date = {}
+    for date in dates:
+        revenue = pick_scalar(income, date, ["Total Revenue", "Operating Revenue"])
+        gross_profit = pick_scalar(income, date, ["Gross Profit"])
+        operating_income = pick_scalar(income, date, ["Operating Income", "Operating Income Loss"])
+        net_income = pick_scalar(income, date, ["Net Income", "Net Income Common Stockholders"])
+        diluted_eps = pick_scalar(income, date, ["Diluted EPS", "Basic EPS"])
+        unusual_items = pick_scalar(income, date, ["Total Unusual Items", "Total Unusual Items Excluding Goodwill"])
+        unusual_tax_effect = pick_scalar(income, date, ["Tax Effect Of Unusual Items"])
+        normalized_ebitda = pick_scalar(income, date, ["Normalized EBITDA"])
+        operating_cash_flow = pick_scalar(
+            cashflow,
+            date,
+            ["Operating Cash Flow", "Total Cash From Operating Activities", "Net Cash Provided By Operating Activities"],
+        )
+        free_cash_flow = pick_scalar(cashflow, date, ["Free Cash Flow"])
+        capex = pick_scalar(cashflow, date, ["Capital Expenditure", "Capital Expenditures"])
+        receivables = pick_scalar(balance, date, ["Accounts Receivable", "Net Receivables"])
+        inventory = pick_scalar(balance, date, ["Inventory"])
+        total_debt = pick_scalar(balance, date, ["Total Debt"])
+        shares = pick_scalar(balance, date, ["Ordinary Shares Number", "Share Issued"])
+
+        period, report_date = period_label(date)
+        row = {
+            "period": period,
+            "report_date": report_date,
+            "revenue": revenue,
+            "gross_profit": gross_profit,
+            "operating_income": operating_income,
+            "net_income": net_income,
+            "diluted_eps": diluted_eps,
+            "unusual_items": unusual_items,
+            "tax_effect_of_unusual_items": unusual_tax_effect,
+            "normalized_ebitda": normalized_ebitda,
+            "gross_margin": round(gross_profit / revenue * 100, 2) if revenue not in (None, 0) and gross_profit is not None else None,
+            "operating_margin": round(operating_income / revenue * 100, 2) if revenue not in (None, 0) and operating_income is not None else None,
+            "net_margin": round(net_income / revenue * 100, 2) if revenue not in (None, 0) and net_income is not None else None,
+            "operating_cash_flow": operating_cash_flow,
+            "free_cash_flow": free_cash_flow,
+            "capital_expenditure": capex,
+            "receivables": receivables,
+            "inventory": inventory,
+            "total_debt": total_debt,
+            "shares_outstanding": shares,
+        }
+        by_date[date] = row
+        rows.append(row)
+
+    for idx, date in enumerate(dates[: len(rows)]):
+        row = rows[idx]
+        if idx + 4 < len(dates):
+            previous = by_date.get(dates[idx + 4], {})
+            row["revenue_yoy_growth"] = growth(row.get("revenue"), previous.get("revenue"))
+            row["eps_yoy_growth"] = growth(row.get("diluted_eps"), previous.get("diluted_eps"))
+            row["operating_cash_flow_yoy_growth"] = growth(row.get("operating_cash_flow"), previous.get("operating_cash_flow"))
+            row["receivables_yoy_growth"] = growth(row.get("receivables"), previous.get("receivables"))
+            row["inventory_yoy_growth"] = growth(row.get("inventory"), previous.get("inventory"))
+            row["shares_yoy_change_pct"] = growth(row.get("shares_outstanding"), previous.get("shares_outstanding"))
+        else:
+            row["revenue_yoy_growth"] = None
+            row["eps_yoy_growth"] = None
+            row["operating_cash_flow_yoy_growth"] = None
+            row["receivables_yoy_growth"] = None
+            row["inventory_yoy_growth"] = None
+            row["shares_yoy_change_pct"] = None
+        if idx + 1 < len(rows):
+            row["shares_qoq_change_pct"] = growth(row.get("shares_outstanding"), rows[idx + 1].get("shares_outstanding"))
+        else:
+            row["shares_qoq_change_pct"] = None
+
+    return rows
+
+
+def earnings_calendar(ticker, info):
+    calendar = {}
+    try:
+        calendar = ticker.calendar or {}
+    except Exception:
+        calendar = {}
+
+    earnings_date = None
+    raw_earnings = calendar.get("Earnings Date") if isinstance(calendar, dict) else None
+    if isinstance(raw_earnings, list) and raw_earnings:
+        earnings_date = date_text(raw_earnings[0])
+    else:
+        earnings_date = date_text(raw_earnings)
+    if not earnings_date:
+        earnings_date = date_text(info.get("earningsTimestamp"))
+
+    return {
+        "next_earnings_date": earnings_date,
+        "eps_estimate_low": clean_float(calendar.get("Earnings Low")) if isinstance(calendar, dict) else None,
+        "eps_estimate_average": clean_float(calendar.get("Earnings Average")) if isinstance(calendar, dict) else None,
+        "eps_estimate_high": clean_float(calendar.get("Earnings High")) if isinstance(calendar, dict) else None,
+        "revenue_estimate_low": clean_float(calendar.get("Revenue Low")) if isinstance(calendar, dict) else None,
+        "revenue_estimate_average": clean_float(calendar.get("Revenue Average")) if isinstance(calendar, dict) else None,
+        "revenue_estimate_high": clean_float(calendar.get("Revenue High")) if isinstance(calendar, dict) else None,
+    }
+
+
+def earnings_surprises(ticker):
+    try:
+        frame = ticker.earnings_dates
+    except Exception:
+        return []
+    if frame is None or frame.empty:
+        return []
+    rows = []
+    for date, row in frame.head(8).iterrows():
+        rows.append(
+            {
+                "earnings_date": date_text(date),
+                "eps_estimate": clean_float(row.get("EPS Estimate")),
+                "reported_eps": clean_float(row.get("Reported EPS")),
+                "surprise_pct": clean_float(row.get("Surprise(%)")),
+            }
+        )
+    return rows
+
+
+def second_layer(symbol):
+    ticker = yf.Ticker(symbol)
+    try:
+        info = ticker.get_info()
+    except AttributeError:
+        info = ticker.info
+    if not info:
+        return fail("yfinance 二层筛选数据为空")
+
+    payload = {
+        "symbol": str(info.get("symbol") or symbol).strip().upper(),
+        "name": str(info.get("longName") or info.get("shortName") or "").strip(),
+        "source": "yfinance",
+        "data_as_of": date_text(info.get("regularMarketTime")),
+        "company": {
+            "sector": str(info.get("sector") or "").strip() or None,
+            "industry": str(info.get("industry") or "").strip() or None,
+            "market_cap": info_int(info, "marketCap"),
+            "current_price": info_number(info, "currentPrice") or info_number(info, "regularMarketPrice"),
+            "beta": info_number(info, "beta"),
+        },
+        "quote": {
+            "bid": info_number(info, "bid"),
+            "ask": info_number(info, "ask"),
+            "bid_size": info_int(info, "bidSize"),
+            "ask_size": info_int(info, "askSize"),
+            "bid_ask_spread": round(info_number(info, "ask") - info_number(info, "bid"), 4)
+            if info_number(info, "ask") is not None and info_number(info, "bid") is not None
+            else None,
+            "bid_ask_spread_pct": round((info_number(info, "ask") - info_number(info, "bid")) / info_number(info, "currentPrice") * 100, 4)
+            if info_number(info, "ask") is not None and info_number(info, "bid") is not None and info_number(info, "currentPrice") not in (None, 0)
+            else None,
+            "regular_market_volume": info_int(info, "regularMarketVolume"),
+            "average_volume": info_int(info, "averageVolume"),
+            "average_volume_10d": info_int(info, "averageVolume10days") or info_int(info, "averageDailyVolume10Day"),
+        },
+        "supply": {
+            "shares_outstanding": info_int(info, "sharesOutstanding"),
+            "float_shares": info_int(info, "floatShares"),
+            "held_percent_institutions": info_percent(info, "heldPercentInstitutions"),
+            "held_percent_insiders": info_percent(info, "heldPercentInsiders"),
+            "short_percent_of_float": info_percent(info, "shortPercentOfFloat"),
+            "short_ratio": info_number(info, "shortRatio"),
+            "shares_short": info_int(info, "sharesShort"),
+            "short_date": date_text(info.get("dateShortInterest")),
+        },
+        "valuation": {
+            "trailing_pe": info_number(info, "trailingPE"),
+            "forward_pe": info_number(info, "forwardPE"),
+            "price_to_sales_ttm": info_number(info, "priceToSalesTrailing12Months"),
+            "enterprise_value": info_int(info, "enterpriseValue"),
+            "ev_to_sales": info_number(info, "enterpriseToRevenue"),
+            "ev_to_ebitda": info_number(info, "enterpriseToEbitda"),
+            "peg_ratio": info_number(info, "pegRatio"),
+            "price_to_book": info_number(info, "priceToBook"),
+        },
+        "analyst_expectations": {
+            "recommendation_key": str(info.get("recommendationKey") or "").strip() or None,
+            "recommendation_mean": info_number(info, "recommendationMean"),
+            "target_mean_price": info_number(info, "targetMeanPrice"),
+            "target_high_price": info_number(info, "targetHighPrice"),
+            "target_low_price": info_number(info, "targetLowPrice"),
+            "number_of_analyst_opinions": info_int(info, "numberOfAnalystOpinions"),
+        },
+        "financial_quality": {
+            "quarterly": quarterly_financial_quality(ticker),
+        },
+        "events": earnings_calendar(ticker, info),
+        "earnings_history": earnings_surprises(ticker),
+    }
+    emit(payload)
+    return 0
+
+
 def normalize_symbol(value):
     return str(value).strip().replace(".", "-").upper()
 
@@ -404,6 +669,8 @@ def main():
         return gross_margin_quarterly(symbol)
     if command == "profile":
         return profile(symbol)
+    if command == "second_layer":
+        return second_layer(symbol)
     if command == "candles":
         period = sys.argv[3].lower() if len(sys.argv) >= 4 else "daily"
         return candles(symbol, period)

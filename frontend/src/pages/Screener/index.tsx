@@ -422,7 +422,7 @@ export default function ScreenerPage() {
               </div>
               <div className="mt-5 grid gap-3 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-center">
                 <div className="rounded-2xl border border-slate-800 bg-slate-950/35 p-4 text-sm text-slate-400">
-                  建议：扫描结果进入表格前先进行 C/A/L 权重排序，再允许用标签 AND 过滤。
+                  建议：扫描结果先按 C/A/S/L 规则权重排序，筛选标签按 C/A/N/S/L/I 组合过滤。
                 </div>
                 <div className="flex items-center gap-2 text-sm text-slate-400">
                   <DatabaseZap className="h-4 w-4 text-cyan-300" />

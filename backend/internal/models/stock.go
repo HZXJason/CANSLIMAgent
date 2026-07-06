@@ -23,16 +23,16 @@ type StockMetric struct {
 	StockID           uint       `gorm:"not null;uniqueIndex" json:"stock_id"`
 	Stock             *Stock     `gorm:"constraint:OnUpdate:CASCADE,OnDelete:CASCADE;" json:"-"`
 	CEPSGrowthPct     *float64   `gorm:"column:c_eps_growth_pct;type:decimal(10,2)" json:"c_eps_growth_pct"`
-	CDataSufficient   bool       `gorm:"column:c_data_sufficient;default:true" json:"c_data_sufficient"`
+	CDataSufficient   bool       `gorm:"column:c_data_sufficient;default:false" json:"c_data_sufficient"`
 	AAnnualEPSGrowth  []float64  `gorm:"column:a_annual_eps_growth;type:jsonb;serializer:json" json:"a_annual_eps_growth"`
 	AYearsAvailable   int        `gorm:"column:a_years_available" json:"a_years_available"`
-	ADataSufficient   bool       `gorm:"column:a_data_sufficient;default:true" json:"a_data_sufficient"`
+	ADataSufficient   bool       `gorm:"column:a_data_sufficient;default:false" json:"a_data_sufficient"`
 	SVolumeRatio      *float64   `gorm:"column:s_volume_ratio;type:decimal(10,2)" json:"s_volume_ratio"`
-	SDataSufficient   bool       `gorm:"column:s_data_sufficient;default:true" json:"s_data_sufficient"`
+	SDataSufficient   bool       `gorm:"column:s_data_sufficient;default:false" json:"s_data_sufficient"`
 	LRSRating         *int       `gorm:"column:l_rs_rating" json:"l_rs_rating"`
-	LDataSufficient   bool       `gorm:"column:l_data_sufficient;default:true" json:"l_data_sufficient"`
+	LDataSufficient   bool       `gorm:"column:l_data_sufficient;default:false" json:"l_data_sufficient"`
 	IInstitutionDelta *int       `gorm:"column:i_institution_delta" json:"i_institution_delta"`
-	IDataSufficient   bool       `gorm:"column:i_data_sufficient;default:true" json:"i_data_sufficient"`
+	IDataSufficient   bool       `gorm:"column:i_data_sufficient;default:false" json:"i_data_sufficient"`
 	NLabel            *bool      `gorm:"column:n_label" json:"n_label"`
 	NAnalysisAt       *time.Time `gorm:"column:n_analysis_at" json:"n_analysis_at"`
 	NAnalysisSummary  string     `gorm:"column:n_analysis_summary;type:text" json:"n_analysis_summary"`

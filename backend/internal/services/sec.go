@@ -3,6 +3,7 @@ package services
 import (
 	"context"
 	"encoding/json"
+	"encoding/xml"
 	"errors"
 	"fmt"
 	"math"
@@ -57,6 +58,83 @@ type secPeriodValue struct {
 	Filed   string
 	Frame   string
 	Value   float64
+}
+
+type secSubmissions struct {
+	CIK     string   `json:"cik"`
+	Name    string   `json:"name"`
+	Tickers []string `json:"tickers"`
+	Filings struct {
+		Recent secRecentFilings `json:"recent"`
+	} `json:"filings"`
+}
+
+type secRecentFilings struct {
+	AccessionNumber       []string `json:"accessionNumber"`
+	FilingDate            []string `json:"filingDate"`
+	ReportDate            []string `json:"reportDate"`
+	AcceptanceDateTime    []string `json:"acceptanceDateTime"`
+	Form                  []string `json:"form"`
+	PrimaryDocument       []string `json:"primaryDocument"`
+	PrimaryDocDescription []string `json:"primaryDocDescription"`
+	Items                 []string `json:"items"`
+}
+
+type SECRecentFiling struct {
+	AccessionNumber       string `json:"accession_number"`
+	FilingDate            string `json:"filing_date"`
+	ReportDate            string `json:"report_date"`
+	AcceptanceDateTime    string `json:"acceptance_date_time"`
+	Form                  string `json:"form"`
+	PrimaryDocument       string `json:"primary_document"`
+	PrimaryDocDescription string `json:"primary_doc_description"`
+	Items                 string `json:"items"`
+	URL                   string `json:"url"`
+}
+
+type SECInsiderTransaction struct {
+	FilingDate      string   `json:"filing_date"`
+	TransactionDate string   `json:"transaction_date"`
+	OwnerName       string   `json:"owner_name"`
+	OwnerRole       string   `json:"owner_role"`
+	SecurityTitle   string   `json:"security_title"`
+	Code            string   `json:"code"`
+	Action          string   `json:"action"`
+	Shares          float64  `json:"shares"`
+	Price           *float64 `json:"price"`
+	Value           *float64 `json:"value"`
+	SharesOwned     *float64 `json:"shares_owned_after"`
+	FormURL         string   `json:"form_url"`
+}
+
+type secOwnershipDocument struct {
+	ReportingOwners []struct {
+		ReportingOwnerID struct {
+			Name string `xml:"rptOwnerName"`
+		} `xml:"reportingOwnerId"`
+		Relationship struct {
+			IsDirector        string `xml:"isDirector"`
+			IsOfficer         string `xml:"isOfficer"`
+			IsTenPercentOwner string `xml:"isTenPercentOwner"`
+			OfficerTitle      string `xml:"officerTitle"`
+		} `xml:"reportingOwnerRelationship"`
+	} `xml:"reportingOwner"`
+	NonDerivativeTable struct {
+		Transactions []struct {
+			SecurityTitle string `xml:"securityTitle>value"`
+			Date          string `xml:"transactionDate>value"`
+			Coding        struct {
+				Code string `xml:"transactionCode"`
+			} `xml:"transactionCoding"`
+			Amounts struct {
+				Shares string `xml:"transactionShares>value"`
+				Price  string `xml:"transactionPricePerShare>value"`
+			} `xml:"transactionAmounts"`
+			PostTransaction struct {
+				SharesOwned string `xml:"sharesOwnedFollowingTransaction>value"`
+			} `xml:"postTransactionAmounts"`
+		} `xml:"nonDerivativeTransaction"`
+	} `xml:"nonDerivativeTable"`
 }
 
 var (
@@ -168,6 +246,34 @@ func (c *SECClient) FetchGrossMarginQuarterly(ctx context.Context, symbol string
 	return data, nil
 }
 
+func (c *SECClient) FetchSecondLayerSignals(ctx context.Context, symbol string) (map[string]interface{}, error) {
+	if !c.Configured() {
+		return nil, errors.New("SEC EDGAR 数据源未启用")
+	}
+	cik, err := c.lookupCIK(ctx, symbol)
+	if err != nil {
+		return nil, err
+	}
+	submissions, err := c.fetchSubmissions(ctx, cik)
+	if err != nil {
+		return nil, err
+	}
+
+	recentFilings := buildSECRecentFilings(cik, submissions.Filings.Recent, 80)
+	eventFilings := filterSECEventFilings(recentFilings, 30)
+	insiderTransactions := c.fetchRecentForm4Transactions(ctx, cik, recentFilings, 20)
+
+	return map[string]interface{}{
+		"source":               "SEC EDGAR",
+		"cik":                  cik,
+		"company_name":         submissions.Name,
+		"tickers":              submissions.Tickers,
+		"recent_event_filings": eventFilings,
+		"insider_transactions": insiderTransactions,
+		"insider_summary":      summarizeSECInsiderTransactions(insiderTransactions),
+	}, nil
+}
+
 func (c *SECClient) fetchCompanyFacts(ctx context.Context, symbol string) (secCompanyFacts, error) {
 	cik, err := c.lookupCIK(ctx, symbol)
 	if err != nil {
@@ -181,6 +287,15 @@ func (c *SECClient) fetchCompanyFacts(ctx context.Context, symbol string) (secCo
 	}
 	if payload.CIK == 0 {
 		payload.CIK = cik
+	}
+	return payload, nil
+}
+
+func (c *SECClient) fetchSubmissions(ctx context.Context, cik int) (secSubmissions, error) {
+	var payload secSubmissions
+	path := fmt.Sprintf("/submissions/CIK%010d.json", cik)
+	if err := c.getJSON(ctx, c.dataBaseURL+path, &payload); err != nil {
+		return secSubmissions{}, err
 	}
 	return payload, nil
 }
@@ -237,6 +352,254 @@ func (c *SECClient) getJSON(ctx context.Context, endpoint string, target interfa
 		return fmt.Errorf("SEC EDGAR 请求失败：HTTP %d", resp.StatusCode)
 	}
 	return json.NewDecoder(resp.Body).Decode(target)
+}
+
+func (c *SECClient) getXML(ctx context.Context, endpoint string, target interface{}) error {
+	if err := c.waitForSECSlot(ctx); err != nil {
+		return err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("User-Agent", c.userAgent)
+	req.Header.Set("Accept", "application/xml,text/xml,*/*")
+
+	resp, err := c.client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return fmt.Errorf("SEC EDGAR XML 请求失败：HTTP %d", resp.StatusCode)
+	}
+	return xml.NewDecoder(resp.Body).Decode(target)
+}
+
+func buildSECRecentFilings(cik int, recent secRecentFilings, limit int) []SECRecentFiling {
+	count := len(recent.AccessionNumber)
+	if limit > 0 && count > limit {
+		count = limit
+	}
+	filings := make([]SECRecentFiling, 0, count)
+	for index := 0; index < count; index++ {
+		accession := secRecentValue(recent.AccessionNumber, index)
+		if accession == "" {
+			continue
+		}
+		primaryDocument := secRecentValue(recent.PrimaryDocument, index)
+		filings = append(filings, SECRecentFiling{
+			AccessionNumber:       accession,
+			FilingDate:            secRecentValue(recent.FilingDate, index),
+			ReportDate:            secRecentValue(recent.ReportDate, index),
+			AcceptanceDateTime:    secRecentValue(recent.AcceptanceDateTime, index),
+			Form:                  secRecentValue(recent.Form, index),
+			PrimaryDocument:       primaryDocument,
+			PrimaryDocDescription: secRecentValue(recent.PrimaryDocDescription, index),
+			Items:                 secRecentValue(recent.Items, index),
+			URL:                   secArchiveDocumentURL(cik, accession, primaryDocument),
+		})
+	}
+	return filings
+}
+
+func filterSECEventFilings(filings []SECRecentFiling, limit int) []SECRecentFiling {
+	out := make([]SECRecentFiling, 0, min(limit, len(filings)))
+	for _, filing := range filings {
+		form := strings.ToUpper(strings.TrimSpace(filing.Form))
+		if form == "4" || form == "4/A" || form == "8-K" || form == "10-Q" || form == "10-K" ||
+			form == "S-1" || form == "S-1/A" || form == "S-3" || form == "S-3/A" ||
+			strings.HasPrefix(form, "424B") || form == "DEF 14A" {
+			out = append(out, filing)
+			if limit > 0 && len(out) >= limit {
+				break
+			}
+		}
+	}
+	return out
+}
+
+func (c *SECClient) fetchRecentForm4Transactions(ctx context.Context, cik int, filings []SECRecentFiling, filingLimit int) []SECInsiderTransaction {
+	transactions := []SECInsiderTransaction{}
+	checked := 0
+	for _, filing := range filings {
+		form := strings.ToUpper(strings.TrimSpace(filing.Form))
+		if form != "4" && form != "4/A" {
+			continue
+		}
+		if filing.URL == "" {
+			continue
+		}
+		var doc secOwnershipDocument
+		if err := c.getXML(ctx, filing.URL, &doc); err != nil {
+			continue
+		}
+		transactions = append(transactions, ownershipTransactions(filing, doc)...)
+		checked++
+		if filingLimit > 0 && checked >= filingLimit {
+			break
+		}
+	}
+	return transactions
+}
+
+func ownershipTransactions(filing SECRecentFiling, doc secOwnershipDocument) []SECInsiderTransaction {
+	ownerName, ownerRole := secOwnershipOwner(doc)
+	out := make([]SECInsiderTransaction, 0, len(doc.NonDerivativeTable.Transactions))
+	for _, row := range doc.NonDerivativeTable.Transactions {
+		shares, ok := parseSECXMLFloat(row.Amounts.Shares)
+		if !ok || shares == 0 {
+			continue
+		}
+		price, hasPrice := parseSECXMLFloat(row.Amounts.Price)
+		value := 0.0
+		hasValue := hasPrice
+		if hasValue {
+			value = round2(shares * price)
+		}
+		sharesOwned, hasSharesOwned := parseSECXMLFloat(row.PostTransaction.SharesOwned)
+		transaction := SECInsiderTransaction{
+			FilingDate:      filing.FilingDate,
+			TransactionDate: secXMLText(row.Date),
+			OwnerName:       ownerName,
+			OwnerRole:       ownerRole,
+			SecurityTitle:   secXMLText(row.SecurityTitle),
+			Code:            strings.ToUpper(strings.TrimSpace(row.Coding.Code)),
+			Action:          secTransactionAction(row.Coding.Code),
+			Shares:          round2(shares),
+			FormURL:         filing.URL,
+		}
+		if hasPrice {
+			transaction.Price = &price
+		}
+		if hasValue {
+			transaction.Value = &value
+		}
+		if hasSharesOwned {
+			transaction.SharesOwned = &sharesOwned
+		}
+		out = append(out, transaction)
+	}
+	return out
+}
+
+func summarizeSECInsiderTransactions(transactions []SECInsiderTransaction) map[string]interface{} {
+	summary := map[string]interface{}{
+		"transaction_count": len(transactions),
+	}
+	purchaseCount, saleCount := 0, 0
+	purchaseShares, saleShares := 0.0, 0.0
+	purchaseValue, saleValue := 0.0, 0.0
+	for _, transaction := range transactions {
+		switch transaction.Action {
+		case "purchase":
+			purchaseCount++
+			purchaseShares += transaction.Shares
+			if transaction.Value != nil {
+				purchaseValue += *transaction.Value
+			}
+		case "sale":
+			saleCount++
+			saleShares += transaction.Shares
+			if transaction.Value != nil {
+				saleValue += *transaction.Value
+			}
+		}
+	}
+	summary["purchase_count"] = purchaseCount
+	summary["sale_count"] = saleCount
+	summary["purchase_shares"] = round2(purchaseShares)
+	summary["sale_shares"] = round2(saleShares)
+	summary["purchase_value"] = round2(purchaseValue)
+	summary["sale_value"] = round2(saleValue)
+	if len(transactions) > 0 {
+		summary["latest_transaction_date"] = transactions[0].TransactionDate
+	}
+	return summary
+}
+
+func secRecentValue(values []string, index int) string {
+	if index < 0 || index >= len(values) {
+		return ""
+	}
+	return strings.TrimSpace(values[index])
+}
+
+func secArchiveDocumentURL(cik int, accession string, primaryDocument string) string {
+	accession = strings.ReplaceAll(strings.TrimSpace(accession), "-", "")
+	primaryDocument = strings.TrimSpace(primaryDocument)
+	if strings.HasPrefix(strings.ToLower(primaryDocument), "xsl") {
+		if parts := strings.Split(primaryDocument, "/"); len(parts) > 0 {
+			primaryDocument = parts[len(parts)-1]
+		}
+	}
+	if cik <= 0 || accession == "" || primaryDocument == "" {
+		return ""
+	}
+	return fmt.Sprintf("https://www.sec.gov/Archives/edgar/data/%d/%s/%s", cik, accession, primaryDocument)
+}
+
+func secOwnershipOwner(doc secOwnershipDocument) (string, string) {
+	if len(doc.ReportingOwners) == 0 {
+		return "", ""
+	}
+	owner := doc.ReportingOwners[0]
+	roles := []string{}
+	if secXMLBool(owner.Relationship.IsDirector) {
+		roles = append(roles, "director")
+	}
+	if secXMLBool(owner.Relationship.IsOfficer) {
+		title := secXMLText(owner.Relationship.OfficerTitle)
+		if title != "" {
+			roles = append(roles, title)
+		} else {
+			roles = append(roles, "officer")
+		}
+	}
+	if secXMLBool(owner.Relationship.IsTenPercentOwner) {
+		roles = append(roles, "10% owner")
+	}
+	return secXMLText(owner.ReportingOwnerID.Name), strings.Join(roles, ", ")
+}
+
+func secXMLBool(value string) bool {
+	value = strings.ToLower(strings.TrimSpace(value))
+	return value == "1" || value == "true" || value == "yes"
+}
+
+func secXMLText(value string) string {
+	return strings.TrimSpace(value)
+}
+
+func parseSECXMLFloat(value string) (float64, bool) {
+	value = strings.ReplaceAll(strings.TrimSpace(value), ",", "")
+	if value == "" {
+		return 0, false
+	}
+	parsed, err := strconv.ParseFloat(value, 64)
+	if err != nil || math.IsNaN(parsed) || math.IsInf(parsed, 0) {
+		return 0, false
+	}
+	return parsed, true
+}
+
+func secTransactionAction(code string) string {
+	switch strings.ToUpper(strings.TrimSpace(code)) {
+	case "P":
+		return "purchase"
+	case "S":
+		return "sale"
+	case "A":
+		return "grant"
+	case "D":
+		return "disposition"
+	case "F":
+		return "tax_withholding"
+	case "M":
+		return "option_exercise"
+	default:
+		return "other"
+	}
 }
 
 func (c *SECClient) waitForSECSlot(ctx context.Context) error {

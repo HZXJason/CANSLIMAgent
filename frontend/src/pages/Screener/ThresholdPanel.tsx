@@ -108,7 +108,7 @@ export default function ThresholdPanel({
             })}
           </div>
           <div className="mt-3 rounded-2xl border border-amber-300/30 bg-amber-300/10 px-4 py-3 text-sm text-amber-100">
-            I：机构持仓维度暂未接入 13F 数据，本轮筛选不参与评分和过滤。
+            I：机构持仓 / 机构赞助使用增持与新建机构数减去减持与清仓机构数，数据不足时显示 ?，不参与 C/A/S/L 规则评分。
           </div>
         </div>
       </div>

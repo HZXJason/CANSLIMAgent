@@ -50,7 +50,13 @@ export const FALLBACK_AI_ANALYSIS_OPTIONS: AIAnalysisConfigResponse = {
     { id: 'fundamental', name: '基本面分析师', description: '评估公司财务和业绩指标' },
     { id: 'sentiment', name: '情绪分析师', description: '聚合新闻和社交媒体情绪' },
     { id: 'news', name: '新闻分析师', description: '监控全球新闻和宏观指标' },
-    { id: 'technical', name: '技术分析师', description: '基于技术指标检测交易信号' }
+    { id: 'technical', name: '技术分析师', description: '基于技术指标检测交易信号' },
+    {
+      id: 'canslim_second_layer',
+      name: 'CANSLIM 二层筛选官',
+      description: '严格复核假成长、盈利质量、技术形态、估值和风险收益比',
+      default_enabled: false
+    }
   ],
   debate_rounds: [1, 2, 3],
   risk_rounds: [1, 2, 3]
@@ -66,7 +72,7 @@ export function createDefaultAIAnalysisConfig(options: AIAnalysisConfigResponse)
     max_debate_rounds: 1,
     max_risk_rounds: 1,
     online_tools: true,
-    analysts: options.analysts.map((analyst) => analyst.id),
+    analysts: options.analysts.filter((analyst) => analyst.default_enabled !== false).map((analyst) => analyst.id),
     api_keys: { ...DEFAULT_AI_API_KEYS }
   };
 }

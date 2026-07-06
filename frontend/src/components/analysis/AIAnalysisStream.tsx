@@ -317,7 +317,7 @@ export default function AIAnalysisStream({
       ) : null}
 
       {showOutputSections ? (
-        <section className="grid gap-3 xl:grid-cols-2">
+        <section className="grid gap-3">
           {outputSections.map((section, index) => {
             const progressItem = section.agent ? progressByAgent.get(section.agent) : undefined;
             const isActiveSection = status === 'streaming' && section.source !== 'report' && progressItem?.status === 'running';

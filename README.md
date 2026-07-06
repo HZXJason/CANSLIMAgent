@@ -10,7 +10,7 @@ AlphaLens / CANSLIMAgent 是一个面向美股 CANSLIM 研究流程的本地 Web
 - Module 2：个股深度分析，覆盖价格 K 线、RS、EPS、营收、毛利率等研究指标
 - Module 3：交易日志与复盘，用于记录观察、操作与后续复盘
 - TradingAgents Python sidecar：多智能体 AI 分析，支持 SSE 流式输出、中文报告和 N 标签写回
-- 免费优先数据源：SEC EDGAR、公开股票池、Stooq、Yahoo Finance、yfinance 优先，FMP/Polygon 作为可选增强
+- 免费优先数据源：SEC EDGAR、公开股票池、Nasdaq 机构持仓、Stooq、Yahoo Finance、yfinance 优先，FMP/Polygon 作为可选增强
 - 可复用本地开发：`make dev` / `scripts/dev.sh` 一键启动 PostgreSQL、Go API、Python sidecar 和 Vite 前端
 
 ## 技术栈
@@ -18,7 +18,7 @@ AlphaLens / CANSLIMAgent 是一个面向美股 CANSLIM 研究流程的本地 Web
 - 前端：React 18、TypeScript、Zustand、TanStack Query、Tailwind CSS、Recharts
 - 后端：Go、Gin、GORM、PostgreSQL
 - AI Sidecar：Python、FastAPI、TradingAgents
-- 数据源：SEC EDGAR、免费股票池、Stooq、Yahoo Finance、yfinance；FMP/Polygon 可作为可选增强
+- 数据源：SEC EDGAR、免费股票池、Nasdaq 机构持仓、Stooq、Yahoo Finance、yfinance；FMP/Polygon 可作为可选增强
 
 ## 架构
 
@@ -105,6 +105,7 @@ cp sidecar/.env.example sidecar/.env
 
 - `ENABLE_FREE_UNIVERSE=true`：启用免费股票池
 - `ENABLE_SEC_DATA=true`：启用 SEC EDGAR 财务数据
+- `ENABLE_INSTITUTIONAL_DATA=true`：启用 Nasdaq 免费机构持仓摘要，用于 CANSLIM `I` 标签
 - `ENABLE_STOOQ_DATA=true`：启用 Stooq 价格/K 线数据
 - `ENABLE_YAHOO_FALLBACK=true`、`ENABLE_YFINANCE_FALLBACK=true`：保留 Yahoo/yfinance 兜底
 - `REQUEST_TIMEOUT_SECONDS=20`、`SCAN_DELAY_MS=80`：控制外部请求超时和扫描节奏
@@ -113,6 +114,7 @@ cp sidecar/.env.example sidecar/.env
 
 - 成分股：免费股票池（SP500 CSV、Nasdaq 100 JSON、IWM 持仓代理 Russell 2000、Nasdaq Trader 目录补充） -> FMP -> yfinance/Wikipedia
 - 财报/EPS/营收/毛利率：SEC EDGAR -> FMP -> yfinance
+- 机构持仓 `I`：Nasdaq institutional holdings 摘要，使用 `增持机构数 + 新建机构数 - 减持机构数 - 清仓机构数` 作为近似变化值
 - 价格/K 线：Stooq -> Polygon -> FMP -> Yahoo Finance -> yfinance
 
 建议在 `backend/.env` 设置 `SEC_USER_AGENT`，写成能联系到你的格式，例如 `CANSLIMAgent/1.0 your-email@example.com`。

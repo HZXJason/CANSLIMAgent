@@ -128,6 +128,8 @@ type GrossMarginData struct {
 	Quarters []GrossMarginQuarter `json:"quarters"`
 }
 
+type SecondLayerData map[string]interface{}
+
 type candleSourceResult struct {
 	source  string
 	candles []Candle
@@ -478,6 +480,47 @@ func (s *AnalysisService) GrossMarginQuarterly(ctx context.Context, symbol strin
 	}
 
 	return GrossMarginData{Symbol: symbol, Quarters: []GrossMarginQuarter{}}, fmt.Errorf("gross margin data unavailable (%s)", strings.Join(failures, "; "))
+}
+
+func (s *AnalysisService) SecondLayerData(ctx context.Context, symbol string) (SecondLayerData, error) {
+	symbol = normalizeSymbol(symbol)
+	if symbol == "" {
+		return SecondLayerData{}, errors.New("股票代码不能为空")
+	}
+
+	result := SecondLayerData{"symbol": symbol}
+	failures := []string{}
+	if s.yfinance != nil && s.yfinance.Configured() {
+		data, err := s.yfinance.FetchSecondLayerData(ctx, symbol)
+		if err == nil && len(data) > 0 {
+			for key, value := range data {
+				result[key] = value
+			}
+		}
+		if err != nil {
+			failures = append(failures, "yfinance: "+err.Error())
+		} else {
+			failures = append(failures, "yfinance: second-layer data is empty")
+		}
+	} else {
+		failures = append(failures, "yfinance: not configured")
+	}
+
+	if s.sec != nil && s.sec.Configured() {
+		data, err := s.sec.FetchSecondLayerSignals(ctx, symbol)
+		if err == nil && len(data) > 0 {
+			result["sec"] = data
+		} else if err != nil {
+			failures = append(failures, "SEC EDGAR: "+err.Error())
+		}
+	} else {
+		failures = append(failures, "SEC EDGAR: not configured")
+	}
+
+	if len(result) > 1 {
+		return result, nil
+	}
+	return result, fmt.Errorf("second-layer data unavailable (%s)", strings.Join(failures, "; "))
 }
 
 func (s *AnalysisService) fetchFMPGrossMarginQuarterly(ctx context.Context, symbol string) (GrossMarginData, error) {

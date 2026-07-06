@@ -42,7 +42,7 @@ func TestAIAnalysisStreamProxiesSSE(t *testing.T) {
 	request := httptest.NewRequest(
 		http.MethodPost,
 		"/api/v1/analysis/nvda/ai",
-		strings.NewReader(`{"llm_provider":"openai_compatible","backend_url":"https://ai-gateway.vercel.sh/v1","analysts":["fundamental"],"api_keys":{"openai_compatible":"sk-test"}}`),
+		strings.NewReader(`{"llm_provider":"openai_compatible","backend_url":"https://ai-gateway.vercel.sh/v1","analysts":["fundamental","canslim_second_layer"],"api_keys":{"openai_compatible":"sk-test"},"analysis_context":{"stock_summary":{"symbol":"NVDA"}}}`),
 	)
 	request.Header.Set("Content-Type", "application/json")
 	recorder := httptest.NewRecorder()
@@ -69,6 +69,9 @@ func TestAIAnalysisStreamProxiesSSE(t *testing.T) {
 	}
 	if received.APIKeys["openai_compatible"] != "sk-test" {
 		t.Fatalf("expected compatible api key to be forwarded")
+	}
+	if received.AnalysisContext["stock_summary"] == nil {
+		t.Fatalf("expected analysis context to be forwarded")
 	}
 }
 

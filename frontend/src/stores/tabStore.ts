@@ -1,4 +1,5 @@
 import { create } from 'zustand';
+import { persist } from 'zustand/middleware';
 
 export interface StockTab {
   symbol: string;
@@ -14,27 +15,49 @@ interface TabStore {
   setActiveTab: (symbol: string) => void;
 }
 
-export const useTabStore = create<TabStore>((set) => ({
-  tabs: [],
-  activeTabId: null,
-  openTab: (symbol, name) =>
-    set((state) => {
-      const normalized = symbol.toUpperCase();
-      const exists = state.tabs.some((tab) => tab.symbol === normalized);
-      return {
-        tabs: exists ? state.tabs : [...state.tabs, { symbol: normalized, name, openedAt: Date.now() }],
-        activeTabId: normalized
-      };
+function normalizeSymbol(symbol: string) {
+  return symbol.trim().toUpperCase();
+}
+
+function normalizeName(symbol: string, name: string) {
+  return name.trim() || symbol;
+}
+
+export const useTabStore = create<TabStore>()(
+  persist(
+    (set) => ({
+      tabs: [],
+      activeTabId: null,
+      openTab: (symbol, name) =>
+        set((state) => {
+          const normalized = normalizeSymbol(symbol);
+          const normalizedName = normalizeName(normalized, name);
+          const existing = state.tabs.find((tab) => tab.symbol === normalized);
+          return {
+            tabs: existing
+              ? state.tabs.map((tab) => (tab.symbol === normalized ? { ...tab, name: normalizedName } : tab))
+              : [...state.tabs, { symbol: normalized, name: normalizedName, openedAt: Date.now() }],
+            activeTabId: normalized
+          };
+        }),
+      closeTab: (symbol) =>
+        set((state) => {
+          const normalized = normalizeSymbol(symbol);
+          const tabs = state.tabs.filter((tab) => tab.symbol !== normalized);
+          let activeTabId = state.activeTabId;
+          if (state.activeTabId === normalized) {
+            activeTabId = tabs[tabs.length - 1]?.symbol ?? null;
+          }
+          return { tabs, activeTabId };
+        }),
+      setActiveTab: (symbol) => set({ activeTabId: normalizeSymbol(symbol) })
     }),
-  closeTab: (symbol) =>
-    set((state) => {
-      const normalized = symbol.toUpperCase();
-      const tabs = state.tabs.filter((tab) => tab.symbol !== normalized);
-      let activeTabId = state.activeTabId;
-      if (state.activeTabId === normalized) {
-        activeTabId = tabs[tabs.length - 1]?.symbol ?? null;
-      }
-      return { tabs, activeTabId };
-    }),
-  setActiveTab: (symbol) => set({ activeTabId: symbol.toUpperCase() })
-}));
+    {
+      name: 'alphalens-analysis-tabs',
+      partialize: (state) => ({
+        tabs: state.tabs,
+        activeTabId: state.activeTabId
+      })
+    }
+  )
+);

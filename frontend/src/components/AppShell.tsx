@@ -1,3 +1,4 @@
+import { Suspense } from 'react';
 import { BarChart3, BookOpenCheck, ClipboardList, Filter, Settings } from 'lucide-react';
 import { NavLink, Outlet } from 'react-router-dom';
 import { cn } from '../lib/utils';
@@ -58,7 +59,15 @@ export default function AppShell() {
       </aside>
 
       <main className="min-w-0 flex-1 overflow-x-hidden">
-        <Outlet />
+        <Suspense
+          fallback={
+            <div className="mx-auto flex min-h-screen w-full max-w-[1440px] items-center justify-center px-4 text-sm font-semibold text-slate-400">
+              加载中...
+            </div>
+          }
+        >
+          <Outlet />
+        </Suspense>
       </main>
     </div>
   );

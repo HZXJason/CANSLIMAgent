@@ -15,6 +15,7 @@ export default function AnalysisPage() {
   const location = useLocation();
   const navigate = useNavigate();
   const state = location.state as LocationState | null;
+  const routeSymbol = symbol?.trim().toUpperCase() ?? null;
   const tabs = useTabStore((store) => store.tabs);
   const activeTabId = useTabStore((store) => store.activeTabId);
   const openTab = useTabStore((store) => store.openTab);
@@ -23,19 +24,27 @@ export default function AnalysisPage() {
   const removeAnalysisState = useAnalysisStore((store) => store.removeState);
 
   useEffect(() => {
-    if (symbol) {
-      const normalized = symbol.toUpperCase();
-      openTab(normalized, state?.name ?? normalized);
+    if (routeSymbol) {
+      openTab(routeSymbol, state?.name ?? routeSymbol);
     }
-  }, [openTab, state?.name, symbol]);
+  }, [openTab, routeSymbol, state?.name]);
 
   useEffect(() => {
-    if (activeTabId && activeTabId !== symbol?.toUpperCase()) {
+    if (!routeSymbol && activeTabId) {
       navigate('/analysis/' + activeTabId, { replace: true });
     }
-  }, [activeTabId, navigate, symbol]);
+  }, [activeTabId, navigate, routeSymbol]);
 
-  const activeTab = tabs.find((tab) => tab.symbol === activeTabId);
+  const displayedTabId = routeSymbol ?? activeTabId;
+  const activeTab =
+    tabs.find((tab) => tab.symbol === displayedTabId) ??
+    (routeSymbol ? { symbol: routeSymbol, name: state?.name ?? routeSymbol, openedAt: 0 } : null);
+
+  const handleActive = (targetSymbol: string) => {
+    const normalized = targetSymbol.trim().toUpperCase();
+    setActiveTab(normalized);
+    navigate('/analysis/' + normalized);
+  };
 
   const handleAdd = () => {
     const nextSymbol = window.prompt('请输入股票代码');
@@ -46,9 +55,15 @@ export default function AnalysisPage() {
   };
 
   const handleClose = (targetSymbol: string) => {
-    closeAIStream(targetSymbol);
-    removeAnalysisState(targetSymbol);
-    closeTab(targetSymbol);
+    const normalized = targetSymbol.trim().toUpperCase();
+    const remainingTabs = tabs.filter((tab) => tab.symbol !== normalized);
+    const nextActiveTabId = displayedTabId === normalized ? remainingTabs[remainingTabs.length - 1]?.symbol ?? null : displayedTabId;
+    closeAIStream(normalized);
+    removeAnalysisState(normalized);
+    closeTab(normalized);
+    if (displayedTabId === normalized) {
+      navigate(nextActiveTabId ? '/analysis/' + nextActiveTabId : '/analysis', { replace: true });
+    }
   };
 
   return (
@@ -62,8 +77,8 @@ export default function AnalysisPage() {
         </div>
         <TabBar
           tabs={tabs}
-          activeTabId={activeTabId}
-          onActive={setActiveTab}
+          activeTabId={displayedTabId}
+          onActive={handleActive}
           onClose={handleClose}
           onAdd={handleAdd}
         />

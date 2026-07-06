@@ -10,46 +10,48 @@ import (
 )
 
 type Config struct {
-	Port                   string
-	DatabaseURL            string
-	AlphaVantageAPIKey     string
-	FMPAPIKey              string
-	PolygonAPIKey          string
-	EnableFreeUniverse     bool
-	EnableSECData          bool
-	SECUserAgent           string
-	EnableStooqData        bool
-	EnableYahooFallback    bool
-	EnableYFinanceFallback bool
-	EnableProfileTranslate bool
-	YFinancePython         string
-	AIStreamURL            string
-	AllowedOrigins         []string
-	RequestTimeout         time.Duration
-	ScanDelay              time.Duration
+	Port                    string
+	DatabaseURL             string
+	AlphaVantageAPIKey      string
+	FMPAPIKey               string
+	PolygonAPIKey           string
+	EnableFreeUniverse      bool
+	EnableSECData           bool
+	EnableInstitutionalData bool
+	SECUserAgent            string
+	EnableStooqData         bool
+	EnableYahooFallback     bool
+	EnableYFinanceFallback  bool
+	EnableProfileTranslate  bool
+	YFinancePython          string
+	AIStreamURL             string
+	AllowedOrigins          []string
+	RequestTimeout          time.Duration
+	ScanDelay               time.Duration
 }
 
 func Load() Config {
 	_ = godotenv.Load(".env", "backend/.env")
 
 	return Config{
-		Port:                   getEnv("PORT", "8080"),
-		DatabaseURL:            os.Getenv("DATABASE_URL"),
-		AlphaVantageAPIKey:     os.Getenv("ALPHA_VANTAGE_API_KEY"),
-		FMPAPIKey:              os.Getenv("FMP_API_KEY"),
-		PolygonAPIKey:          os.Getenv("POLYGON_API_KEY"),
-		EnableFreeUniverse:     getEnvBool("ENABLE_FREE_UNIVERSE", true),
-		EnableSECData:          getEnvBool("ENABLE_SEC_DATA", true),
-		SECUserAgent:           getEnv("SEC_USER_AGENT", "CANSLIMAgent/1.0 (local research; set SEC_USER_AGENT for contact)"),
-		EnableStooqData:        getEnvBool("ENABLE_STOOQ_DATA", true),
-		EnableYahooFallback:    getEnvBool("ENABLE_YAHOO_FALLBACK", true),
-		EnableYFinanceFallback: getEnvBool("ENABLE_YFINANCE_FALLBACK", true),
-		EnableProfileTranslate: getEnvBool("ENABLE_PROFILE_TRANSLATION", true),
-		YFinancePython:         getEnv("YFINANCE_PYTHON", "python"),
-		AIStreamURL:            os.Getenv("AI_STREAM_URL"),
-		AllowedOrigins:         splitOrigins(getEnv("ALLOWED_ORIGINS", "http://localhost:5173,http://127.0.0.1:5173")),
-		RequestTimeout:         time.Duration(getEnvInt("REQUEST_TIMEOUT_SECONDS", 20)) * time.Second,
-		ScanDelay:              time.Duration(getEnvInt("SCAN_DELAY_MS", 80)) * time.Millisecond,
+		Port:                    getEnv("PORT", "8080"),
+		DatabaseURL:             os.Getenv("DATABASE_URL"),
+		AlphaVantageAPIKey:      os.Getenv("ALPHA_VANTAGE_API_KEY"),
+		FMPAPIKey:               os.Getenv("FMP_API_KEY"),
+		PolygonAPIKey:           os.Getenv("POLYGON_API_KEY"),
+		EnableFreeUniverse:      getEnvBool("ENABLE_FREE_UNIVERSE", true),
+		EnableSECData:           getEnvBool("ENABLE_SEC_DATA", true),
+		EnableInstitutionalData: getEnvBool("ENABLE_INSTITUTIONAL_DATA", true),
+		SECUserAgent:            getEnv("SEC_USER_AGENT", "CANSLIMAgent/1.0 (local research; set SEC_USER_AGENT for contact)"),
+		EnableStooqData:         getEnvBool("ENABLE_STOOQ_DATA", true),
+		EnableYahooFallback:     getEnvBool("ENABLE_YAHOO_FALLBACK", true),
+		EnableYFinanceFallback:  getEnvBool("ENABLE_YFINANCE_FALLBACK", true),
+		EnableProfileTranslate:  getEnvBool("ENABLE_PROFILE_TRANSLATION", true),
+		YFinancePython:          getEnv("YFINANCE_PYTHON", "python"),
+		AIStreamURL:             os.Getenv("AI_STREAM_URL"),
+		AllowedOrigins:          splitOrigins(getEnv("ALLOWED_ORIGINS", "http://localhost:5173,http://127.0.0.1:5173")),
+		RequestTimeout:          time.Duration(getEnvInt("REQUEST_TIMEOUT_SECONDS", 20)) * time.Second,
+		ScanDelay:               time.Duration(getEnvInt("SCAN_DELAY_MS", 80)) * time.Millisecond,
 	}
 }
 

@@ -9,6 +9,8 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -16,10 +18,12 @@ import (
 )
 
 const defaultSidecarURL = "http://127.0.0.1:8765"
+const defaultAIAnalysisTimeout = 20 * time.Minute
 
 type AIAnalysisHandler struct {
 	sidecarURL string
 	client     *http.Client
+	timeout    time.Duration
 }
 
 type AIAnalysisRequest struct {
@@ -33,6 +37,7 @@ type AIAnalysisRequest struct {
 	OnlineTools     bool              `json:"online_tools"`
 	Analysts        []string          `json:"analysts"`
 	APIKeys         map[string]string `json:"api_keys,omitempty"`
+	AnalysisContext map[string]any    `json:"analysis_context,omitempty"`
 }
 
 func NewAIAnalysisHandler() *AIAnalysisHandler {
@@ -42,9 +47,8 @@ func NewAIAnalysisHandler() *AIAnalysisHandler {
 func NewAIAnalysisHandlerWithSidecarURL(sidecarURL string) *AIAnalysisHandler {
 	return &AIAnalysisHandler{
 		sidecarURL: strings.TrimRight(strings.TrimSpace(sidecarURL), "/"),
-		client: &http.Client{
-			Timeout: 10 * time.Minute,
-		},
+		client:     &http.Client{},
+		timeout:    aiAnalysisTimeoutFromEnv(),
 	}
 }
 
@@ -68,7 +72,7 @@ func (h *AIAnalysisHandler) Stream(c *gin.Context) {
 		return
 	}
 
-	ctx, cancel := context.WithTimeout(c.Request.Context(), 10*time.Minute)
+	ctx, cancel := context.WithTimeout(c.Request.Context(), h.timeout)
 	defer cancel()
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, h.analyzeURL(), bytes.NewReader(body))
@@ -162,6 +166,7 @@ func (h *AIAnalysisHandler) Config(c *gin.Context) {
 			{"id": "sentiment", "name": "情绪分析师", "description": "聚合新闻和社交媒体情绪"},
 			{"id": "news", "name": "新闻分析师", "description": "监控全球新闻和宏观指标"},
 			{"id": "technical", "name": "技术分析师", "description": "基于技术指标检测交易信号"},
+			{"id": "canslim_second_layer", "name": "CANSLIM 二层筛选官", "description": "严格复核假成长、盈利质量、技术形态、估值和风险收益比", "default_enabled": false},
 		},
 		"debate_rounds": []int{1, 2, 3},
 		"risk_rounds":   []int{1, 2, 3},
@@ -173,6 +178,18 @@ func (h *AIAnalysisHandler) analyzeURL() string {
 		return h.sidecarURL
 	}
 	return h.sidecarURL + "/analyze"
+}
+
+func aiAnalysisTimeoutFromEnv() time.Duration {
+	value := strings.TrimSpace(os.Getenv("AI_ANALYSIS_TIMEOUT_SECONDS"))
+	if value == "" {
+		return defaultAIAnalysisTimeout
+	}
+	seconds, err := strconv.Atoi(value)
+	if err != nil || seconds <= 0 {
+		return defaultAIAnalysisTimeout
+	}
+	return time.Duration(seconds) * time.Second
 }
 
 func decodeOptionalJSON(body io.Reader, target interface{}) error {

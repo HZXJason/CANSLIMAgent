@@ -3,13 +3,13 @@ import { useNavigate } from 'react-router-dom';
 import { Badge } from '../../components/ui/badge';
 import { Button } from '../../components/ui/button';
 import { Tooltip } from '../../components/ui/tooltip';
-import { ACTIVE_LABEL_KEYS, computeStockLabels, labelStatusText } from '../../lib/computeLabels';
+import { CANSLIM_LABEL_KEYS, computeStockLabels, labelStatusText } from '../../lib/computeLabels';
 import { formatDateCN } from '../../lib/utils';
 import { useScreenerStore } from '../../stores/screenerStore';
 import type { LabelKey, Market, StockWithMetrics } from '../../types';
 import type { StockSummary } from '../../types/analysis';
 
-const tagOrder: LabelKey[] = ACTIVE_LABEL_KEYS;
+const tagOrder: LabelKey[] = CANSLIM_LABEL_KEYS;
 
 const marketLabel: Record<string, string> = {
   SP500: '标普 500',

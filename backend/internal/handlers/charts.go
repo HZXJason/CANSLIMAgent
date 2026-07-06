@@ -88,6 +88,16 @@ func (h *ChartsHandler) GrossMarginQuarterly(c *gin.Context) {
 	OK(c, data)
 }
 
+func (h *ChartsHandler) SecondLayerData(c *gin.Context) {
+	symbol := normalizeSymbolParam(c.Param("symbol"))
+	data, err := h.analysis.SecondLayerData(c.Request.Context(), symbol)
+	if err != nil {
+		Fail(c, http.StatusBadRequest, err.Error())
+		return
+	}
+	OK(c, data)
+}
+
 func normalizeSymbolParam(value string) string {
 	return strings.ToUpper(strings.TrimSpace(value))
 }

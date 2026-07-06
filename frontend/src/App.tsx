@@ -1,12 +1,14 @@
+import { lazy } from 'react';
 import { Navigate, Route, Routes } from 'react-router-dom';
 import AppShell from './components/AppShell';
-import ScreenerPage from './pages/Screener';
-import AnalysisPage from './pages/Analysis';
-import JournalEntry from './pages/Journal/JournalEntry';
-import JournalList from './pages/Journal/JournalList';
-import SettingsPage from './pages/Settings';
-import TradePlanEntry from './pages/TradePlans/TradePlanEntry';
-import TradePlanList from './pages/TradePlans';
+
+const ScreenerPage = lazy(() => import('./pages/Screener'));
+const AnalysisPage = lazy(() => import('./pages/Analysis'));
+const JournalEntry = lazy(() => import('./pages/Journal/JournalEntry'));
+const JournalList = lazy(() => import('./pages/Journal/JournalList'));
+const SettingsPage = lazy(() => import('./pages/Settings'));
+const TradePlanEntry = lazy(() => import('./pages/TradePlans/TradePlanEntry'));
+const TradePlanList = lazy(() => import('./pages/TradePlans'));
 
 export default function App() {
   return (

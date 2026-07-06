@@ -20,10 +20,34 @@ func OpenPostgres(databaseURL string) (*gorm.DB, error) {
 	if err := database.AutoMigrate(&models.Stock{}, &models.StockMetric{}, &models.ThresholdPreset{}, &models.TradeJournalEntry{}, &models.TradePlan{}); err != nil {
 		return nil, err
 	}
+	if err := normalizeStockMetricSufficiency(database); err != nil {
+		return nil, err
+	}
 	if err := seedDefaultPreset(database); err != nil {
 		return nil, err
 	}
 	return database, nil
+}
+
+func normalizeStockMetricSufficiency(database *gorm.DB) error {
+	statements := []string{
+		"ALTER TABLE stock_metrics ALTER COLUMN c_data_sufficient SET DEFAULT false",
+		"ALTER TABLE stock_metrics ALTER COLUMN a_data_sufficient SET DEFAULT false",
+		"ALTER TABLE stock_metrics ALTER COLUMN s_data_sufficient SET DEFAULT false",
+		"ALTER TABLE stock_metrics ALTER COLUMN l_data_sufficient SET DEFAULT false",
+		"ALTER TABLE stock_metrics ALTER COLUMN i_data_sufficient SET DEFAULT false",
+		"UPDATE stock_metrics SET c_data_sufficient = false WHERE c_eps_growth_pct IS NULL",
+		"UPDATE stock_metrics SET a_data_sufficient = false WHERE a_annual_eps_growth IS NULL OR a_annual_eps_growth = '[]'::jsonb",
+		"UPDATE stock_metrics SET s_data_sufficient = false WHERE s_volume_ratio IS NULL",
+		"UPDATE stock_metrics SET l_data_sufficient = false WHERE l_rs_rating IS NULL",
+		"UPDATE stock_metrics SET i_data_sufficient = false WHERE i_institution_delta IS NULL",
+	}
+	for _, statement := range statements {
+		if err := database.Exec(statement).Error; err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func seedDefaultPreset(database *gorm.DB) error {

@@ -28,6 +28,7 @@ func main() {
 	polygonClient := services.NewPolygonClient(cfg.PolygonAPIKey, cfg.RequestTimeout)
 	freeUniverseClient := services.NewFreeUniverseClient(cfg.EnableFreeUniverse, cfg.RequestTimeout)
 	secClient := services.NewSECClient(cfg.EnableSECData, cfg.SECUserAgent, cfg.RequestTimeout)
+	institutionalClient := services.NewInstitutionalClient(cfg.EnableInstitutionalData, cfg.RequestTimeout)
 	stooqClient := services.NewStooqClient(cfg.EnableStooqData, cfg.RequestTimeout)
 	yahooClient := services.NewYahooClient(cfg.EnableYahooFallback, cfg.RequestTimeout)
 	yfinanceClient := services.NewYFinanceClient(cfg.EnableYFinanceFallback, cfg.YFinancePython, cfg.RequestTimeout)
@@ -36,6 +37,7 @@ func main() {
 		database,
 		freeUniverseClient,
 		secClient,
+		institutionalClient,
 		stooqClient,
 		fmpClient,
 		polygonClient,
@@ -79,6 +81,7 @@ func main() {
 		api.GET("/stocks/:symbol/eps/quarterly", chartsHandler.EPSQuarterly)
 		api.GET("/stocks/:symbol/revenue/annual", chartsHandler.RevenueAnnual)
 		api.GET("/stocks/:symbol/margin/gross/quarterly", chartsHandler.GrossMarginQuarterly)
+		api.GET("/stocks/:symbol/second-layer-data", chartsHandler.SecondLayerData)
 		api.PATCH("/stocks/:symbol/n-label", screenerHandler.UpdateNLabel)
 		api.GET("/analysis/:symbol/*action", func(c *gin.Context) {
 			action := c.Param("action")
