@@ -1,7 +1,9 @@
 import asyncio
+import ast
 import copy
 import json
 import os
+import traceback
 from queue import Empty, Queue
 from datetime import date
 from typing import Any, AsyncIterator, Iterable
@@ -264,14 +266,64 @@ def confidence_for_action(action: str, decision: Any) -> str:
     return "LOW"
 
 
+def parse_error_payload(value: Any) -> dict[str, Any] | None:
+    if isinstance(value, dict):
+        nested = value.get("error")
+        if isinstance(nested, dict):
+            return nested
+        return value
+    if not isinstance(value, str):
+        return None
+
+    text = value.strip()
+    if "{" in text and "}" in text:
+        text = text[text.find("{") : text.rfind("}") + 1]
+    if not text.startswith("{"):
+        return None
+
+    try:
+        parsed = ast.literal_eval(text)
+    except (SyntaxError, ValueError):
+        try:
+            parsed = json.loads(text)
+        except json.JSONDecodeError:
+            return None
+    return parsed if isinstance(parsed, dict) else None
+
+
+def raw_error_message(exc: Exception) -> str:
+    body_payload = parse_error_payload(getattr(exc, "body", None))
+    if body_payload:
+        body_message = body_payload.get("message") or body_payload.get("detail")
+        if body_message:
+            return str(body_message)
+    return str(exc).strip()
+
+
 def user_error_message(exc: Exception) -> str:
-    message = str(exc)
+    message = raw_error_message(exc)
+    payload = parse_error_payload(getattr(exc, "body", None)) or parse_error_payload(message)
+    payload_code = str((payload or {}).get("code") or (payload or {}).get("type") or "")
+    payload_message = str((payload or {}).get("message") or message)
+
+    if (
+        "NoneType" in payload_message
+        and "group" in payload_message
+    ) or (
+        "AttributeError" in payload_code
+        and "group" in payload_message
+    ):
+        return (
+            "AI 模型或网关返回的结构化内容解析失败。"
+            "这通常是所选模型与 OpenAI 兼容网关的格式兼容问题；"
+            "请换用直连模型，或改用更稳定的轻量模型后重试。"
+        )
     if "RestrictedModelsError" in message or "Free tier users do not have access" in message:
         return (
             "当前 Vercel AI Gateway 免费层无法访问所选模型。"
             "请把模型改为 anthropic/claude-haiku-4.5，或在 Vercel AI Gateway 充值后再使用 Sonnet/Opus/GPT 高阶模型。"
         )
-    return message
+    return message or "AI 分析中断，请检查模型和网关配置后重试。"
 
 
 async def analysis_events(request: AnalysisRequest):
@@ -331,6 +383,7 @@ async def analysis_events(request: AnalysisRequest):
         )
         yield sse("done", {})
     except Exception as exc:
+        print("AI analysis stream failed:\n" + traceback.format_exc(), flush=True)
         yield sse("error", {"message": user_error_message(exc)})
 
 

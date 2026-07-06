@@ -13,7 +13,7 @@ interface ParsedSSEEvent {
 }
 
 interface StreamTextBuffer {
-  narration: string;
+  narrationByAgent: Record<string, string>;
   report: string;
   timer: ReturnType<typeof setTimeout> | null;
 }
@@ -32,6 +32,16 @@ function parseJSON<T>(value: string, fallback: T): T {
   } catch {
     return fallback;
   }
+}
+
+function readableAIError(message: string) {
+  if (message.includes("'NoneType' object has no attribute 'group'") || /AttributeError.+group/.test(message)) {
+    return 'AI 模型或网关返回的结构化内容解析失败，请换用直连模型或更稳定的轻量模型后重试。';
+  }
+  if (message.includes('RestrictedModelsError') || message.includes('Free tier users do not have access')) {
+    return '当前 AI Gateway 免费层无法访问所选模型，请换用免费层可用模型或充值后重试。';
+  }
+  return message || '分析中断，请检查 AI 服务配置后重试。';
 }
 
 function parseSSEBlock(block: string): ParsedSSEEvent | null {
@@ -57,10 +67,18 @@ function getTextBuffer(symbol: string) {
   const normalized = normalizeSymbol(symbol);
   let buffer = textBuffers.get(normalized);
   if (!buffer) {
-    buffer = { narration: '', report: '', timer: null };
+    buffer = { narrationByAgent: {}, report: '', timer: null };
     textBuffers.set(normalized, buffer);
   }
   return buffer;
+}
+
+function agentForNarration(agent: string) {
+  const normalizedAgent = agent.trim();
+  if (normalizedAgent && normalizedAgent !== 'Model' && normalizedAgent !== 'AnalysisAgent') {
+    return normalizedAgent;
+  }
+  return 'AnalysisAgent';
 }
 
 function flushTextBuffer(symbol: string) {
@@ -71,14 +89,18 @@ function flushTextBuffer(symbol: string) {
     clearTimeout(buffer.timer);
     buffer.timer = null;
   }
-  const narration = buffer.narration;
+  const narrationByAgent = buffer.narrationByAgent;
   const report = buffer.report;
-  buffer.narration = '';
+  buffer.narrationByAgent = {};
   buffer.report = '';
-  if (!narration && !report) return;
+  if (Object.keys(narrationByAgent).length === 0 && !report) return;
 
   const store = useAnalysisStore.getState();
-  if (narration) store.appendLiveNarration(normalized, narration);
+  for (const [agent, content] of Object.entries(narrationByAgent)) {
+    if (!content) continue;
+    store.appendLiveNarration(normalized, content);
+    store.appendAgentNarration(normalized, agent, content);
+  }
   if (report) store.appendReport(normalized, report);
 }
 
@@ -95,10 +117,15 @@ function scheduleTextFlush(symbol: string) {
   buffer.timer = setTimeout(() => flushTextBuffer(symbol), STREAM_FLUSH_MS);
 }
 
-function appendBufferedText(symbol: string, key: 'narration' | 'report', content: string) {
+function appendBufferedText(symbol: string, key: 'narration' | 'report', content: string, agent = 'AnalysisAgent') {
   if (!content) return;
   const buffer = getTextBuffer(symbol);
-  buffer[key] += content;
+  if (key === 'narration') {
+    const targetAgent = agentForNarration(agent);
+    buffer.narrationByAgent[targetAgent] = (buffer.narrationByAgent[targetAgent] ?? '') + content;
+  } else {
+    buffer.report += content;
+  }
   scheduleTextFlush(symbol);
 }
 
@@ -119,7 +146,7 @@ function handleStreamEvent(symbol: string, parsed: ParsedSSEEvent) {
 
   if (parsed.event === 'narration_delta') {
     const payload = parseJSON<{ agent: string; content: string }>(parsed.data, { agent: 'AnalysisAgent', content: '' });
-    appendBufferedText(symbol, 'narration', payload.content);
+    appendBufferedText(symbol, 'narration', payload.content, payload.agent);
     return;
   }
 
@@ -136,7 +163,7 @@ function handleStreamEvent(symbol: string, parsed: ParsedSSEEvent) {
   }
 
   if (parsed.event === 'progress') {
-    const payload = parseJSON<{ agent: string; status: 'pending' | 'running' | 'done' | 'error'; message: string }>(parsed.data, {
+    const payload = parseJSON<{ agent: string; status: 'pending' | 'running' | 'paused' | 'done' | 'error'; message: string }>(parsed.data, {
       agent: 'AnalysisAgent',
       status: 'running',
       message: ''
@@ -196,7 +223,7 @@ function handleStreamEvent(symbol: string, parsed: ParsedSSEEvent) {
   if (parsed.event === 'error') {
     const payload = parseJSON<{ message: string }>(parsed.data, { message: '分析中断，请检查 AI 服务配置后重试' });
     flushTextBuffer(symbol);
-    store.markAIError(symbol, payload.message);
+    store.markAIError(symbol, readableAIError(payload.message));
     closeConnection(symbol);
   }
 }
@@ -265,7 +292,8 @@ async function connect(symbol: string, config: AnalysisConfig, context?: AIAnaly
   } catch (error) {
     if (abortController.signal.aborted) return;
     flushTextBuffer(normalized);
-    store.markAIError(normalized, error instanceof Error ? error.message : '分析中断，请检查网络连接后重新生成');
+    const message = error instanceof Error ? error.message : '分析中断，请检查网络连接后重新生成';
+    store.markAIError(normalized, readableAIError(message));
   } finally {
     const active = connections.get(normalized);
     if (active?.abortController === abortController) {
@@ -275,6 +303,7 @@ async function connect(symbol: string, config: AnalysisConfig, context?: AIAnaly
 }
 
 export function closeAIStream(symbol: string) {
+  flushTextBuffer(symbol);
   closeConnection(symbol);
 }
 
@@ -289,10 +318,11 @@ export function useAIStream(symbol: string) {
   );
 
   const abort = useCallback(() => {
+    flushTextBuffer(normalized);
     closeConnection(normalized);
     const state = useAnalysisStore.getState().getStateForSymbol(normalized);
     if (state.aiStatus === 'streaming') {
-      useAnalysisStore.getState().updateState(normalized, { aiStatus: 'idle' });
+      useAnalysisStore.getState().markPaused(normalized);
     }
   }, [normalized]);
 

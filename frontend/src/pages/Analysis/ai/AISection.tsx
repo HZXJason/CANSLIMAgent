@@ -1,7 +1,8 @@
-import { Sparkles } from 'lucide-react';
+import { PauseCircle, Sparkles } from 'lucide-react';
 import { useRef, useState } from 'react';
 import AIAnalysisConfig, { type AnalysisConfig } from '../../../components/analysis/AIAnalysisConfig';
 import AIAnalysisStream from '../../../components/analysis/AIAnalysisStream';
+import { Button } from '../../../components/ui/button';
 import { Card } from '../../../components/ui/card';
 import { ConfirmDialog } from '../../../components/ui/confirm-dialog';
 import { useAIStream } from '../../../hooks/useAIStream';
@@ -15,7 +16,7 @@ interface AISectionProps {
 }
 
 export default function AISection({ symbol, state }: AISectionProps) {
-  const { start } = useAIStream(symbol);
+  const { start, abort } = useAIStream(symbol);
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [pendingConfig, setPendingConfig] = useState<AnalysisConfig | null>(null);
   const lastConfigRef = useRef<AnalysisConfig | null>(null);
@@ -23,6 +24,7 @@ export default function AISection({ symbol, state }: AISectionProps) {
   const hasOutput =
     state.thoughtLines.length > 0 ||
     state.liveNarration.length > 0 ||
+    Object.keys(state.liveNarrationByAgent).length > 0 ||
     state.reportContent.length > 0 ||
     state.aiProgress.length > 0 ||
     state.aiResults.length > 0 ||
@@ -59,10 +61,16 @@ export default function AISection({ symbol, state }: AISectionProps) {
             <p className="mt-1 text-sm text-slate-500">流式输出研究过程、分角色报告和最终建议</p>
           </div>
           {isAnalyzing ? (
-            <span className="inline-flex items-center gap-2 rounded-full border border-cyan-400/30 bg-cyan-400/10 px-3 py-1 text-xs font-bold text-cyan-200">
-              <span className="h-2 w-2 rounded-full bg-cyan-300" />
-              生成中
-            </span>
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="inline-flex items-center gap-2 rounded-full border border-cyan-400/30 bg-cyan-400/10 px-3 py-1 text-xs font-bold text-cyan-200">
+                <span className="h-2 w-2 rounded-full bg-cyan-300" />
+                生成中
+              </span>
+              <Button variant="outline" className="h-9 rounded-xl px-3 text-xs" onClick={abort}>
+                <PauseCircle className="h-4 w-4" />
+                暂停分析
+              </Button>
+            </div>
           ) : null}
         </div>
 
@@ -80,9 +88,10 @@ export default function AISection({ symbol, state }: AISectionProps) {
               decision={state.aiDecision}
               error={state.aiError}
               liveNarration={state.liveNarration}
+              liveNarrationByAgent={state.liveNarrationByAgent}
               fallbackReport={state.reportContent}
             />
-            {state.aiStatus === 'done' || state.aiStatus === 'error' ? (
+            {state.aiStatus === 'done' || state.aiStatus === 'error' || state.aiStatus === 'paused' ? (
               <AIActions symbol={symbol} reportContent={state.reportContent} nLabelWritten={state.nLabelWritten} onRegenerate={requestRegenerate} />
             ) : null}
           </>

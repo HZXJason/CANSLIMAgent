@@ -39,6 +39,7 @@ export function createInitialAnalysisState(): SymbolAnalysisState {
     aiStatus: 'idle',
     thoughtLines: [],
     liveNarration: '',
+    liveNarrationByAgent: {},
     reportContent: '',
     aiProgress: [],
     aiResults: [],
@@ -69,6 +70,7 @@ function normalizeCachedState(state: Partial<SymbolAnalysisState>): SymbolAnalys
     ...state,
     chartStatus: { ...initialChartStatus, ...(state.chartStatus ?? {}) }
   };
+  next.liveNarrationByAgent = next.liveNarrationByAgent ?? {};
   const interrupted = next.aiStatus === 'streaming';
 
   if (next.stockSummary) next.chartStatus.summary = 'success';
@@ -104,12 +106,14 @@ interface AnalysisStore {
   setKLinePeriod: (symbol: string, period: KLinePeriod) => void;
   appendThought: (symbol: string, line: ThoughtLine) => void;
   appendLiveNarration: (symbol: string, content: string) => void;
+  appendAgentNarration: (symbol: string, agent: string, content: string) => void;
   clearLiveNarration: (symbol: string) => void;
   appendReport: (symbol: string, content: string) => void;
   upsertAIProgress: (symbol: string, progress: Omit<AIAgentProgress, 'timestamp'>) => void;
   appendAIResult: (symbol: string, result: Omit<AIAgentResult, 'timestamp'>) => void;
   setAIDecision: (symbol: string, decision: AIDecision) => void;
   resetAI: (symbol: string) => void;
+  markPaused: (symbol: string) => void;
   markDone: (symbol: string) => void;
   markAIError: (symbol: string, message: string) => void;
   setNLabelWritten: (symbol: string, value: boolean) => void;
@@ -167,11 +171,22 @@ export const useAnalysisStore = create<AnalysisStore>()(
             liveNarration: current.liveNarration + content
           }))
         })),
+      appendAgentNarration: (symbol, agent, content) =>
+        set((state) => ({
+          analysisStates: withSymbolState(state.analysisStates, symbol, (current) => ({
+            ...current,
+            liveNarrationByAgent: {
+              ...current.liveNarrationByAgent,
+              [agent]: (current.liveNarrationByAgent[agent] ?? '') + content
+            }
+          }))
+        })),
       clearLiveNarration: (symbol) =>
         set((state) => ({
           analysisStates: withSymbolState(state.analysisStates, symbol, (current) => ({
             ...current,
-            liveNarration: ''
+            liveNarration: '',
+            liveNarrationByAgent: {}
           }))
         })),
       appendReport: (symbol, content) =>
@@ -236,6 +251,7 @@ export const useAnalysisStore = create<AnalysisStore>()(
             aiStatus: 'streaming',
             thoughtLines: [],
             liveNarration: '',
+            liveNarrationByAgent: {},
             reportContent: '',
             aiProgress: [],
             aiResults: [],
@@ -243,6 +259,24 @@ export const useAnalysisStore = create<AnalysisStore>()(
             aiError: null,
             thoughtExpanded: true,
             nLabelWritten: false
+          }))
+        })),
+      markPaused: (symbol) =>
+        set((state) => ({
+          analysisStates: withSymbolState(state.analysisStates, symbol, (current) => ({
+            ...current,
+            aiStatus: 'paused',
+            aiProgress: current.aiProgress.map((item) =>
+              item.status === 'running'
+                ? {
+                    ...item,
+                    status: 'paused',
+                    message: '已暂停',
+                    timestamp: Date.now()
+                  }
+                : item
+            ),
+            aiError: null
           }))
         })),
       markDone: (symbol) =>
@@ -268,7 +302,17 @@ export const useAnalysisStore = create<AnalysisStore>()(
           analysisStates: withSymbolState(state.analysisStates, symbol, (current) => ({
             ...current,
             aiStatus: 'error',
-            aiError: message
+            aiError: message,
+            aiProgress: current.aiProgress.map((item) =>
+              item.status === 'done'
+                ? item
+                : {
+                    ...item,
+                    status: 'error',
+                    message: '分析中断',
+                    timestamp: Date.now()
+                  }
+            )
           }))
         })),
       setNLabelWritten: (symbol, value) =>

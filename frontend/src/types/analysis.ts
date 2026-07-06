@@ -2,8 +2,8 @@ import type { StockMetrics } from './index';
 
 export type KLinePeriod = 'daily' | 'weekly' | 'monthly';
 export type ChartStatus = 'loading' | 'success' | 'error' | 'insufficient';
-export type AIStatus = 'idle' | 'streaming' | 'done' | 'error';
-export type AIProgressStatus = 'pending' | 'running' | 'done' | 'error';
+export type AIStatus = 'idle' | 'streaming' | 'paused' | 'done' | 'error';
+export type AIProgressStatus = 'pending' | 'running' | 'paused' | 'done' | 'error';
 
 export interface AnalysisConfig {
   llm_provider: string;
@@ -219,6 +219,7 @@ export interface SymbolAnalysisState {
   aiStatus: AIStatus;
   thoughtLines: ThoughtLine[];
   liveNarration: string;
+  liveNarrationByAgent: Record<string, string>;
   reportContent: string;
   aiProgress: AIAgentProgress[];
   aiResults: AIAgentResult[];
