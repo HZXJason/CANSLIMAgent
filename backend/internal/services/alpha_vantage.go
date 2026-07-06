@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"strings"
@@ -93,5 +94,5 @@ func (c *AlphaVantageClient) getJSON(ctx context.Context, path string, query url
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return fmt.Errorf("Alpha Vantage 请求失败：HTTP %d", resp.StatusCode)
 	}
-	return json.NewDecoder(resp.Body).Decode(target)
+	return json.NewDecoder(io.LimitReader(resp.Body, 10<<20)).Decode(target)
 }

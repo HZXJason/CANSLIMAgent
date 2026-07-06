@@ -1,10 +1,15 @@
 package main
 
 import (
+	"context"
 	"log"
 	"net/http"
 	"net/url"
+	"os"
+	"os/signal"
 	"strings"
+	"syscall"
+	"time"
 
 	"github.com/alphalens/canslimagent/backend/config"
 	"github.com/alphalens/canslimagent/backend/internal/db"
@@ -21,6 +26,15 @@ func main() {
 	if err != nil {
 		log.Fatalf("数据库初始化失败：%v", err)
 	}
+	sqlDB, err := database.DB()
+	if err != nil {
+		log.Fatalf("获取数据库连接池失败：%v", err)
+	}
+	defer func() {
+		if closeErr := sqlDB.Close(); closeErr != nil {
+			log.Printf("数据库关闭异常：%v", closeErr)
+		}
+	}()
 
 	alphaVantageClient := services.NewAlphaVantageClient(cfg.AlphaVantageAPIKey, cfg.RequestTimeout)
 	translationClient := services.NewTranslationClient(cfg.EnableProfileTranslate, cfg.RequestTimeout)
@@ -49,7 +63,7 @@ func main() {
 	screenerHandler := handlers.NewScreenerHandler(scanner)
 	presetHandler := handlers.NewPresetHandler(database)
 	chartsHandler := handlers.NewChartsHandler(analysisService)
-	analysisHandler := handlers.NewAnalysisHandler(analysisService, cfg.AIStreamURL)
+	analysisHandler := handlers.NewAnalysisHandler(analysisService, cfg.AIStreamURL, cfg.RequestTimeout)
 	aiAnalysisHandler := handlers.NewAIAnalysisHandler()
 	journalHandler := handlers.NewJournalHandler(database)
 	tradePlanHandler := handlers.NewTradePlanHandler(database)
@@ -111,9 +125,31 @@ func main() {
 	}
 
 	log.Printf("AlphaLens 后端已启动：http://localhost:%s", cfg.Port)
-	if err := router.Run(":" + cfg.Port); err != nil {
-		log.Fatalf("服务启动失败：%v", err)
+
+	server := &http.Server{
+		Addr:              ":" + cfg.Port,
+		Handler:           router,
+		ReadHeaderTimeout: 10 * time.Second,
 	}
+
+	quit := make(chan os.Signal, 1)
+	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
+
+	go func() {
+		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			log.Fatalf("服务启动失败：%v", err)
+		}
+	}()
+
+	<-quit
+	log.Println("正在关闭服务...")
+
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	if err := server.Shutdown(shutdownCtx); err != nil {
+		log.Printf("服务关闭异常：%v", err)
+	}
+	log.Println("服务已安全关闭")
 }
 
 func allowConfiguredOrLocalOrigin(allowedOrigins []string) func(string) bool {

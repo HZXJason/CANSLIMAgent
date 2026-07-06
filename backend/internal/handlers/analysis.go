@@ -19,11 +19,14 @@ type AnalysisHandler struct {
 	client    *http.Client
 }
 
-func NewAnalysisHandler(analysis *services.AnalysisService, streamURL string) *AnalysisHandler {
+func NewAnalysisHandler(analysis *services.AnalysisService, streamURL string, proxyTimeout time.Duration) *AnalysisHandler {
+	if proxyTimeout <= 0 {
+		proxyTimeout = 30 * time.Second
+	}
 	return &AnalysisHandler{
 		analysis:  analysis,
 		streamURL: strings.TrimSpace(streamURL),
-		client:    &http.Client{},
+		client:    &http.Client{Timeout: proxyTimeout},
 	}
 }
 

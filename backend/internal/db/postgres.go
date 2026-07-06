@@ -2,6 +2,7 @@ package db
 
 import (
 	"errors"
+	"time"
 
 	"github.com/alphalens/canslimagent/backend/internal/models"
 	"gorm.io/driver/postgres"
@@ -17,6 +18,13 @@ func OpenPostgres(databaseURL string) (*gorm.DB, error) {
 	if err != nil {
 		return nil, err
 	}
+	sqlDB, err := database.DB()
+	if err != nil {
+		return nil, err
+	}
+	sqlDB.SetMaxOpenConns(25)
+	sqlDB.SetMaxIdleConns(5)
+	sqlDB.SetConnMaxLifetime(5 * time.Minute)
 	if err := database.AutoMigrate(&models.Stock{}, &models.StockMetric{}, &models.ThresholdPreset{}, &models.TradeJournalEntry{}, &models.TradePlan{}); err != nil {
 		return nil, err
 	}
@@ -55,8 +63,15 @@ func seedDefaultPreset(database *gorm.DB) error {
 	var existingDefault models.ThresholdPreset
 	if err := database.Where("is_default = ?", true).First(&existingDefault).Error; err == nil {
 		return database.Model(&existingDefault).Updates(map[string]interface{}{
-			"name":       preset.Name,
-			"is_default": true,
+			"name":            preset.Name,
+			"is_default":      true,
+			"c_min_growth":    preset.CMinGrowth,
+			"a_min_growth":    preset.AMinGrowth,
+			"a_min_years":     preset.AMinYears,
+			"s_volume_ratio":  preset.SVolumeRatio,
+			"s_ma_period":     preset.SMAPeriod,
+			"l_min_rs":        preset.LMinRS,
+			"i_min_delta":     preset.IMinDelta,
 		}).Error
 	} else if !errors.Is(err, gorm.ErrRecordNotFound) {
 		return err

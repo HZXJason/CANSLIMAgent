@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"math"
 	"net/http"
 	"net/url"
@@ -611,7 +612,6 @@ func (c *PolygonClient) FetchCandles(ctx context.Context, symbol string, period 
 	query.Set("adjusted", "true")
 	query.Set("sort", "asc")
 	query.Set("limit", "50000")
-	query.Set("apiKey", c.apiKey)
 
 	var payload struct {
 		Results []struct {
@@ -769,7 +769,7 @@ func (c *YahooClient) FetchCandles(ctx context.Context, symbol string, period st
 			Error interface{} `json:"error"`
 		} `json:"chart"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 50<<20)).Decode(&payload); err != nil {
 		return nil, err
 	}
 	if payload.Chart.Error != nil || len(payload.Chart.Result) == 0 || len(payload.Chart.Result[0].Indicators.Quote) == 0 {

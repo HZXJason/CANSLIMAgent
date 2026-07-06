@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"math"
 	"net/http"
 	"net/url"
@@ -51,7 +52,6 @@ func (c *PolygonClient) FetchPriceSignal(ctx context.Context, symbol string, asO
 	query.Set("adjusted", "true")
 	query.Set("sort", "asc")
 	query.Set("limit", "50000")
-	query.Set("apiKey", c.apiKey)
 
 	var payload struct {
 		Results []struct {
@@ -93,6 +93,7 @@ func (c *PolygonClient) getJSON(ctx context.Context, path string, query url.Valu
 	if err != nil {
 		return err
 	}
+	req.Header.Set("Authorization", "Bearer "+c.apiKey)
 	resp, err := c.client.Do(req)
 	if err != nil {
 		return err
@@ -101,5 +102,5 @@ func (c *PolygonClient) getJSON(ctx context.Context, path string, query url.Valu
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return fmt.Errorf("Polygon 请求失败：HTTP %d", resp.StatusCode)
 	}
-	return json.NewDecoder(resp.Body).Decode(target)
+	return json.NewDecoder(io.LimitReader(resp.Body, 50<<20)).Decode(target)
 }

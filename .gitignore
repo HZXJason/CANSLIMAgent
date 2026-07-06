@@ -9,5 +9,6 @@ __pycache__/
 *.tsbuildinfo
 backend/tmp/
 backend/bin/
+backend/server
 backend/*.exe
 backend/*.test

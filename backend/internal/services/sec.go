@@ -6,6 +6,7 @@ import (
 	"encoding/xml"
 	"errors"
 	"fmt"
+	"io"
 	"math"
 	"net/http"
 	"sort"
@@ -351,7 +352,7 @@ func (c *SECClient) getJSON(ctx context.Context, endpoint string, target interfa
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return fmt.Errorf("SEC EDGAR 请求失败：HTTP %d", resp.StatusCode)
 	}
-	return json.NewDecoder(resp.Body).Decode(target)
+	return json.NewDecoder(io.LimitReader(resp.Body, 100<<20)).Decode(target)
 }
 
 func (c *SECClient) getXML(ctx context.Context, endpoint string, target interface{}) error {
@@ -373,7 +374,7 @@ func (c *SECClient) getXML(ctx context.Context, endpoint string, target interfac
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return fmt.Errorf("SEC EDGAR XML 请求失败：HTTP %d", resp.StatusCode)
 	}
-	return xml.NewDecoder(resp.Body).Decode(target)
+	return xml.NewDecoder(io.LimitReader(resp.Body, 50<<20)).Decode(target)
 }
 
 func buildSECRecentFilings(cik int, recent secRecentFilings, limit int) []SECRecentFiling {

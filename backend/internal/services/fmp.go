@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"math"
 	"net/http"
 	"net/url"
@@ -341,7 +342,7 @@ func (c *FMPClient) getJSON(ctx context.Context, path string, query url.Values, 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return fmt.Errorf("FMP 请求失败：HTTP %d", resp.StatusCode)
 	}
-	return json.NewDecoder(resp.Body).Decode(target)
+	return json.NewDecoder(io.LimitReader(resp.Body, 50<<20)).Decode(target)
 }
 
 func firstNonZero(values ...float64) float64 {

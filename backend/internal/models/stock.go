@@ -64,7 +64,7 @@ func ValidMarket(market string) bool {
 }
 
 func MarketDisabledReason(market string) string {
-	return "不支持的市场"
+	return "不支持的市场：" + market + "，目前支持 SP500、NASDAQ100、RUSSELL2000"
 }
 
 func DefaultThresholdPreset() ThresholdPreset {

@@ -87,9 +87,10 @@ export const useScreenerStore = create<ScreenerStore>((set) => ({
     }),
   addStockResult: (stock) =>
     set((state) => {
-      const next = state.rawStocks.filter((item) => stockKey(item) !== stockKey(stock));
-      next.push(stock);
-      return { rawStocks: next, dataAsOf: stock.data_as_of };
+      const key = stockKey(stock);
+      const existing = new Map(state.rawStocks.map((item) => [stockKey(item), item] as const));
+      existing.set(key, stock);
+      return { rawStocks: Array.from(existing.values()), dataAsOf: stock.data_as_of };
     }),
   clearMarketResults: (market) =>
     set((state) => ({

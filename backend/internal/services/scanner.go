@@ -126,6 +126,12 @@ func (s *ScannerService) scanRunForMarket(market string) *scanRun {
 	s.scanMu.Lock()
 	defer s.scanMu.Unlock()
 
+	for key, run := range s.scanRuns {
+		if !run.isRunning() && run.finishedAt != nil && time.Since(*run.finishedAt) > 10*time.Minute {
+			delete(s.scanRuns, key)
+		}
+	}
+
 	if run, ok := s.scanRuns[market]; ok && run.isRunning() {
 		return run
 	}
@@ -213,6 +219,7 @@ func (r *scanRun) finish(status string, err error) {
 		close(events)
 		delete(r.subscribers, events)
 	}
+	r.events = nil
 }
 
 func (s *ScannerService) runResumableScan(run *scanRun) {
@@ -274,7 +281,14 @@ func (s *ScannerService) runResumableScan(run *scanRun) {
 		run.emit(ScanEvent{Type: "scan_progress", Data: scanProgressPayload{Total: total, Analyzed: analyzed}})
 
 		if s.scanDelay > 0 {
-			time.Sleep(s.scanDelay)
+			timer := time.NewTimer(s.scanDelay)
+			select {
+			case <-ctx.Done():
+				timer.Stop()
+				run.finish("cancelled", ctx.Err())
+				return
+			case <-timer.C:
+			}
 		}
 	}
 
@@ -392,7 +406,7 @@ func (s *ScannerService) GetCachedResults(ctx context.Context, market string) ([
 	return results, nil
 }
 
-func (s *ScannerService) StartRefresh(_ context.Context, market string) (*RefreshJob, error) {
+func (s *ScannerService) StartRefresh(ctx context.Context, market string) (*RefreshJob, error) {
 	if !models.ValidMarket(market) {
 		return nil, errors.New(models.MarketDisabledReason(market))
 	}
@@ -406,7 +420,7 @@ func (s *ScannerService) StartRefresh(_ context.Context, market string) (*Refres
 	s.jobs.Store(job.ID, job)
 
 	go func() {
-		err := s.refreshMarketData(context.Background(), market)
+		err := s.refreshMarketData(ctx, market)
 		finishedAt := time.Now().UTC()
 		job.FinishedAt = &finishedAt
 		if err != nil {

@@ -45,10 +45,11 @@ func NewAIAnalysisHandler() *AIAnalysisHandler {
 }
 
 func NewAIAnalysisHandlerWithSidecarURL(sidecarURL string) *AIAnalysisHandler {
+	timeout := aiAnalysisTimeoutFromEnv()
 	return &AIAnalysisHandler{
 		sidecarURL: strings.TrimRight(strings.TrimSpace(sidecarURL), "/"),
-		client:     &http.Client{},
-		timeout:    aiAnalysisTimeoutFromEnv(),
+		client:     &http.Client{Timeout: timeout + 30*time.Second},
+		timeout:    timeout,
 	}
 }
 

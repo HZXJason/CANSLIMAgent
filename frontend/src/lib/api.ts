@@ -17,23 +17,34 @@ import type { ExecuteTradePlanInput, ExecuteTradePlanResponse, NewTradePlanInput
 
 export const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:8080/api/v1';
 
+const DEFAULT_REQUEST_TIMEOUT_MS = 30_000;
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const headers = new Headers(init?.headers);
   if (init?.body && !headers.has('Content-Type')) {
     headers.set('Content-Type', 'application/json');
   }
 
-  const response = await fetch(API_BASE_URL + path, {
-    ...init,
-    headers: {
-      ...Object.fromEntries(headers.entries())
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), DEFAULT_REQUEST_TIMEOUT_MS);
+  const combinedSignal = init?.signal ?? controller.signal;
+
+  try {
+    const response = await fetch(API_BASE_URL + path, {
+      ...init,
+      signal: combinedSignal,
+      headers: {
+        ...Object.fromEntries(headers.entries())
+      }
+    });
+    const payload = (await response.json()) as APIResponse<T>;
+    if (!response.ok || !payload.success) {
+      throw new Error(payload.error ?? '请求失败');
     }
-  });
-  const payload = (await response.json()) as APIResponse<T>;
-  if (!response.ok || !payload.success) {
-    throw new Error(payload.error ?? '请求失败');
+    return payload.data;
+  } finally {
+    clearTimeout(timeoutId);
   }
-  return payload.data;
 }
 
 export function fetchCachedResults(market: Market) {
