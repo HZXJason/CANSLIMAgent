@@ -1,4 +1,5 @@
 import type { AIAnalysisConfigResponse, AIProviderConfig, AnalysisConfig } from '../types/analysis';
+import { AI_ANALYSIS_CONTRACT } from './aiAnalysisContract';
 
 export const AI_ANALYSIS_CONFIG_STORAGE_KEY = 'alphalens.aiAnalysisConfig.v1';
 
@@ -10,6 +11,7 @@ export const DEFAULT_AI_API_KEYS: Record<string, string> = {
 };
 
 export const FALLBACK_AI_ANALYSIS_OPTIONS: AIAnalysisConfigResponse = {
+  contract: AI_ANALYSIS_CONTRACT,
   providers: [
     {
       id: 'anthropic',

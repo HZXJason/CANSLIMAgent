@@ -50,6 +50,15 @@ export function createInitialAnalysisState(): SymbolAnalysisState {
   };
 }
 
+export function hasGeneratedAIAnalysis(state: SymbolAnalysisState) {
+  return (
+    state.aiStatus === 'done' ||
+    Boolean(state.aiDecision) ||
+    state.reportContent.trim().length > 0 ||
+    state.aiResults.length > 0
+  );
+}
+
 function statusForCount(length: number): ChartStatus {
   return length > 0 ? 'success' : 'insufficient';
 }

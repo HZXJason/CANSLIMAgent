@@ -1,15 +1,16 @@
 import { useCallback } from 'react';
-import { API_BASE_URL } from '../lib/api';
+import {
+  aiAnalysisStreamURL,
+  buildAIAnalysisStartRequest,
+  parseAIAnalysisSSEBlock,
+  readAIAnalysisErrorMessage,
+  type ParsedAIAnalysisStreamEvent
+} from '../lib/aiAnalysisGateway';
 import { useAnalysisStore } from '../stores/analysisStore';
 import type { AIAnalysisContext, AnalysisConfig } from '../types/analysis';
 
 interface StreamConnection {
   abortController: AbortController;
-}
-
-interface ParsedSSEEvent {
-  event: string;
-  data: string;
 }
 
 interface StreamTextBuffer {
@@ -42,25 +43,6 @@ function readableAIError(message: string) {
     return '当前 AI Gateway 免费层无法访问所选模型，请换用免费层可用模型或充值后重试。';
   }
   return message || '分析中断，请检查 AI 服务配置后重试。';
-}
-
-function parseSSEBlock(block: string): ParsedSSEEvent | null {
-  const lines = block.split(/\r?\n/);
-  let event = 'message';
-  const dataLines: string[] = [];
-
-  for (const line of lines) {
-    if (line.startsWith('event:')) {
-      event = line.slice(6).trim();
-      continue;
-    }
-    if (line.startsWith('data:')) {
-      dataLines.push(line.slice(5).trimStart());
-    }
-  }
-
-  if (!event && dataLines.length === 0) return null;
-  return { event, data: dataLines.join('\n') };
 }
 
 function getTextBuffer(symbol: string) {
@@ -139,7 +121,7 @@ function closeConnection(symbol: string) {
   clearTextBuffer(normalized);
 }
 
-function handleStreamEvent(symbol: string, parsed: ParsedSSEEvent) {
+function handleStreamEvent(symbol: string, parsed: ParsedAIAnalysisStreamEvent) {
   const store = useAnalysisStore.getState();
 
   if (parsed.event === 'heartbeat') return;
@@ -168,6 +150,9 @@ function handleStreamEvent(symbol: string, parsed: ParsedSSEEvent) {
       status: 'running',
       message: ''
     });
+    if (payload.status === 'done' || payload.status === 'error') {
+      flushTextBuffer(symbol);
+    }
     store.upsertAIProgress(symbol, {
       agent: payload.agent || 'AnalysisAgent',
       status: payload.status || 'running',
@@ -228,15 +213,6 @@ function handleStreamEvent(symbol: string, parsed: ParsedSSEEvent) {
   }
 }
 
-async function readErrorMessage(response: Response) {
-  try {
-    const payload = (await response.json()) as { error?: string; message?: string };
-    return payload.error || payload.message || 'AI 分析请求失败';
-  } catch {
-    return 'AI 分析请求失败';
-  }
-}
-
 async function connect(symbol: string, config: AnalysisConfig, context?: AIAnalysisContext) {
   const normalized = normalizeSymbol(symbol);
   closeConnection(normalized);
@@ -248,15 +224,15 @@ async function connect(symbol: string, config: AnalysisConfig, context?: AIAnaly
   store.resetAI(normalized);
 
   try {
-    const response = await fetch(API_BASE_URL + '/analysis/' + encodeURIComponent(normalized) + '/ai', {
+    const response = await fetch(aiAnalysisStreamURL(normalized), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(context ? { ...config, analysis_context: context } : config),
+      body: JSON.stringify(buildAIAnalysisStartRequest(config, context)),
       signal: abortController.signal
     });
 
     if (!response.ok) {
-      throw new Error(await readErrorMessage(response));
+      throw new Error(await readAIAnalysisErrorMessage(response));
     }
     if (!response.body) {
       throw new Error('浏览器不支持流式读取响应');
@@ -273,14 +249,14 @@ async function connect(symbol: string, config: AnalysisConfig, context?: AIAnaly
       const parts = buffer.split(/\r?\n\r?\n/);
       buffer = parts.pop() ?? '';
       for (const part of parts) {
-        const parsed = parseSSEBlock(part);
+        const parsed = parseAIAnalysisSSEBlock(part);
         if (parsed) handleStreamEvent(normalized, parsed);
       }
     }
 
     buffer += decoder.decode();
     if (buffer.trim()) {
-      const parsed = parseSSEBlock(buffer);
+      const parsed = parseAIAnalysisSSEBlock(buffer);
       if (parsed) handleStreamEvent(normalized, parsed);
     }
 

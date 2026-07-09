@@ -14,6 +14,7 @@ import type {
 } from '../types/analysis';
 import type { JournalEntry, JournalReflectionInput, NewJournalEntryInput } from '../types/journal';
 import type { ExecuteTradePlanInput, ExecuteTradePlanResponse, NewTradePlanInput, TradePlan, TradePlanFilters, TradePlanUpdateInput } from '../types/tradePlan';
+import { AI_ANALYSIS_CONFIG_PATH } from './aiAnalysisContract';
 
 export const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:8080/api/v1';
 
@@ -112,7 +113,7 @@ export function fetchSecondLayerData(symbol: string) {
 }
 
 export function fetchAIAnalysisConfig() {
-  return request<AIAnalysisConfigResponse>('/analysis/ai/config');
+  return request<AIAnalysisConfigResponse>(AI_ANALYSIS_CONFIG_PATH);
 }
 
 export function updateNLabel(symbol: string, nLabel: boolean, analysisSummary: string) {

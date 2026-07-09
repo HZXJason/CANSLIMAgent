@@ -1,5 +1,5 @@
 import { memo, useCallback, useEffect, useMemo, useState } from 'react';
-import { BadgeCheck, BarChart3, SearchX } from 'lucide-react';
+import { BadgeCheck, BarChart3, SearchX, Sparkles } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { Badge } from '../../components/ui/badge';
 import { Button } from '../../components/ui/button';
@@ -7,6 +7,7 @@ import { Card } from '../../components/ui/card';
 import { Tooltip } from '../../components/ui/tooltip';
 import { SCORE_LABEL_KEYS, SCREENER_FILTER_KEYS, labelStatusText } from '../../lib/computeLabels';
 import { cn } from '../../lib/utils';
+import { hasGeneratedAIAnalysis, useAnalysisStore } from '../../stores/analysisStore';
 import { useTabStore } from '../../stores/tabStore';
 import type { ComputedStock, LabelResult, Market, ScreenerFilterKey } from '../../types';
 
@@ -71,6 +72,17 @@ function NLabelBadge({ written }: { written: boolean | null }) {
   );
 }
 
+function AIAnalysisBadge() {
+  return (
+    <Tooltip content="已生成 AI 分析报告">
+      <Badge variant="neutral" className="h-6 min-w-9 shrink-0 gap-1 border-cyan-400/50 bg-cyan-400/10 px-1.5 text-[11px] text-cyan-200">
+        <Sparkles className="h-3 w-3" />
+        AI
+      </Badge>
+    </Tooltip>
+  );
+}
+
 function EmptyState({ filtered }: { filtered: boolean }) {
   return (
     <Card className="flex flex-col items-center justify-center gap-3 py-16 text-center">
@@ -92,13 +104,18 @@ function stockIdentity(stock: ComputedStock) {
   return stock.market + ':' + stock.symbol;
 }
 
+function stockHasAIAnalysis(stock: ComputedStock, aiAnalyzedSymbols: Set<string>) {
+  return aiAnalyzedSymbols.has(stock.symbol.toUpperCase()) || stock.metrics.n !== null;
+}
+
 interface StockRowProps {
   stock: ComputedStock;
   index: number;
+  hasAIAnalysis: boolean;
   onOpen: (stock: ComputedStock) => void;
 }
 
-const StockRow = memo(function StockRow({ stock, index, onOpen }: StockRowProps) {
+const StockRow = memo(function StockRow({ stock, index, hasAIAnalysis, onOpen }: StockRowProps) {
   const animated = index < ROW_ANIMATION_LIMIT;
 
   return (
@@ -110,9 +127,10 @@ const StockRow = memo(function StockRow({ stock, index, onOpen }: StockRowProps)
       style={animated ? { animationDelay: index * 16 + 'ms' } : undefined}
       onClick={() => onOpen(stock)}
     >
-      <span className="flex items-center gap-2 font-semibold text-white">
+      <span className="flex min-w-0 items-center gap-2 font-semibold text-white">
         <BarChart3 className="h-4 w-4 text-finance-blue" />
-        {stock.symbol}
+        <span className="truncate">{stock.symbol}</span>
+        {hasAIAnalysis ? <AIAnalysisBadge /> : null}
       </span>
       <span className="truncate text-slate-300">{stock.name}</span>
       <span className="flex flex-wrap gap-2">
@@ -131,6 +149,7 @@ const StockRow = memo(function StockRow({ stock, index, onOpen }: StockRowProps)
 export default function StockList({ stocks, hasRawData, filtered }: StockListProps) {
   const navigate = useNavigate();
   const openTab = useTabStore((state) => state.openTab);
+  const analysisStates = useAnalysisStore((state) => state.analysisStates);
   const [visibleCount, setVisibleCount] = useState(INITIAL_VISIBLE_STOCKS);
 
   useEffect(() => {
@@ -138,6 +157,15 @@ export default function StockList({ stocks, hasRawData, filtered }: StockListPro
   }, [stocks]);
 
   const visibleStocks = useMemo(() => stocks.slice(0, visibleCount), [stocks, visibleCount]);
+  const aiAnalyzedSymbols = useMemo(
+    () =>
+      new Set(
+        Object.entries(analysisStates)
+          .filter(([, state]) => hasGeneratedAIAnalysis(state))
+          .map(([symbol]) => symbol)
+      ),
+    [analysisStates]
+  );
   const hiddenCount = stocks.length - visibleStocks.length;
   const handleOpenStock = useCallback(
     (stock: ComputedStock) => {
@@ -171,7 +199,13 @@ export default function StockList({ stocks, hasRawData, filtered }: StockListPro
       </div>
       <div className="divide-y divide-slate-900">
         {visibleStocks.map((stock, index) => (
-          <StockRow key={stockIdentity(stock)} stock={stock} index={index} onOpen={handleOpenStock} />
+          <StockRow
+            key={stockIdentity(stock)}
+            stock={stock}
+            index={index}
+            hasAIAnalysis={stockHasAIAnalysis(stock, aiAnalyzedSymbols)}
+            onOpen={handleOpenStock}
+          />
         ))}
       </div>
       {hiddenCount > 0 ? (

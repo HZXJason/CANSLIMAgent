@@ -25,6 +25,8 @@ type Config struct {
 	EnableProfileTranslate  bool
 	YFinancePython          string
 	AIStreamURL             string
+	AIAnalysisUpstreamURL   string
+	AIAnalysisTimeout       time.Duration
 	AllowedOrigins          []string
 	RequestTimeout          time.Duration
 	ScanDelay               time.Duration
@@ -49,6 +51,8 @@ func Load() Config {
 		EnableProfileTranslate:  getEnvBool("ENABLE_PROFILE_TRANSLATION", true),
 		YFinancePython:          getEnv("YFINANCE_PYTHON", "python"),
 		AIStreamURL:             os.Getenv("AI_STREAM_URL"),
+		AIAnalysisUpstreamURL:   getFirstEnv([]string{"AI_ANALYSIS_UPSTREAM_URL", "AI_ANALYSIS_SIDECAR_URL"}, "http://127.0.0.1:8765"),
+		AIAnalysisTimeout:       time.Duration(getEnvInt("AI_ANALYSIS_TIMEOUT_SECONDS", 1200)) * time.Second,
 		AllowedOrigins:          splitOrigins(getEnv("ALLOWED_ORIGINS", "http://localhost:5173,http://127.0.0.1:5173")),
 		RequestTimeout:          time.Duration(getEnvInt("REQUEST_TIMEOUT_SECONDS", 20)) * time.Second,
 		ScanDelay:               time.Duration(getEnvInt("SCAN_DELAY_MS", 80)) * time.Millisecond,
@@ -61,6 +65,16 @@ func getEnv(key, fallback string) string {
 		return fallback
 	}
 	return value
+}
+
+func getFirstEnv(keys []string, fallback string) string {
+	for _, key := range keys {
+		value := strings.TrimSpace(os.Getenv(key))
+		if value != "" {
+			return value
+		}
+	}
+	return fallback
 }
 
 func getEnvInt(key string, fallback int) int {

@@ -176,7 +176,7 @@ function orderedAgentSections(sections: ReportSection[]) {
   });
 }
 
-function roleOutputSections(progress: AIAgentProgress[], reportSections: ReportSection[], liveNarrationByAgent: Record<string, string>) {
+function roleOutputSections(reportSections: ReportSection[], liveNarrationByAgent: Record<string, string>) {
   const byAgent = new Map<string, ReportSection>();
   const unassigned: ReportSection[] = [];
 
@@ -191,18 +191,6 @@ function roleOutputSections(progress: AIAgentProgress[], reportSections: ReportS
   for (const section of liveSections(liveNarrationByAgent)) {
     if (section.agent && !byAgent.has(section.agent)) {
       byAgent.set(section.agent, section);
-    }
-  }
-
-  for (const item of progress) {
-    if (!byAgent.has(item.agent)) {
-      byAgent.set(item.agent, {
-        key: 'placeholder-' + item.agent,
-        title: titleForAgent(item.agent),
-        content: '',
-        agent: item.agent,
-        source: 'placeholder'
-      });
     }
   }
 
@@ -260,7 +248,7 @@ export default function AIAnalysisStream({
     : liveNarration
       ? { AnalysisAgent: liveNarration }
       : {};
-  const outputSections = roleOutputSections(progressItems, reportSections, liveOutputByAgent);
+  const outputSections = roleOutputSections(reportSections, liveOutputByAgent);
   const showOutputSections = outputSections.length > 0;
   const showFallbackReport = !showOutputSections && !hasStructuredResults && fallbackReport;
   const completedProgress = progressItems.filter((item) => item.status === 'done').length;

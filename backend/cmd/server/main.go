@@ -64,7 +64,8 @@ func main() {
 	presetHandler := handlers.NewPresetHandler(database)
 	chartsHandler := handlers.NewChartsHandler(analysisService)
 	analysisHandler := handlers.NewAnalysisHandler(analysisService, cfg.AIStreamURL, cfg.RequestTimeout)
-	aiAnalysisHandler := handlers.NewAIAnalysisHandler()
+	aiAnalysisUpstream := services.NewHTTPAIAnalysisUpstream(cfg.AIAnalysisUpstreamURL, cfg.AIAnalysisTimeout)
+	aiAnalysisHandler := handlers.NewAIAnalysisHandlerWithUpstream(aiAnalysisUpstream, cfg.AIAnalysisTimeout)
 	journalHandler := handlers.NewJournalHandler(database)
 	tradePlanHandler := handlers.NewTradePlanHandler(database)
 

@@ -4,6 +4,18 @@ export type KLinePeriod = 'daily' | 'weekly' | 'monthly';
 export type ChartStatus = 'loading' | 'success' | 'error' | 'insufficient';
 export type AIStatus = 'idle' | 'streaming' | 'paused' | 'done' | 'error';
 export type AIProgressStatus = 'pending' | 'running' | 'paused' | 'done' | 'error';
+export type AIAnalysisStreamEventName =
+  | 'heartbeat'
+  | 'progress'
+  | 'narration_delta'
+  | 'report_start'
+  | 'report_delta'
+  | 'result'
+  | 'thought'
+  | 'report'
+  | 'decision'
+  | 'done'
+  | 'error';
 
 export interface AnalysisConfig {
   llm_provider: string;
@@ -71,7 +83,16 @@ export interface AIAnalystConfig {
   default_enabled?: boolean;
 }
 
+export interface AIAnalysisContract {
+  version: string;
+  config_endpoint: string;
+  stream_endpoint: string;
+  upstream_mode: 'sse' | string;
+  events: AIAnalysisStreamEventName[];
+}
+
 export interface AIAnalysisConfigResponse {
+  contract?: AIAnalysisContract;
   providers: AIProviderConfig[];
   analysts: AIAnalystConfig[];
   debate_rounds: number[];

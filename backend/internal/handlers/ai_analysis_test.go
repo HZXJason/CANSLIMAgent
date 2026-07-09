@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/alphalens/canslimagent/backend/internal/services"
 	"github.com/gin-gonic/gin"
 )
 
@@ -14,12 +15,13 @@ func setupAIAnalysisRouter(sidecarURL string) *gin.Engine {
 	gin.SetMode(gin.TestMode)
 	router := gin.New()
 	handler := NewAIAnalysisHandlerWithSidecarURL(sidecarURL)
+	router.GET("/api/v1/analysis/ai/config", handler.Config)
 	router.POST("/api/v1/analysis/:symbol/ai", handler.Stream)
 	return router
 }
 
 func TestAIAnalysisStreamProxiesSSE(t *testing.T) {
-	var received AIAnalysisRequest
+	var received services.AIAnalysisRequest
 	sidecar := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/analyze" {
 			t.Fatalf("unexpected sidecar path: %s", r.URL.Path)
@@ -75,6 +77,24 @@ func TestAIAnalysisStreamProxiesSSE(t *testing.T) {
 	}
 }
 
+func TestAIAnalysisConfigExposesStableContract(t *testing.T) {
+	router := setupAIAnalysisRouter("http://127.0.0.1:1")
+	request := httptest.NewRequest(http.MethodGet, "/api/v1/analysis/ai/config", nil)
+	recorder := httptest.NewRecorder()
+
+	router.ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", recorder.Code, recorder.Body.String())
+	}
+	if !strings.Contains(recorder.Body.String(), services.AIAnalysisContractVersion) {
+		t.Fatalf("expected AI analysis contract version, got %s", recorder.Body.String())
+	}
+	if !strings.Contains(recorder.Body.String(), "/api/v1/analysis/{symbol}/ai") {
+		t.Fatalf("expected stream endpoint contract, got %s", recorder.Body.String())
+	}
+}
+
 func TestAIAnalysisStreamReturns503WhenSidecarUnavailable(t *testing.T) {
 	sidecar := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
 	sidecarURL := sidecar.URL
@@ -94,7 +114,7 @@ func TestAIAnalysisStreamReturns503WhenSidecarUnavailable(t *testing.T) {
 	if recorder.Code != http.StatusServiceUnavailable {
 		t.Fatalf("expected 503, got %d: %s", recorder.Code, recorder.Body.String())
 	}
-	if !strings.Contains(recorder.Body.String(), "sidecar") {
-		t.Fatalf("expected sidecar error message, got %s", recorder.Body.String())
+	if !strings.Contains(recorder.Body.String(), "上游服务") {
+		t.Fatalf("expected upstream error message, got %s", recorder.Body.String())
 	}
 }

@@ -152,6 +152,32 @@ TRANSACTION_PROPOSAL_RE = re.compile(
     r"(?im)^\s*(?:F?INAL|INAL)\s+TRANSACTION\s+PROPOSAL\s*:\s*(?:\*\*)?([A-Z/]+)(?:\*\*)?\s*$"
 )
 MARKDOWN_FENCE_ONLY_RE = re.compile(r"(?m)^\s*```+\s*$")
+RAW_TOOL_FUNCTION_RE = re.compile(
+    r"(?i)\b(?:function\s*)?get_"
+    r"(?:news|global_news|macro_indicators|prediction_markets|fundamentals|"
+    r"balance_sheet|cashflow|income_statement|stock_data|indicators|"
+    r"verified_market_snapshot|insider_transactions)\b"
+)
+TOOL_ARG_KEYS = frozenset(
+    {
+        "ticker",
+        "symbol",
+        "query",
+        "topic",
+        "indicator",
+        "curr_date",
+        "current_date",
+        "start_date",
+        "end_date",
+        "look_back_days",
+        "limit",
+        "period",
+        "interval",
+        "market",
+        "asset_type",
+    }
+)
+TOOL_WRAPPER_KEYS = frozenset({"arguments", "args", "function", "name", "tool", "tool_name", "type"})
 
 DISPLAY_LABEL_REPLACEMENTS = [
     (re.compile(r"\*\*Overall Sentiment:\*\*", re.IGNORECASE), "**综合情绪**："),
@@ -297,6 +323,7 @@ def remove_internal_planning(text: str) -> str:
     hard_markers = [
         "首先，我需要收集",
         "现在依次调用工具",
+        "正在调用工具",
         "### Step",
     ]
     for marker in hard_markers:
@@ -323,6 +350,135 @@ def remove_internal_planning(text: str) -> str:
     return text[:cut_at].rstrip()
 
 
+def maybe_parse_json_object(value: str) -> Any | None:
+    text = value.strip()
+    if not text.startswith("{") or not text.endswith("}"):
+        return None
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        return None
+
+
+def payload_has_tool_arguments(payload: Any) -> bool:
+    if not isinstance(payload, dict) or not payload:
+        return False
+    keys = {str(key) for key in payload.keys()}
+    if keys & TOOL_ARG_KEYS:
+        return keys <= TOOL_ARG_KEYS | TOOL_WRAPPER_KEYS
+
+    for nested_key in ("arguments", "args"):
+        nested = payload.get(nested_key)
+        if isinstance(nested, str):
+            nested = maybe_parse_json_object(nested) or nested
+        if payload_has_tool_arguments(nested):
+            return True
+
+    function_payload = payload.get("function")
+    if isinstance(function_payload, dict):
+        name = str(function_payload.get("name") or "")
+        arguments = function_payload.get("arguments")
+        if RAW_TOOL_FUNCTION_RE.search(name) or payload_has_tool_arguments(arguments):
+            return True
+
+    return False
+
+
+def line_has_tool_argument_json(line: str) -> bool:
+    payload = maybe_parse_json_object(line)
+    return payload_has_tool_arguments(payload)
+
+
+def is_markdown_fence(line: str) -> bool:
+    return line.strip().startswith("```")
+
+
+def probable_tool_fragment_label(line: str) -> bool:
+    stripped = line.strip()
+    if not stripped or len(stripped) > 40:
+        return False
+    if RAW_TOOL_FUNCTION_RE.search(stripped):
+        return True
+    return bool(re.fullmatch(r"[A-Za-z_][A-Za-z0-9_ -]{0,39}", stripped))
+
+
+def next_nonempty_line(lines: list[str], start: int) -> tuple[int, str] | None:
+    for index in range(start, len(lines)):
+        stripped = lines[index].strip()
+        if stripped:
+            return index, stripped
+    return None
+
+
+def next_line_starts_tool_payload(lines: list[str], start: int) -> bool:
+    next_line = next_nonempty_line(lines, start)
+    if not next_line:
+        return False
+    index, stripped = next_line
+    if line_has_tool_argument_json(stripped) or RAW_TOOL_FUNCTION_RE.search(stripped):
+        return True
+    if is_markdown_fence(stripped):
+        after_fence = next_nonempty_line(lines, index + 1)
+        return bool(after_fence and line_has_tool_argument_json(after_fence[1]))
+    return False
+
+
+def skip_tool_payload_lines(lines: list[str], start: int) -> int:
+    index = start
+    while index < len(lines):
+        stripped = lines[index].strip()
+        if not stripped or is_markdown_fence(stripped):
+            index += 1
+            continue
+        if line_has_tool_argument_json(stripped) or RAW_TOOL_FUNCTION_RE.search(stripped):
+            index += 1
+            continue
+        if probable_tool_fragment_label(stripped) and next_line_starts_tool_payload(lines, index + 1):
+            index += 1
+            continue
+        break
+    return index
+
+
+def remove_raw_tool_call_blocks(text: str) -> str:
+    lines = text.splitlines()
+    kept: list[str] = []
+    index = 0
+
+    while index < len(lines):
+        stripped = lines[index].strip()
+        starts_tool_block = (
+            RAW_TOOL_FUNCTION_RE.search(stripped)
+            or "正在调用工具" in stripped
+            or "tool_calls" in stripped.lower()
+            or "function_call" in stripped.lower()
+        )
+        if starts_tool_block:
+            index = skip_tool_payload_lines(lines, index + 1)
+            continue
+
+        if probable_tool_fragment_label(stripped) and next_line_starts_tool_payload(lines, index + 1):
+            index += 1
+            continue
+
+        if is_markdown_fence(stripped) and next_line_starts_tool_payload(lines, index + 1):
+            index = skip_tool_payload_lines(lines, index + 1)
+            continue
+
+        if line_has_tool_argument_json(stripped):
+            while kept and not kept[-1].strip():
+                kept.pop()
+            if kept and probable_tool_fragment_label(kept[-1]):
+                kept.pop()
+            index += 1
+            continue
+
+        kept.append(lines[index])
+        index += 1
+
+    return "\n".join(kept).strip()
+
+
 def cleanup_display_labels(text: str) -> str:
     cleaned = TRANSACTION_PROPOSAL_RE.sub(lambda match: f"**最终交易建议**：{translate_display_value(match.group(1))}", text)
     for pattern, replacement in DISPLAY_LABEL_REPLACEMENTS:
@@ -344,6 +500,7 @@ def sanitize_display_text(value: Any) -> str:
     text = text.replace("∝⇒﹏", "")
     text = MARKDOWN_FENCE_ONLY_RE.sub("", text)
     text = normalize_structured_json_leaks(text)
+    text = remove_raw_tool_call_blocks(text)
     text = remove_internal_planning(text)
     text = cleanup_display_labels(text)
     text = re.sub(r"\n{3,}", "\n\n", text)
@@ -358,7 +515,11 @@ def is_internal_live_output(text: str) -> bool:
         "we have the following tools" in lowered
         or "let's start by calling" in lowered
         or "our task is to" in lowered
+        or "tool_calls" in lowered
+        or "function_call" in lowered
+        or RAW_TOOL_FUNCTION_RE.search(text) is not None
         or "现在依次调用工具" in text
+        or "正在调用工具" in text
     )
 
 
@@ -386,9 +547,24 @@ def content_to_text(content: Any) -> str:
             if isinstance(item, str):
                 texts.append(item)
             elif isinstance(item, dict):
+                item_type = str(item.get("type") or "").lower()
+                if "tool" in item_type or "function" in item_type:
+                    continue
                 texts.append(str(item.get("text") or item.get("content") or ""))
         return sanitize_display_text("\n".join(text for text in texts if text))
     return sanitize_display_text(content)
+
+
+def message_has_tool_calls(message: Any) -> bool:
+    for attr in ("tool_calls", "invalid_tool_calls"):
+        if getattr(message, attr, None):
+            return True
+    for attr in ("additional_kwargs", "response_metadata"):
+        payload = getattr(message, attr, None)
+        if isinstance(payload, dict):
+            if payload.get("tool_calls") or payload.get("function_call"):
+                return True
+    return False
 
 
 def response_to_text(response: Any) -> str:
@@ -399,6 +575,8 @@ def response_to_text(response: Any) -> str:
         generation = generation_group[0]
         message = getattr(generation, "message", None)
         if message is not None:
+            if message_has_tool_calls(message):
+                continue
             text = content_to_text(getattr(message, "content", ""))
         else:
             text = content_to_text(getattr(generation, "text", ""))
@@ -637,11 +815,75 @@ GRADE_LABELS = [
     ("C级", "C级弱候选"),
     ("D级", "D级淘汰"),
 ]
+GRADE_LABEL_BY_SHORT = dict(GRADE_LABELS)
+GRADE_MATCH_RE = re.compile(r"([ABCD])\s*级")
+GRADE_SEGMENT_SPLIT_RE = re.compile(r"[\n。；;]+")
+GRADE_SCALE_RE = re.compile(
+    r"分级标准|评级标准|等级标准|"
+    r"\b85\s*[-~到至]\s*100\b|"
+    r"\b75\s*[-~到至]\s*84\b|"
+    r"\b60\s*[-~到至]\s*74\b|"
+    r"60\s*以下"
+)
+TOTAL_SCORE_RE = re.compile(r"总分\s*[:：]?\s*(\d{1,3}(?:\.\d+)?)\s*(?:/|／)\s*100")
+
+
+def grade_label_from_short(short: str) -> str | None:
+    return GRADE_LABEL_BY_SHORT.get(f"{short.upper()}级")
+
+
+def extract_grade_label(text: str) -> str | None:
+    match = GRADE_MATCH_RE.search(text)
+    if not match:
+        return None
+    return grade_label_from_short(match.group(1))
+
+
+def is_grade_scale_segment(text: str) -> bool:
+    normalized = text.replace(" ", "")
+    if all(short in normalized for short, _ in GRADE_LABELS):
+        return True
+    return GRADE_SCALE_RE.search(text) is not None
+
+
+def grade_label_from_score(score: float) -> str:
+    if score >= 85:
+        return "A级重点候选"
+    if score >= 75:
+        return "B级观察候选"
+    if score >= 60:
+        return "C级弱候选"
+    return "D级淘汰"
 
 
 def extract_custom_grade(report: str) -> str:
-    for short, label in GRADE_LABELS:
-        if label in report or re.search(rf"{short}\s*[:：/]?", report):
+    text = str(report or "")
+    explicit_patterns = [
+        r"这只股票目前属于\s*[:：]?\s*(?:\*\*)?\s*([ABCD])\s*级",
+        r"(?:一句话结论|最终分级|最终评级|最终等级)\s*[:：]?\s*(?:\*\*)?\s*([ABCD])\s*级",
+        r"最终结论\s*[:：]?\s*.{0,160}?(?:属于|评为|分级为|评级为|等级为|结论为)\s*[:：]?\s*(?:\*\*)?\s*([ABCD])\s*级",
+    ]
+    for pattern in explicit_patterns:
+        matches = list(re.finditer(pattern, text, re.IGNORECASE | re.DOTALL))
+        for match in reversed(matches):
+            label = grade_label_from_short(match.group(1))
+            if label:
+                return label
+
+    score_matches = list(TOTAL_SCORE_RE.finditer(text))
+    for match in reversed(score_matches):
+        try:
+            score = float(match.group(1))
+        except ValueError:
+            continue
+        return grade_label_from_score(score)
+
+    segments = [segment.strip(" -*#\t") for segment in GRADE_SEGMENT_SPLIT_RE.split(text) if segment.strip()]
+    for segment in reversed(segments):
+        if is_grade_scale_segment(segment):
+            continue
+        label = extract_grade_label(segment)
+        if label:
             return label
     return "HOLD"
 
