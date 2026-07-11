@@ -19,6 +19,8 @@ interface AIAnalysisStreamProps {
 }
 
 const AGENT_ORDER = [
+  { id: 'VibeEvidence', label: 'Vibe 数据证据' },
+  { id: 'DataAuditor', label: '数据审计员' },
   { id: 'FundamentalsAnalyst', label: '基本面分析师' },
   { id: 'SentimentAnalyst', label: '情绪分析师' },
   { id: 'NewsAnalyst', label: '新闻分析师' },
@@ -27,6 +29,8 @@ const AGENT_ORDER = [
   { id: 'ResearchTeam', label: '研究团队' },
   { id: 'Trader', label: '交易员' },
   { id: 'RiskManagement', label: '风险管理团队' },
+  { id: 'VibeEvidenceReconciler', label: 'Vibe 证据对账' },
+  { id: 'VibeExecutionValidation', label: 'Vibe 执行验证' },
   { id: 'PortfolioManager', label: '投资组合经理' }
 ];
 
@@ -242,7 +246,7 @@ export default function AIAnalysisStream({
   const progressItems = orderedProgress(progress);
   const progressByAgent = new Map(progressItems.map((item) => [item.agent, item]));
   const hasStructuredResults = results.length > 0;
-  const reportSections = hasStructuredResults ? resultSections(results) : parseReportSections(fallbackReport);
+  const reportSections = [...resultSections(results), ...parseReportSections(fallbackReport)];
   const liveOutputByAgent = Object.keys(liveNarrationByAgent).length > 0
     ? liveNarrationByAgent
     : liveNarration

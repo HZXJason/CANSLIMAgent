@@ -46,7 +46,9 @@ export function createInitialAnalysisState(): SymbolAnalysisState {
     aiDecision: null,
     aiError: null,
     thoughtExpanded: true,
-    nLabelWritten: false
+    nLabelWritten: false,
+    aiRunId: null,
+    aiLastEventId: 0
   };
 }
 
@@ -67,8 +69,8 @@ function normalizeCachedProgress(progress: AIAgentProgress, interrupted: boolean
   if (!interrupted || progress.status === 'done' || progress.status === 'error') return progress;
   return {
     ...progress,
-    status: 'error',
-    message: '页面刷新后连接已中断，请重新生成',
+    status: 'paused',
+    message: '连接已中断，可从当前进度继续',
     timestamp: Date.now()
   };
 }
@@ -80,6 +82,8 @@ function normalizeCachedState(state: Partial<SymbolAnalysisState>): SymbolAnalys
     chartStatus: { ...initialChartStatus, ...(state.chartStatus ?? {}) }
   };
   next.liveNarrationByAgent = next.liveNarrationByAgent ?? {};
+  next.aiRunId = next.aiRunId ?? null;
+  next.aiLastEventId = Math.max(0, next.aiLastEventId ?? 0);
   const interrupted = next.aiStatus === 'streaming';
 
   if (next.stockSummary) next.chartStatus.summary = 'success';
@@ -92,8 +96,8 @@ function normalizeCachedState(state: Partial<SymbolAnalysisState>): SymbolAnalys
   if (next.secondLayerData) next.chartStatus.secondLayer = 'success';
 
   if (interrupted) {
-    next.aiStatus = next.reportContent || next.liveNarration || next.aiProgress.length > 0 ? 'error' : 'idle';
-    next.aiError = '页面刷新后 AI 流式连接已中断，可重新生成。';
+    next.aiStatus = next.aiRunId ? 'paused' : next.reportContent || next.liveNarration || next.aiProgress.length > 0 ? 'error' : 'idle';
+    next.aiError = next.aiRunId ? null : '页面刷新后 AI 流式连接已中断。';
     next.aiProgress = next.aiProgress.map((item) => normalizeCachedProgress(item, true));
   }
 
@@ -121,7 +125,9 @@ interface AnalysisStore {
   upsertAIProgress: (symbol: string, progress: Omit<AIAgentProgress, 'timestamp'>) => void;
   appendAIResult: (symbol: string, result: Omit<AIAgentResult, 'timestamp'>) => void;
   setAIDecision: (symbol: string, decision: AIDecision) => void;
-  resetAI: (symbol: string) => void;
+  beginAIRun: (symbol: string, runId: string) => void;
+  resumeAIRun: (symbol: string) => void;
+  setAIEventCursor: (symbol: string, eventId: number) => void;
   markPaused: (symbol: string) => void;
   markDone: (symbol: string) => void;
   markAIError: (symbol: string, message: string) => void;
@@ -253,7 +259,7 @@ export const useAnalysisStore = create<AnalysisStore>()(
             };
           })
         })),
-      resetAI: (symbol) =>
+      beginAIRun: (symbol, runId) =>
         set((state) => ({
           analysisStates: withSymbolState(state.analysisStates, symbol, (current) => ({
             ...current,
@@ -267,7 +273,29 @@ export const useAnalysisStore = create<AnalysisStore>()(
             aiDecision: null,
             aiError: null,
             thoughtExpanded: true,
-            nLabelWritten: false
+            nLabelWritten: false,
+            aiRunId: runId,
+            aiLastEventId: 0
+          }))
+        })),
+      resumeAIRun: (symbol) =>
+        set((state) => ({
+          analysisStates: withSymbolState(state.analysisStates, symbol, (current) => ({
+            ...current,
+            aiStatus: 'streaming',
+            aiError: null,
+            aiProgress: current.aiProgress.map((item) =>
+              item.status === 'paused' || item.status === 'error'
+                ? { ...item, status: 'running', message: '正在恢复...', timestamp: Date.now() }
+                : item
+            )
+          }))
+        })),
+      setAIEventCursor: (symbol, eventId) =>
+        set((state) => ({
+          analysisStates: withSymbolState(state.analysisStates, symbol, (current) => ({
+            ...current,
+            aiLastEventId: Math.max(current.aiLastEventId, eventId)
           }))
         })),
       markPaused: (symbol) =>

@@ -1,6 +1,6 @@
-import type { JournalEntry, NewJournalEntryInput, TradeDirection } from './journal';
+import type { JournalEntry, NewJournalEntryInput, TradeSide } from './journal';
 
-export type TradePlanDirection = TradeDirection | 'watch';
+export type TradePlanDirection = TradeSide | 'watch';
 export type TradePlanStatus = 'draft' | 'waiting' | 'executed' | 'cancelled' | 'expired';
 
 export interface TradePlan {
@@ -49,7 +49,8 @@ export type TradePlanUpdateInput = Partial<NewTradePlanInput> & {
   status?: TradePlanStatus;
 };
 
-export type ExecuteTradePlanInput = Partial<Pick<NewJournalEntryInput, 'trade_date' | 'price' | 'position_size' | 'stop_loss' | 'notes'>>;
+export type ExecuteTradePlanInput = Pick<NewJournalEntryInput, 'datetime' | 'quantity' | 'price' | 'market'> &
+  Partial<Pick<NewJournalEntryInput, 'name' | 'fee' | 'currency' | 'order_id' | 'notes'>>;
 
 export interface ExecuteTradePlanResponse {
   plan: TradePlan;

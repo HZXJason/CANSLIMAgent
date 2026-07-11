@@ -1,11 +1,12 @@
-import { KeyRound, Settings, SlidersHorizontal } from 'lucide-react';
+import { KeyRound, Loader2, RefreshCw, Settings, SlidersHorizontal } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 import { Card } from '../../components/ui/card';
+import { Button } from '../../components/ui/button';
 import { Checkbox } from '../../components/ui/checkbox';
 import { Input } from '../../components/ui/input';
 import { Label } from '../../components/ui/label';
 import { Select } from '../../components/ui/select';
-import { API_BASE_URL, fetchAIAnalysisConfig } from '../../lib/api';
+import { API_BASE_URL, discoverAIModels, fetchAIAnalysisConfig } from '../../lib/api';
 import {
   FALLBACK_AI_ANALYSIS_OPTIONS,
   getAIAnalysisProvider,
@@ -21,6 +22,10 @@ export default function SettingsPage() {
     normalizeAIAnalysisConfig(readStoredAIAnalysisConfig(), FALLBACK_AI_ANALYSIS_OPTIONS)
   );
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [discoveredModels, setDiscoveredModels] = useState<string[]>([]);
+  const [modelSource, setModelSource] = useState('');
+  const [modelError, setModelError] = useState<string | null>(null);
+  const [modelLoading, setModelLoading] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -59,6 +64,9 @@ export default function SettingsPage() {
       quick_think_llm: nextProvider.models.quick[0] ?? '',
       backend_url: nextProvider.default_backend_url ?? ''
     }));
+    setDiscoveredModels([]);
+    setModelSource('');
+    setModelError(null);
   };
 
   const updateProviderApiKey = (value: string) => {
@@ -69,6 +77,45 @@ export default function SettingsPage() {
         [current.llm_provider]: value
       }
     }));
+    setDiscoveredModels([]);
+    setModelSource('');
+    setModelError(null);
+  };
+
+  const updateBackendURL = (value: string) => {
+    setConfig((current) => ({ ...current, backend_url: value }));
+    setDiscoveredModels([]);
+    setModelSource('');
+    setModelError(null);
+  };
+
+  const fetchModels = async () => {
+    if (customProvider && !config.backend_url.trim()) {
+      setModelError('请先填写 OpenAI 兼容 API 地址');
+      return;
+    }
+    setModelLoading(true);
+    setModelError(null);
+    try {
+      const result = await discoverAIModels({
+        provider: config.llm_provider,
+        backend_url: config.backend_url.trim(),
+        api_key: providerApiKey.trim()
+      });
+      setDiscoveredModels(result.models);
+      setModelSource(result.source);
+      setConfig((current) => ({
+        ...current,
+        deep_think_llm: result.models.includes(current.deep_think_llm) ? current.deep_think_llm : result.models[0] ?? '',
+        quick_think_llm: result.models.includes(current.quick_think_llm) ? current.quick_think_llm : result.models[0] ?? ''
+      }));
+    } catch (error) {
+      setDiscoveredModels([]);
+      setModelSource('');
+      setModelError(error instanceof Error ? error.message : '获取模型列表失败');
+    } finally {
+      setModelLoading(false);
+    }
   };
 
   return (
@@ -136,7 +183,7 @@ export default function SettingsPage() {
           <div className="grid gap-4 md:grid-cols-2">
             <div className="space-y-2">
               <Label htmlFor="settings-ai-deep-model">深度思考模型</Label>
-              {customProvider ? (
+              {customProvider && discoveredModels.length === 0 ? (
                 <Input
                   id="settings-ai-deep-model"
                   value={config.deep_think_llm}
@@ -149,7 +196,7 @@ export default function SettingsPage() {
                   value={config.deep_think_llm}
                   onValueChange={(value) => setConfig((current) => ({ ...current, deep_think_llm: value }))}
                 >
-                  {provider.models.deep.map((model) => (
+                  {(discoveredModels.length > 0 ? discoveredModels : provider.models.deep).map((model) => (
                     <option key={model} value={model}>
                       {model}
                     </option>
@@ -160,7 +207,7 @@ export default function SettingsPage() {
 
             <div className="space-y-2">
               <Label htmlFor="settings-ai-quick-model">快速响应模型</Label>
-              {customProvider ? (
+              {customProvider && discoveredModels.length === 0 ? (
                 <Input
                   id="settings-ai-quick-model"
                   value={config.quick_think_llm}
@@ -173,7 +220,7 @@ export default function SettingsPage() {
                   value={config.quick_think_llm}
                   onValueChange={(value) => setConfig((current) => ({ ...current, quick_think_llm: value }))}
                 >
-                  {provider.models.quick.map((model) => (
+                  {(discoveredModels.length > 0 ? discoveredModels : provider.models.quick).map((model) => (
                     <option key={model} value={model}>
                       {model}
                     </option>
@@ -190,10 +237,28 @@ export default function SettingsPage() {
                 id="settings-ai-backend-url"
                 value={config.backend_url}
                 placeholder="https://ai-gateway.vercel.sh/v1"
-                onChange={(event) => setConfig((current) => ({ ...current, backend_url: event.target.value }))}
+                onChange={(event) => updateBackendURL(event.target.value)}
               />
               <p className="text-xs text-slate-500">支持 OpenAI Chat Completions 兼容的 /v1 网关</p>
               <p className="text-xs text-amber-300">Vercel 免费层建议使用 anthropic/claude-haiku-4.5；Sonnet/Opus 常会返回 403</p>
+            </div>
+          ) : null}
+
+          {customProvider ? (
+            <div className="flex flex-col gap-3 rounded-lg border border-slate-800 bg-slate-950/35 p-3 sm:flex-row sm:items-center sm:justify-between">
+              <div>
+                <p className="text-sm font-semibold text-slate-200">可用模型列表</p>
+                <p className="mt-1 text-xs text-slate-500">
+                  {discoveredModels.length > 0
+                    ? `已从 ${modelSource} 获取 ${discoveredModels.length} 个模型，可在上方下拉选择`
+                    : '填写 API 地址和 Key 后，从供应商的 /models 接口读取'}
+                </p>
+                {modelError ? <p className="mt-2 text-xs text-red-300">{modelError}</p> : null}
+              </div>
+              <Button type="button" variant="outline" disabled={modelLoading} onClick={() => void fetchModels()}>
+                {modelLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
+                {modelLoading ? '获取中' : '获取可用模型'}
+              </Button>
             </div>
           ) : null}
 

@@ -65,8 +65,9 @@ func main() {
 	chartsHandler := handlers.NewChartsHandler(analysisService)
 	analysisHandler := handlers.NewAnalysisHandler(analysisService, cfg.AIStreamURL, cfg.RequestTimeout)
 	aiAnalysisUpstream := services.NewHTTPAIAnalysisUpstream(cfg.AIAnalysisUpstreamURL, cfg.AIAnalysisTimeout)
-	aiAnalysisHandler := handlers.NewAIAnalysisHandlerWithUpstream(aiAnalysisUpstream, cfg.AIAnalysisTimeout)
-	journalHandler := handlers.NewJournalHandler(database)
+	aiAnalysisHandler := handlers.NewAIAnalysisHandlerWithUpstreamAndJournal(aiAnalysisUpstream, cfg.AIAnalysisTimeout, database)
+	journalReflectionUpstream := services.NewHTTPJournalReflectionUpstream(cfg.AIAnalysisUpstreamURL, 2*time.Minute)
+	journalHandler := handlers.NewJournalHandlerWithReflection(database, journalReflectionUpstream)
 	tradePlanHandler := handlers.NewTradePlanHandler(database)
 
 	router := gin.Default()
@@ -75,7 +76,7 @@ func main() {
 		AllowOriginFunc:     allowConfiguredOrLocalOrigin(cfg.AllowedOrigins),
 		AllowMethods:        []string{http.MethodGet, http.MethodPost, http.MethodPatch, http.MethodDelete, http.MethodOptions},
 		AllowHeaders:        []string{"Origin", "Content-Type", "Accept", "Authorization", "Cache-Control", "Pragma", "X-Requested-With"},
-		ExposeHeaders:       []string{"Content-Length"},
+		ExposeHeaders:       []string{"Content-Length", "X-Analysis-Run-ID"},
 		AllowCredentials:    true,
 		AllowPrivateNetwork: true,
 	}))
@@ -111,11 +112,15 @@ func main() {
 			c.Status(http.StatusNotFound)
 		})
 		api.POST("/analysis/:symbol/ai", aiAnalysisHandler.Stream)
+		api.POST("/analysis/ai/models", aiAnalysisHandler.DiscoverModels)
 		api.GET("/presets", presetHandler.List)
 		api.POST("/presets", presetHandler.Create)
 		api.DELETE("/presets/:id", presetHandler.Delete)
 		api.GET("/journal", journalHandler.List)
 		api.POST("/journal", journalHandler.Create)
+		api.GET("/journal/export", journalHandler.Export)
+		api.POST("/journal/reflections", journalHandler.Reflect)
+		api.GET("/journal/reflections/latest", journalHandler.LatestReflection)
 		api.GET("/journal/:id", journalHandler.Get)
 		api.PATCH("/journal/:id", journalHandler.Patch)
 		api.GET("/trade-plans", tradePlanHandler.List)

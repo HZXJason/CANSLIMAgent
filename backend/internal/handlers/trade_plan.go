@@ -50,11 +50,15 @@ type createTradePlanRequest struct {
 }
 
 type executeTradePlanRequest struct {
-	TradeDate    string   `json:"trade_date"`
-	Price        *float64 `json:"price"`
-	PositionSize *float64 `json:"position_size"`
-	StopLoss     *float64 `json:"stop_loss"`
-	Notes        *string  `json:"notes"`
+	Datetime string   `json:"datetime"`
+	Name     string   `json:"name"`
+	Quantity *float64 `json:"quantity"`
+	Price    *float64 `json:"price"`
+	Fee      *float64 `json:"fee"`
+	Market   string   `json:"market"`
+	Currency string   `json:"currency"`
+	OrderID  *string  `json:"order_id"`
+	Notes    *string  `json:"notes"`
 }
 
 type tradePlanResponse struct {
@@ -370,13 +374,13 @@ func (req createTradePlanRequest) toModel() (models.TradePlan, string) {
 }
 
 func (req executeTradePlanRequest) toJournalEntry(plan models.TradePlan) (models.TradeJournalEntry, string) {
-	tradeDateText := strings.TrimSpace(req.TradeDate)
-	if tradeDateText == "" {
-		tradeDateText = time.Now().UTC().Format(journalDateLayout)
+	datetimeText := strings.TrimSpace(req.Datetime)
+	if datetimeText == "" {
+		datetimeText = time.Now().UTC().Format(time.RFC3339)
 	}
-	tradeDate, err := time.Parse(journalDateLayout, tradeDateText)
+	executedAt, err := parseJournalDatetime(datetimeText)
 	if err != nil {
-		return models.TradeJournalEntry{}, "trade_date must be a valid date"
+		return models.TradeJournalEntry{}, "datetime must be a valid ISO8601 timestamp"
 	}
 
 	price := firstFloat(req.Price, plan.EntryPrice)
@@ -386,19 +390,29 @@ func (req executeTradePlanRequest) toJournalEntry(plan models.TradePlan) (models
 	if *price <= 0 {
 		return models.TradeJournalEntry{}, "price must be positive"
 	}
-	positionSize := firstFloat(req.PositionSize, plan.PositionSize)
-	if positionSize == nil {
-		return models.TradeJournalEntry{}, "missing required field: position_size"
+	if req.Quantity == nil {
+		return models.TradeJournalEntry{}, "missing required field: quantity"
 	}
-	if *positionSize <= 0 {
-		return models.TradeJournalEntry{}, "position_size must be positive"
+	if *req.Quantity <= 0 {
+		return models.TradeJournalEntry{}, "quantity must be positive"
 	}
-	stopLoss := firstFloat(req.StopLoss, plan.StopLoss)
-	if stopLoss == nil {
-		return models.TradeJournalEntry{}, "missing required field: stop_loss"
+	fee := 0.0
+	if req.Fee != nil {
+		fee = *req.Fee
 	}
-	if *stopLoss <= 0 {
-		return models.TradeJournalEntry{}, "stop_loss must be positive"
+	if fee < 0 {
+		return models.TradeJournalEntry{}, "fee must be zero or positive"
+	}
+	market := strings.ToLower(strings.TrimSpace(req.Market))
+	if market == "" {
+		market = inferTradeMarket(plan.Ticker)
+	}
+	if !models.ValidTradeMarket(market) {
+		return models.TradeJournalEntry{}, "market must be us, hk, china_a, crypto, or other"
+	}
+	currency := strings.ToUpper(strings.TrimSpace(req.Currency))
+	if currency == "" {
+		currency = defaultTradeCurrency(market)
 	}
 
 	notes := cleanOptionalString(req.Notes)
@@ -407,14 +421,19 @@ func (req executeTradePlanRequest) toJournalEntry(plan models.TradePlan) (models
 	}
 
 	return models.TradeJournalEntry{
-		Ticker:       plan.Ticker,
-		Direction:    plan.Direction,
-		TradeDate:    tradeDate,
-		Price:        *price,
-		PositionSize: *positionSize,
-		StopLoss:     *stopLoss,
-		Notes:        notes,
-		Phase1Locked: true,
+		ExecutedAt: executedAt,
+		Symbol:     plan.Ticker,
+		Name:       strings.TrimSpace(req.Name),
+		Side:       plan.Direction,
+		Quantity:   *req.Quantity,
+		Price:      *price,
+		Amount:     *req.Quantity * *price,
+		Fee:        fee,
+		Market:     market,
+		Currency:   currency,
+		OrderID:    cleanOptionalString(req.OrderID),
+		Source:     "trade_plan",
+		Notes:      notes,
 	}, ""
 }
 

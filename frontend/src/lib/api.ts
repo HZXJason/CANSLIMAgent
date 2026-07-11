@@ -1,6 +1,8 @@
 import type { APIResponse, Market, RefreshJob, RefreshJobResponse, StockWithMetrics, ThresholdConfig, ThresholdPreset } from '../types';
 import type {
   AIAnalysisConfigResponse,
+  AIModelDiscoveryInput,
+  AIModelDiscoveryResponse,
   CompanyProfile,
   EPSData,
   GrossMarginData,
@@ -12,9 +14,9 @@ import type {
   SecondLayerData,
   StockSummary
 } from '../types/analysis';
-import type { JournalEntry, JournalReflectionInput, NewJournalEntryInput } from '../types/journal';
+import type { JournalEntry, JournalReflectionInput, NewJournalEntryInput, StoredJournalReflection } from '../types/journal';
 import type { ExecuteTradePlanInput, ExecuteTradePlanResponse, NewTradePlanInput, TradePlan, TradePlanFilters, TradePlanUpdateInput } from '../types/tradePlan';
-import { AI_ANALYSIS_CONFIG_PATH } from './aiAnalysisContract';
+import { AI_ANALYSIS_CONFIG_PATH, AI_ANALYSIS_MODELS_PATH } from './aiAnalysisContract';
 
 export const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:8080/api/v1';
 
@@ -116,6 +118,13 @@ export function fetchAIAnalysisConfig() {
   return request<AIAnalysisConfigResponse>(AI_ANALYSIS_CONFIG_PATH);
 }
 
+export function discoverAIModels(input: AIModelDiscoveryInput) {
+  return request<AIModelDiscoveryResponse>(AI_ANALYSIS_MODELS_PATH, {
+    method: 'POST',
+    body: JSON.stringify(input)
+  });
+}
+
 export function updateNLabel(symbol: string, nLabel: boolean, analysisSummary: string) {
   return request<NLabelResponse>('/stocks/' + encodeURIComponent(symbol) + '/n-label', {
     method: 'PATCH',
@@ -143,6 +152,14 @@ export function updateJournalReflection(id: string, input: JournalReflectionInpu
     method: 'PATCH',
     body: JSON.stringify(input)
   });
+}
+
+export function generateJournalReflection() {
+  return request<StoredJournalReflection>('/journal/reflections', { method: 'POST' });
+}
+
+export function fetchLatestJournalReflection() {
+  return request<StoredJournalReflection | null>('/journal/reflections/latest');
 }
 
 export function fetchTradePlans(filters: TradePlanFilters = {}) {

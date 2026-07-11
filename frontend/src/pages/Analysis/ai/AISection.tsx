@@ -1,4 +1,4 @@
-import { PauseCircle, Sparkles } from 'lucide-react';
+import { PauseCircle, PlayCircle, Sparkles } from 'lucide-react';
 import { useRef, useState } from 'react';
 import AIAnalysisConfig, { type AnalysisConfig } from '../../../components/analysis/AIAnalysisConfig';
 import AIAnalysisStream from '../../../components/analysis/AIAnalysisStream';
@@ -7,6 +7,7 @@ import { Card } from '../../../components/ui/card';
 import { ConfirmDialog } from '../../../components/ui/confirm-dialog';
 import { useAIStream } from '../../../hooks/useAIStream';
 import { buildAIAnalysisContext } from '../../../lib/aiAnalysisContext';
+import { readStoredAIAnalysisConfig } from '../../../lib/aiAnalysisConfig';
 import type { SymbolAnalysisState } from '../../../types/analysis';
 import AIActions from './AIActions';
 
@@ -16,10 +17,10 @@ interface AISectionProps {
 }
 
 export default function AISection({ symbol, state }: AISectionProps) {
-  const { start, abort } = useAIStream(symbol);
+  const { start, resume, abort } = useAIStream(symbol);
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [pendingConfig, setPendingConfig] = useState<AnalysisConfig | null>(null);
-  const lastConfigRef = useRef<AnalysisConfig | null>(null);
+  const lastConfigRef = useRef<AnalysisConfig | null>(readStoredAIAnalysisConfig() as AnalysisConfig | null);
   const isAnalyzing = state.aiStatus === 'streaming';
   const hasOutput =
     state.thoughtLines.length > 0 ||
@@ -29,6 +30,7 @@ export default function AISection({ symbol, state }: AISectionProps) {
     state.aiProgress.length > 0 ||
     state.aiResults.length > 0 ||
     Boolean(state.aiDecision);
+  const canResume = Boolean(state.aiRunId) && (state.aiStatus === 'paused' || state.aiStatus === 'error');
 
   const runAnalysis = (config: AnalysisConfig) => {
     lastConfigRef.current = config;
@@ -50,6 +52,13 @@ export default function AISection({ symbol, state }: AISectionProps) {
     setConfirmOpen(true);
   };
 
+  const resumeAnalysis = () => {
+    const config = lastConfigRef.current ?? (readStoredAIAnalysisConfig() as AnalysisConfig | null);
+    if (!config || !state.aiRunId) return;
+    lastConfigRef.current = config;
+    resume(config, buildAIAnalysisContext(state));
+  };
+
   return (
     <section className="space-y-5">
       <AIAnalysisConfig symbol={symbol} onStartAnalysis={requestAnalysis} isAnalyzing={isAnalyzing} />
@@ -68,9 +77,14 @@ export default function AISection({ symbol, state }: AISectionProps) {
               </span>
               <Button variant="outline" className="h-9 rounded-xl px-3 text-xs" onClick={abort}>
                 <PauseCircle className="h-4 w-4" />
-                暂停分析
+                暂停接收
               </Button>
             </div>
+          ) : canResume ? (
+            <Button variant="outline" className="h-9 rounded-xl px-3 text-xs" onClick={resumeAnalysis}>
+              <PlayCircle className="h-4 w-4" />
+              继续上次分析
+            </Button>
           ) : null}
         </div>
 
@@ -91,6 +105,11 @@ export default function AISection({ symbol, state }: AISectionProps) {
               liveNarrationByAgent={state.liveNarrationByAgent}
               fallbackReport={state.reportContent}
             />
+            {state.aiStatus === 'paused' && state.aiRunId ? (
+              <p className="rounded-xl border border-amber-300/20 bg-amber-400/5 px-3 py-2 text-xs text-amber-100">
+                流式接收已暂停；sidecar 会保留运行和事件游标，点击“继续上次分析”只补发缺失内容。
+              </p>
+            ) : null}
             {state.aiStatus === 'done' || state.aiStatus === 'error' || state.aiStatus === 'paused' ? (
               <AIActions symbol={symbol} reportContent={state.reportContent} nLabelWritten={state.nLabelWritten} onRegenerate={requestRegenerate} />
             ) : null}

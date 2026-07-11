@@ -11,13 +11,40 @@ import (
 	"strings"
 	"time"
 
+	"github.com/alphalens/canslimagent/backend/internal/models"
 	"github.com/alphalens/canslimagent/backend/internal/services"
 	"github.com/gin-gonic/gin"
+	"gorm.io/gorm"
 )
 
 type AIAnalysisHandler struct {
-	upstream services.AIAnalysisUpstream
-	timeout  time.Duration
+	upstream         services.AIAnalysisUpstream
+	timeout          time.Duration
+	loadTradeJournal func(context.Context, string) ([]pythonTradeRecord, error)
+	modelDiscovery   services.AIModelDiscoverer
+}
+
+func NewAIAnalysisHandlerWithUpstreamAndJournal(upstream services.AIAnalysisUpstream, timeout time.Duration, database *gorm.DB) *AIAnalysisHandler {
+	handler := NewAIAnalysisHandlerWithUpstream(upstream, timeout)
+	if database != nil {
+		handler.loadTradeJournal = func(ctx context.Context, symbol string) ([]pythonTradeRecord, error) {
+			var entries []models.TradeJournalEntry
+			err := database.WithContext(ctx).
+				Where("symbol = ? AND quantity > 0 AND price > 0", symbol).
+				Order("executed_at DESC").
+				Limit(50).
+				Find(&entries).Error
+			if err != nil {
+				return nil, err
+			}
+			records := make([]pythonTradeRecord, 0, len(entries))
+			for index := len(entries) - 1; index >= 0; index-- {
+				records = append(records, newPythonTradeRecord(entries[index]))
+			}
+			return records, nil
+		}
+	}
+	return handler
 }
 
 func NewAIAnalysisHandler() *AIAnalysisHandler {
@@ -40,8 +67,9 @@ func NewAIAnalysisHandlerWithUpstream(upstream services.AIAnalysisUpstream, time
 		upstream = services.NewHTTPAIAnalysisUpstream(services.DefaultAIAnalysisUpstreamURL, timeout)
 	}
 	return &AIAnalysisHandler{
-		upstream: upstream,
-		timeout:  timeout,
+		upstream:       upstream,
+		timeout:        timeout,
+		modelDiscovery: services.NewAIModelDiscoveryService(15 * time.Second),
 	}
 }
 
@@ -58,6 +86,7 @@ func (h *AIAnalysisHandler) Stream(c *gin.Context) {
 		return
 	}
 	payload.Ticker = symbol
+	h.enrichTradeJournal(c.Request.Context(), &payload, symbol)
 
 	ctx, cancel := context.WithTimeout(c.Request.Context(), h.timeout)
 	defer cancel()
@@ -82,6 +111,9 @@ func (h *AIAnalysisHandler) Stream(c *gin.Context) {
 	c.Header("Cache-Control", "no-cache")
 	c.Header("Connection", "keep-alive")
 	c.Header("X-Accel-Buffering", "no")
+	if runID := strings.TrimSpace(stream.Header.Get("X-Analysis-Run-ID")); runID != "" {
+		c.Header("X-Analysis-Run-ID", runID)
+	}
 	c.Status(http.StatusOK)
 
 	reader := bufio.NewReader(stream.Body)
@@ -102,6 +134,23 @@ func (h *AIAnalysisHandler) Stream(c *gin.Context) {
 	}
 }
 
+func (h *AIAnalysisHandler) enrichTradeJournal(ctx context.Context, payload *services.AIAnalysisRequest, symbol string) {
+	if h.loadTradeJournal == nil || payload == nil {
+		return
+	}
+	records, err := h.loadTradeJournal(ctx, symbol)
+	if err != nil {
+		return
+	}
+	if payload.AnalysisContext == nil {
+		payload.AnalysisContext = make(map[string]any)
+	}
+	payload.AnalysisContext["trade_journal"] = map[string]any{
+		"schema_version": "vibe.trade_record.v1",
+		"records":        records,
+	}
+}
+
 func (h *AIAnalysisHandler) Config(c *gin.Context) {
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 5*time.Second)
 	defer cancel()
@@ -112,6 +161,39 @@ func (h *AIAnalysisHandler) Config(c *gin.Context) {
 		return
 	}
 	OK(c, config)
+}
+
+func (h *AIAnalysisHandler) DiscoverModels(c *gin.Context) {
+	var payload services.AIModelDiscoveryRequest
+	if err := c.ShouldBindJSON(&payload); err != nil {
+		Fail(c, http.StatusBadRequest, "模型发现请求格式错误")
+		return
+	}
+	payload.Provider = strings.ToLower(strings.TrimSpace(payload.Provider))
+	if payload.Provider == "" {
+		Fail(c, http.StatusBadRequest, "缺少 LLM 提供商")
+		return
+	}
+	if payload.Provider == "openai_compatible" && strings.TrimSpace(payload.BackendURL) == "" {
+		Fail(c, http.StatusBadRequest, "OpenAI 兼容网关需要填写 API 地址")
+		return
+	}
+	if h.modelDiscovery == nil {
+		Fail(c, http.StatusServiceUnavailable, "模型发现服务未配置")
+		return
+	}
+	ctx, cancel := context.WithTimeout(c.Request.Context(), 20*time.Second)
+	defer cancel()
+	result, err := h.modelDiscovery.Discover(ctx, payload)
+	if err != nil {
+		status := http.StatusBadGateway
+		if strings.Contains(err.Error(), "backend_url") {
+			status = http.StatusBadRequest
+		}
+		Fail(c, status, "获取模型列表失败："+err.Error())
+		return
+	}
+	OK(c, result)
 }
 
 func decodeOptionalJSON(body io.Reader, target interface{}) error {

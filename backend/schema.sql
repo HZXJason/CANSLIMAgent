@@ -53,25 +53,43 @@ ON CONFLICT (name) DO UPDATE SET is_default = TRUE;
 
 CREATE EXTENSION IF NOT EXISTS pgcrypto;
 
--- 交易日志：Phase 1 首次保存后锁定，Phase 2 反思字段可持续更新
+-- 交易日志：逐笔成交，字段与 Vibe-Trading TradeRecord 对齐
 CREATE TABLE IF NOT EXISTS trade_journal_entries (
-  id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  ticker          TEXT NOT NULL,
-  direction       TEXT NOT NULL CHECK (direction IN ('buy', 'sell')),
-  trade_date      DATE NOT NULL,
-  price           NUMERIC(12, 4) NOT NULL,
-  position_size   NUMERIC(6, 2) NOT NULL,
-  stop_loss       NUMERIC(12, 4) NOT NULL,
-  notes           TEXT,
-  exit_price      NUMERIC(12, 4),
-  pnl_pct         NUMERIC(8, 4),
-  reflection      TEXT,
-  phase1_locked   BOOLEAN NOT NULL DEFAULT FALSE
+  id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  executed_at TIMESTAMPTZ NOT NULL,
+  symbol      TEXT NOT NULL,
+  name        TEXT NOT NULL DEFAULT '',
+  side        TEXT NOT NULL CHECK (side IN ('buy', 'sell')),
+  quantity    NUMERIC(20, 8) NOT NULL,
+  price       NUMERIC(20, 8) NOT NULL,
+  amount      NUMERIC(24, 8) NOT NULL,
+  fee         NUMERIC(20, 8) NOT NULL DEFAULT 0,
+  market      TEXT NOT NULL DEFAULT 'other',
+  currency    TEXT NOT NULL DEFAULT '',
+  order_id    TEXT,
+  source      TEXT NOT NULL DEFAULT 'manual',
+  notes       TEXT,
+  reflection  TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_trade_journal_created_at ON trade_journal_entries (created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_trade_journal_executed_at ON trade_journal_entries (executed_at DESC);
+CREATE INDEX IF NOT EXISTS idx_trade_journal_symbol ON trade_journal_entries (symbol);
+
+-- Vibe-Trading 交易画像与行为反思运行记录
+CREATE TABLE IF NOT EXISTS trade_journal_reflections (
+  id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  scope        TEXT NOT NULL DEFAULT 'all',
+  record_count INTEGER NOT NULL,
+  engine       TEXT NOT NULL,
+  payload      JSONB NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_trade_journal_reflections_created_at ON trade_journal_reflections (created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_trade_journal_reflections_scope ON trade_journal_reflections (scope);
 
 -- 交易计划：发生在交易日志之前的预案，可执行后关联到日志
 CREATE TABLE IF NOT EXISTS trade_plans (

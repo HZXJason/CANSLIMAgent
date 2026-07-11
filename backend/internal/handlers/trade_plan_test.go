@@ -59,29 +59,26 @@ func TestCreateTradePlanRejectsInvalidPositionSize(t *testing.T) {
 
 func TestExecuteTradePlanUsesPlanDefaults(t *testing.T) {
 	entryPrice := 125.5
-	stopLoss := 119.25
-	positionSize := 8.5
+	quantity := 12.0
 	plan := models.TradePlan{
-		Ticker:       "NVDA",
-		Direction:    models.TradePlanDirectionBuy,
-		EntryPrice:   &entryPrice,
-		StopLoss:     &stopLoss,
-		PositionSize: &positionSize,
+		Ticker:     "NVDA",
+		Direction:  models.TradePlanDirectionBuy,
+		EntryPrice: &entryPrice,
 	}
 
-	entry, validationErr := executeTradePlanRequest{TradeDate: "2026-07-06"}.toJournalEntry(plan)
+	entry, validationErr := executeTradePlanRequest{Datetime: "2026-07-06T14:30", Quantity: &quantity}.toJournalEntry(plan)
 
 	if validationErr != "" {
 		t.Fatalf("unexpected validation error: %s", validationErr)
 	}
-	if entry.Ticker != "NVDA" || entry.Direction != models.TradeDirectionBuy {
+	if entry.Symbol != "NVDA" || entry.Side != models.TradeSideBuy {
 		t.Fatalf("unexpected journal identity: %+v", entry)
 	}
-	if entry.Price != entryPrice || entry.StopLoss != stopLoss || entry.PositionSize != positionSize {
+	if entry.Price != entryPrice || entry.Quantity != quantity || entry.Amount != entryPrice*quantity {
 		t.Fatalf("expected journal values from plan defaults, got %+v", entry)
 	}
-	if !entry.Phase1Locked {
-		t.Fatalf("expected executed journal entry to lock phase 1")
+	if entry.Market != models.TradeMarketUS || entry.Source != "trade_plan" {
+		t.Fatalf("expected canonical market/source fields, got %+v", entry)
 	}
 }
 

@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -9,60 +10,77 @@ import (
 	"time"
 
 	"github.com/alphalens/canslimagent/backend/internal/models"
+	"github.com/alphalens/canslimagent/backend/internal/services"
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 )
 
 const journalDateLayout = "2006-01-02"
 
-var phase1JournalFields = map[string]struct{}{
-	"ticker":        {},
-	"direction":     {},
-	"trade_date":    {},
-	"price":         {},
-	"position_size": {},
-	"stop_loss":     {},
-	"notes":         {},
-}
-
 type JournalHandler struct {
-	db *gorm.DB
+	db                 *gorm.DB
+	reflectionUpstream services.JournalReflectionUpstream
 }
 
 type createJournalEntryRequest struct {
-	Ticker       string   `json:"ticker"`
-	Direction    string   `json:"direction"`
-	TradeDate    string   `json:"trade_date"`
-	Price        *float64 `json:"price"`
-	PositionSize *float64 `json:"position_size"`
-	StopLoss     *float64 `json:"stop_loss"`
-	Notes        *string  `json:"notes"`
+	Datetime string   `json:"datetime"`
+	Symbol   string   `json:"symbol"`
+	Name     string   `json:"name"`
+	Side     string   `json:"side"`
+	Quantity *float64 `json:"quantity"`
+	Price    *float64 `json:"price"`
+	Amount   *float64 `json:"amount"`
+	Fee      *float64 `json:"fee"`
+	Market   string   `json:"market"`
+	Currency string   `json:"currency"`
+	OrderID  *string  `json:"order_id"`
+	Notes    *string  `json:"notes"`
 }
 
 type journalEntryResponse struct {
-	ID           string    `json:"id"`
-	Ticker       string    `json:"ticker"`
-	Direction    string    `json:"direction"`
-	TradeDate    string    `json:"trade_date"`
-	Price        float64   `json:"price"`
-	PositionSize float64   `json:"position_size"`
-	StopLoss     float64   `json:"stop_loss"`
-	Notes        *string   `json:"notes"`
-	ExitPrice    *float64  `json:"exit_price"`
-	PnLPct       *float64  `json:"pnl_pct"`
-	Reflection   *string   `json:"reflection"`
-	Phase1Locked bool      `json:"phase1_locked"`
-	CreatedAt    time.Time `json:"created_at"`
-	UpdatedAt    time.Time `json:"updated_at"`
+	ID         string    `json:"id"`
+	Datetime   string    `json:"datetime"`
+	Symbol     string    `json:"symbol"`
+	Name       string    `json:"name"`
+	Side       string    `json:"side"`
+	Quantity   float64   `json:"quantity"`
+	Price      float64   `json:"price"`
+	Amount     float64   `json:"amount"`
+	Fee        float64   `json:"fee"`
+	Market     string    `json:"market"`
+	Currency   string    `json:"currency"`
+	OrderID    *string   `json:"order_id"`
+	Source     string    `json:"source"`
+	Notes      *string   `json:"notes"`
+	Reflection *string   `json:"reflection"`
+	CreatedAt  time.Time `json:"created_at"`
+	UpdatedAt  time.Time `json:"updated_at"`
+}
+
+// pythonTradeRecord is the exact Vibe-Trading TradeRecord contract.
+type pythonTradeRecord struct {
+	Datetime string  `json:"datetime"`
+	Symbol   string  `json:"symbol"`
+	Name     string  `json:"name"`
+	Side     string  `json:"side"`
+	Quantity float64 `json:"quantity"`
+	Price    float64 `json:"price"`
+	Amount   float64 `json:"amount"`
+	Fee      float64 `json:"fee"`
+	Market   string  `json:"market"`
 }
 
 func NewJournalHandler(database *gorm.DB) *JournalHandler {
 	return &JournalHandler{db: database}
 }
 
+func NewJournalHandlerWithReflection(database *gorm.DB, upstream services.JournalReflectionUpstream) *JournalHandler {
+	return &JournalHandler{db: database, reflectionUpstream: upstream}
+}
+
 func (h *JournalHandler) List(c *gin.Context) {
-	var entries []models.TradeJournalEntry
-	if err := h.db.WithContext(c.Request.Context()).Order("created_at DESC").Find(&entries).Error; err != nil {
+	entries, err := h.listEntries(c, 0)
+	if err != nil {
 		Fail(c, http.StatusInternalServerError, "journal entries could not be loaded")
 		return
 	}
@@ -72,6 +90,122 @@ func (h *JournalHandler) List(c *gin.Context) {
 		responses = append(responses, newJournalEntryResponse(entry))
 	}
 	OK(c, responses)
+}
+
+func (h *JournalHandler) Export(c *gin.Context) {
+	entries, err := h.listEntries(c, 0)
+	if err != nil {
+		Fail(c, http.StatusInternalServerError, "journal entries could not be exported")
+		return
+	}
+
+	records := make([]pythonTradeRecord, 0, len(entries))
+	for index := len(entries) - 1; index >= 0; index-- {
+		entry := entries[index]
+		if entry.Quantity <= 0 || entry.Price <= 0 {
+			continue
+		}
+		records = append(records, newPythonTradeRecord(entry))
+	}
+	OK(c, gin.H{
+		"schema_version": "vibe.trade_record.v1",
+		"records":        records,
+	})
+}
+
+func (h *JournalHandler) Reflect(c *gin.Context) {
+	if h.reflectionUpstream == nil {
+		Fail(c, http.StatusServiceUnavailable, "journal reflection service is not configured")
+		return
+	}
+	entries, err := h.listEntries(c, 0)
+	if err != nil {
+		Fail(c, http.StatusInternalServerError, "journal entries could not be loaded for reflection")
+		return
+	}
+	records := make([]services.JournalTradeRecord, 0, len(entries))
+	for index := len(entries) - 1; index >= 0; index-- {
+		entry := entries[index]
+		if entry.Quantity <= 0 || entry.Price <= 0 {
+			continue
+		}
+		records = append(records, services.JournalTradeRecord{
+			Datetime: entry.ExecutedAt.Format("2006-01-02 15:04:05"),
+			Symbol:   entry.Symbol,
+			Name:     entry.Name,
+			Side:     entry.Side,
+			Quantity: entry.Quantity,
+			Price:    entry.Price,
+			Amount:   entry.Amount,
+			Fee:      entry.Fee,
+			Market:   entry.Market,
+		})
+	}
+	if len(records) == 0 {
+		Fail(c, http.StatusBadRequest, "no structured trade records are available for reflection")
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(c.Request.Context(), 2*time.Minute)
+	defer cancel()
+	result, err := h.reflectionUpstream.Reflect(ctx, services.JournalReflectionRequest{
+		SchemaVersion: "vibe.trade_record.v1",
+		Records:       records,
+	})
+	if err != nil {
+		Fail(c, http.StatusBadGateway, "journal reflection failed: "+err.Error())
+		return
+	}
+	scope := strings.ToUpper(strings.TrimSpace(c.Query("symbol")))
+	if scope == "" {
+		scope = "all"
+	}
+	engine, _ := result["engine"].(string)
+	if engine == "" {
+		engine = "vibe-trading"
+	}
+	reflection := models.TradeJournalReflection{
+		Scope:       scope,
+		RecordCount: len(records),
+		Engine:      engine,
+		Payload:     map[string]any(result),
+	}
+	if err := h.db.WithContext(c.Request.Context()).Create(&reflection).Error; err != nil {
+		Fail(c, http.StatusInternalServerError, "journal reflection could not be saved")
+		return
+	}
+	c.JSON(http.StatusCreated, APIResponse{Success: true, Data: newJournalReflectionResponse(reflection), Error: nil})
+}
+
+func (h *JournalHandler) LatestReflection(c *gin.Context) {
+	scope := strings.ToUpper(strings.TrimSpace(c.Query("symbol")))
+	if scope == "" {
+		scope = "all"
+	}
+	var reflection models.TradeJournalReflection
+	err := h.db.WithContext(c.Request.Context()).Where("scope = ?", scope).Order("created_at DESC").First(&reflection).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		OK(c, nil)
+		return
+	}
+	if err != nil {
+		Fail(c, http.StatusInternalServerError, "journal reflection could not be loaded")
+		return
+	}
+	OK(c, newJournalReflectionResponse(reflection))
+}
+
+func (h *JournalHandler) listEntries(c *gin.Context, limit int) ([]models.TradeJournalEntry, error) {
+	query := h.db.WithContext(c.Request.Context()).Order("executed_at DESC")
+	if symbol := strings.ToUpper(strings.TrimSpace(c.Query("symbol"))); symbol != "" {
+		query = query.Where("symbol = ?", symbol)
+	}
+	if limit > 0 {
+		query = query.Limit(limit)
+	}
+	var entries []models.TradeJournalEntry
+	err := query.Find(&entries).Error
+	return entries, err
 }
 
 func (h *JournalHandler) Create(c *gin.Context) {
@@ -114,32 +248,28 @@ func (h *JournalHandler) Patch(c *gin.Context) {
 		return
 	}
 	for field := range raw {
-		if _, locked := phase1JournalFields[field]; locked {
-			Fail(c, http.StatusBadRequest, "phase 1 fields are locked and cannot be modified")
+		if field != "notes" && field != "reflection" {
+			Fail(c, http.StatusBadRequest, "execution fields are immutable")
 			return
 		}
 	}
 
-	updates := map[string]interface{}{
-		"updated_at": time.Now().UTC(),
-	}
-	if value, present, err := decodeOptionalFloat(raw, "exit_price"); err != nil {
-		Fail(c, http.StatusBadRequest, err.Error())
-		return
-	} else if present {
-		updates["exit_price"] = value
-	}
-	if value, present, err := decodeOptionalFloat(raw, "pnl_pct"); err != nil {
-		Fail(c, http.StatusBadRequest, err.Error())
-		return
-	} else if present {
-		updates["pnl_pct"] = value
-	}
-	if value, present, err := decodeOptionalString(raw, "reflection"); err != nil {
-		Fail(c, http.StatusBadRequest, err.Error())
-		return
-	} else if present {
-		updates["reflection"] = value
+	updates := map[string]interface{}{"updated_at": time.Now().UTC()}
+	for _, field := range []string{"notes", "reflection"} {
+		value, present, err := decodeOptionalString(raw, field)
+		if err != nil {
+			Fail(c, http.StatusBadRequest, err.Error())
+			return
+		}
+		if present {
+			if text, ok := value.(string); ok {
+				value = strings.TrimSpace(text)
+				if value == "" {
+					value = nil
+				}
+			}
+			updates[field] = value
+		}
 	}
 
 	if err := h.db.WithContext(c.Request.Context()).Model(&entry).Updates(updates).Error; err != nil {
@@ -168,75 +298,174 @@ func (h *JournalHandler) findEntry(c *gin.Context) (models.TradeJournalEntry, bo
 }
 
 func (req createJournalEntryRequest) toModel() (models.TradeJournalEntry, string) {
-	ticker := strings.ToUpper(strings.TrimSpace(req.Ticker))
-	if ticker == "" {
-		return models.TradeJournalEntry{}, "missing required field: ticker"
-	}
-
-	direction := strings.ToLower(strings.TrimSpace(req.Direction))
-	if direction == "" {
-		return models.TradeJournalEntry{}, "missing required field: direction"
-	}
-	if !models.ValidTradeDirection(direction) {
-		return models.TradeJournalEntry{}, "direction must be buy or sell"
-	}
-
-	tradeDateText := strings.TrimSpace(req.TradeDate)
-	if tradeDateText == "" {
-		return models.TradeJournalEntry{}, "missing required field: trade_date"
-	}
-	tradeDate, err := time.Parse(journalDateLayout, tradeDateText)
+	executedAt, err := parseJournalDatetime(req.Datetime)
 	if err != nil {
-		return models.TradeJournalEntry{}, "trade_date must be a valid date"
+		return models.TradeJournalEntry{}, "datetime must be a valid ISO8601 timestamp"
 	}
-
-	if req.Price == nil {
-		return models.TradeJournalEntry{}, "missing required field: price"
+	symbol := strings.ToUpper(strings.TrimSpace(req.Symbol))
+	if symbol == "" {
+		return models.TradeJournalEntry{}, "missing required field: symbol"
 	}
-	if *req.Price <= 0 {
+	side := strings.ToLower(strings.TrimSpace(req.Side))
+	if !models.ValidTradeSide(side) {
+		return models.TradeJournalEntry{}, "side must be buy or sell"
+	}
+	if req.Quantity == nil || *req.Quantity <= 0 {
+		return models.TradeJournalEntry{}, "quantity must be positive"
+	}
+	if req.Price == nil || *req.Price <= 0 {
 		return models.TradeJournalEntry{}, "price must be positive"
 	}
-	if req.PositionSize == nil {
-		return models.TradeJournalEntry{}, "missing required field: position_size"
+
+	amount := *req.Quantity * *req.Price
+	if req.Amount != nil {
+		if *req.Amount <= 0 {
+			return models.TradeJournalEntry{}, "amount must be positive"
+		}
+		amount = *req.Amount
 	}
-	if *req.PositionSize <= 0 {
-		return models.TradeJournalEntry{}, "position_size must be positive"
+	fee := 0.0
+	if req.Fee != nil {
+		if *req.Fee < 0 {
+			return models.TradeJournalEntry{}, "fee must be zero or positive"
+		}
+		fee = *req.Fee
 	}
-	if req.StopLoss == nil {
-		return models.TradeJournalEntry{}, "missing required field: stop_loss"
+
+	market := strings.ToLower(strings.TrimSpace(req.Market))
+	if market == "" {
+		market = inferTradeMarket(symbol)
 	}
-	if *req.StopLoss <= 0 {
-		return models.TradeJournalEntry{}, "stop_loss must be positive"
+	if !models.ValidTradeMarket(market) {
+		return models.TradeJournalEntry{}, "market must be us, hk, china_a, crypto, or other"
+	}
+	currency := strings.ToUpper(strings.TrimSpace(req.Currency))
+	if currency == "" {
+		currency = defaultTradeCurrency(market)
 	}
 
 	return models.TradeJournalEntry{
-		Ticker:       ticker,
-		Direction:    direction,
-		TradeDate:    tradeDate,
-		Price:        *req.Price,
-		PositionSize: *req.PositionSize,
-		StopLoss:     *req.StopLoss,
-		Notes:        cleanOptionalString(req.Notes),
-		Phase1Locked: true,
+		ExecutedAt: executedAt,
+		Symbol:     symbol,
+		Name:       strings.TrimSpace(req.Name),
+		Side:       side,
+		Quantity:   *req.Quantity,
+		Price:      *req.Price,
+		Amount:     amount,
+		Fee:        fee,
+		Market:     market,
+		Currency:   currency,
+		OrderID:    cleanOptionalString(req.OrderID),
+		Source:     "manual",
+		Notes:      cleanOptionalString(req.Notes),
 	}, ""
+}
+
+func parseJournalDatetime(value string) (time.Time, error) {
+	cleaned := strings.TrimSpace(value)
+	if cleaned == "" {
+		return time.Time{}, errors.New("datetime is required")
+	}
+	for _, layout := range []string{
+		time.RFC3339Nano,
+		"2006-01-02T15:04",
+		"2006-01-02 15:04:05",
+		journalDateLayout,
+	} {
+		if parsed, err := time.Parse(layout, cleaned); err == nil {
+			return parsed, nil
+		}
+	}
+	return time.Time{}, errors.New("invalid datetime")
+}
+
+func inferTradeMarket(symbol string) string {
+	upper := strings.ToUpper(symbol)
+	switch {
+	case strings.HasSuffix(upper, ".HK"):
+		return models.TradeMarketHK
+	case strings.HasSuffix(upper, ".SH"), strings.HasSuffix(upper, ".SZ"), strings.HasSuffix(upper, ".BJ"):
+		return models.TradeMarketChinaA
+	case strings.Contains(upper, "USDT"), strings.Contains(upper, "USDC"), strings.Contains(upper, "-USD"):
+		return models.TradeMarketCrypto
+	case isASCIIAlpha(upper):
+		return models.TradeMarketUS
+	default:
+		return models.TradeMarketOther
+	}
+}
+
+func isASCIIAlpha(value string) bool {
+	if value == "" {
+		return false
+	}
+	for _, char := range value {
+		if char < 'A' || char > 'Z' {
+			return false
+		}
+	}
+	return true
+}
+
+func defaultTradeCurrency(market string) string {
+	switch market {
+	case models.TradeMarketUS:
+		return "USD"
+	case models.TradeMarketHK:
+		return "HKD"
+	case models.TradeMarketChinaA:
+		return "CNY"
+	case models.TradeMarketCrypto:
+		return "USDT"
+	default:
+		return ""
+	}
 }
 
 func newJournalEntryResponse(entry models.TradeJournalEntry) journalEntryResponse {
 	return journalEntryResponse{
-		ID:           entry.ID.String(),
-		Ticker:       entry.Ticker,
-		Direction:    entry.Direction,
-		TradeDate:    entry.TradeDate.Format(journalDateLayout),
-		Price:        entry.Price,
-		PositionSize: entry.PositionSize,
-		StopLoss:     entry.StopLoss,
-		Notes:        entry.Notes,
-		ExitPrice:    entry.ExitPrice,
-		PnLPct:       entry.PnLPct,
-		Reflection:   entry.Reflection,
-		Phase1Locked: entry.Phase1Locked,
-		CreatedAt:    entry.CreatedAt,
-		UpdatedAt:    entry.UpdatedAt,
+		ID:         entry.ID.String(),
+		Datetime:   entry.ExecutedAt.Format(time.RFC3339),
+		Symbol:     entry.Symbol,
+		Name:       entry.Name,
+		Side:       entry.Side,
+		Quantity:   entry.Quantity,
+		Price:      entry.Price,
+		Amount:     entry.Amount,
+		Fee:        entry.Fee,
+		Market:     entry.Market,
+		Currency:   entry.Currency,
+		OrderID:    entry.OrderID,
+		Source:     entry.Source,
+		Notes:      entry.Notes,
+		Reflection: entry.Reflection,
+		CreatedAt:  entry.CreatedAt,
+		UpdatedAt:  entry.UpdatedAt,
+	}
+}
+
+func newPythonTradeRecord(entry models.TradeJournalEntry) pythonTradeRecord {
+	return pythonTradeRecord{
+		Datetime: entry.ExecutedAt.Format("2006-01-02 15:04:05"),
+		Symbol:   entry.Symbol,
+		Name:     entry.Name,
+		Side:     entry.Side,
+		Quantity: entry.Quantity,
+		Price:    entry.Price,
+		Amount:   entry.Amount,
+		Fee:      entry.Fee,
+		Market:   entry.Market,
+	}
+}
+
+func newJournalReflectionResponse(reflection models.TradeJournalReflection) gin.H {
+	return gin.H{
+		"id":           reflection.ID.String(),
+		"created_at":   reflection.CreatedAt,
+		"scope":        reflection.Scope,
+		"record_count": reflection.RecordCount,
+		"engine":       reflection.Engine,
+		"payload":      reflection.Payload,
 	}
 }
 

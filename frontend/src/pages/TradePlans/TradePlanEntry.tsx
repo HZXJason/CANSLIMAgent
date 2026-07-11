@@ -31,10 +31,13 @@ interface PlanForm {
 }
 
 interface ExecuteForm {
-  trade_date: string;
+  datetime: string;
+  quantity: string;
   price: string;
-  position_size: string;
-  stop_loss: string;
+  fee: string;
+  market: 'us' | 'hk' | 'china_a' | 'crypto' | 'other';
+  currency: string;
+  order_id: string;
   notes: string;
 }
 
@@ -61,6 +64,12 @@ function todayISO() {
   const month = String(date.getMonth() + 1).padStart(2, '0');
   const day = String(date.getDate()).padStart(2, '0');
   return year + '-' + month + '-' + day;
+}
+
+function currentLocalDatetime() {
+  const now = new Date();
+  const local = new Date(now.getTime() - now.getTimezoneOffset() * 60_000);
+  return local.toISOString().slice(0, 16);
 }
 
 function initialPlanForm(symbol = '', aiSummary = ''): PlanForm {
@@ -101,10 +110,13 @@ function formFromPlan(plan: TradePlan): PlanForm {
 
 function initialExecuteForm(plan: TradePlan): ExecuteForm {
   return {
-    trade_date: todayISO(),
+    datetime: currentLocalDatetime(),
+    quantity: '',
     price: plan.entry_price === null ? '' : String(plan.entry_price),
-    position_size: plan.position_size === null ? '' : String(plan.position_size),
-    stop_loss: plan.stop_loss === null ? '' : String(plan.stop_loss),
+    fee: '0',
+    market: 'us',
+    currency: 'USD',
+    order_id: '',
     notes: plan.notes ?? ''
   };
 }
@@ -178,18 +190,22 @@ function buildPlanInput(form: PlanForm, coreLocked: boolean) {
 
 function buildExecuteInput(form: ExecuteForm) {
   const errors: ExecuteFormErrors = {};
-  if (!form.trade_date) errors.trade_date = '交易日期为必填项';
+  if (!form.datetime) errors.datetime = '成交时间为必填项';
+  const quantity = parseExecuteNumber(form.quantity, 'quantity', '成交数量', errors);
   const price = parseExecuteNumber(form.price, 'price', '执行价格', errors);
-  const positionSize = parseExecuteNumber(form.position_size, 'position_size', '执行仓位', errors);
-  const stopLoss = parseExecuteNumber(form.stop_loss, 'stop_loss', '止损价', errors);
+  const fee = form.fee.trim() ? Number(form.fee) : 0;
+  if (!Number.isFinite(fee) || fee < 0) errors.fee = '费用必须为零或正数';
 
-  if (Object.keys(errors).length > 0) return { errors, input: null };
+  if (Object.keys(errors).length > 0 || quantity === undefined || price === undefined) return { errors, input: null };
 
   const input: ExecuteTradePlanInput = {
-    trade_date: form.trade_date,
+    datetime: form.datetime,
+    quantity,
     price,
-    position_size: positionSize,
-    stop_loss: stopLoss,
+    fee,
+    market: form.market,
+    currency: form.currency.trim().toUpperCase(),
+    order_id: cleanText(form.order_id),
     notes: cleanText(form.notes)
   };
   return { errors, input };
@@ -494,9 +510,14 @@ function ExecutionCard({ plan }: { plan: TradePlan }) {
       </div>
       <div className="grid gap-4 md:grid-cols-2">
         <label>
-          <span className="text-sm font-semibold text-slate-300">交易日期</span>
-          <Input className="mt-2" type="date" value={form.trade_date} invalid={Boolean(errors.trade_date)} onChange={(event) => updateField('trade_date', event.target.value)} />
-          <FieldError value={errors.trade_date} />
+          <span className="text-sm font-semibold text-slate-300">成交时间</span>
+          <Input className="mt-2" type="datetime-local" value={form.datetime} invalid={Boolean(errors.datetime)} onChange={(event) => updateField('datetime', event.target.value)} />
+          <FieldError value={errors.datetime} />
+        </label>
+        <label>
+          <span className="text-sm font-semibold text-slate-300">成交数量</span>
+          <Input className="mt-2" type="number" min="0" step="0.00000001" value={form.quantity} invalid={Boolean(errors.quantity)} onChange={(event) => updateField('quantity', event.target.value)} />
+          <FieldError value={errors.quantity} />
         </label>
         <label>
           <span className="text-sm font-semibold text-slate-300">执行价格</span>
@@ -504,14 +525,23 @@ function ExecutionCard({ plan }: { plan: TradePlan }) {
           <FieldError value={errors.price} />
         </label>
         <label>
-          <span className="text-sm font-semibold text-slate-300">执行仓位（%）</span>
-          <Input className="mt-2" type="number" min="0" step="0.01" value={form.position_size} invalid={Boolean(errors.position_size)} onChange={(event) => updateField('position_size', event.target.value)} />
-          <FieldError value={errors.position_size} />
+          <span className="text-sm font-semibold text-slate-300">手续费</span>
+          <Input className="mt-2" type="number" min="0" step="0.00000001" value={form.fee} invalid={Boolean(errors.fee)} onChange={(event) => updateField('fee', event.target.value)} />
+          <FieldError value={errors.fee} />
         </label>
         <label>
-          <span className="text-sm font-semibold text-slate-300">止损价</span>
-          <Input className="mt-2" type="number" min="0" step="0.0001" value={form.stop_loss} invalid={Boolean(errors.stop_loss)} onChange={(event) => updateField('stop_loss', event.target.value)} />
-          <FieldError value={errors.stop_loss} />
+          <span className="text-sm font-semibold text-slate-300">市场</span>
+          <select className="mt-2 h-11 w-full rounded-2xl border border-slate-700 bg-slate-950/60 px-3 text-sm text-slate-100" value={form.market} onChange={(event) => updateField('market', event.target.value)}>
+            <option value="us">美股</option><option value="hk">港股</option><option value="china_a">A 股</option><option value="crypto">加密资产</option><option value="other">其他</option>
+          </select>
+        </label>
+        <label>
+          <span className="text-sm font-semibold text-slate-300">币种</span>
+          <Input className="mt-2" value={form.currency} onChange={(event) => updateField('currency', event.target.value)} />
+        </label>
+        <label>
+          <span className="text-sm font-semibold text-slate-300">订单号</span>
+          <Input className="mt-2" value={form.order_id} onChange={(event) => updateField('order_id', event.target.value)} />
         </label>
       </div>
       <label className="mt-4 block">
