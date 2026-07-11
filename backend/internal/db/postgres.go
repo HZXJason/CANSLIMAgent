@@ -25,7 +25,10 @@ func OpenPostgres(databaseURL string) (*gorm.DB, error) {
 	sqlDB.SetMaxOpenConns(25)
 	sqlDB.SetMaxIdleConns(5)
 	sqlDB.SetConnMaxLifetime(5 * time.Minute)
-	if err := database.AutoMigrate(&models.Stock{}, &models.StockMetric{}, &models.ThresholdPreset{}, &models.TradeJournalEntry{}, &models.TradePlan{}); err != nil {
+	if err := database.AutoMigrate(&models.Stock{}, &models.StockMetric{}, &models.ThresholdPreset{}, &models.TradeJournalEntry{}, &models.TradeJournalReflection{}, &models.TradePlan{}); err != nil {
+		return nil, err
+	}
+	if err := migrateTradeJournalSchema(database); err != nil {
 		return nil, err
 	}
 	if err := normalizeStockMetricSufficiency(database); err != nil {
@@ -35,6 +38,34 @@ func OpenPostgres(databaseURL string) (*gorm.DB, error) {
 		return nil, err
 	}
 	return database, nil
+}
+
+func migrateTradeJournalSchema(database *gorm.DB) error {
+	if !database.Migrator().HasColumn("trade_journal_entries", "ticker") {
+		return nil
+	}
+
+	// Preserve old rows without pretending the former position percentage was a
+	// filled quantity. New writes use only the canonical TradeRecord columns.
+	statements := []string{
+		`UPDATE trade_journal_entries
+		 SET symbol = COALESCE(NULLIF(symbol, ''), ticker),
+		     side = COALESCE(NULLIF(side, ''), direction, 'buy'),
+		     executed_at = COALESCE(trade_date::timestamptz, executed_at),
+		     source = CASE WHEN COALESCE(source, '') IN ('', 'manual') THEN 'legacy_unstructured' ELSE source END
+		 WHERE symbol = ''`,
+		"ALTER TABLE trade_journal_entries ALTER COLUMN ticker DROP NOT NULL",
+		"ALTER TABLE trade_journal_entries ALTER COLUMN direction DROP NOT NULL",
+		"ALTER TABLE trade_journal_entries ALTER COLUMN trade_date DROP NOT NULL",
+		"ALTER TABLE trade_journal_entries ALTER COLUMN position_size DROP NOT NULL",
+		"ALTER TABLE trade_journal_entries ALTER COLUMN stop_loss DROP NOT NULL",
+	}
+	for _, statement := range statements {
+		if err := database.Exec(statement).Error; err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func normalizeStockMetricSufficiency(database *gorm.DB) error {
@@ -63,15 +94,15 @@ func seedDefaultPreset(database *gorm.DB) error {
 	var existingDefault models.ThresholdPreset
 	if err := database.Where("is_default = ?", true).First(&existingDefault).Error; err == nil {
 		return database.Model(&existingDefault).Updates(map[string]interface{}{
-			"name":            preset.Name,
-			"is_default":      true,
-			"c_min_growth":    preset.CMinGrowth,
-			"a_min_growth":    preset.AMinGrowth,
-			"a_min_years":     preset.AMinYears,
-			"s_volume_ratio":  preset.SVolumeRatio,
-			"s_ma_period":     preset.SMAPeriod,
-			"l_min_rs":        preset.LMinRS,
-			"i_min_delta":     preset.IMinDelta,
+			"name":           preset.Name,
+			"is_default":     true,
+			"c_min_growth":   preset.CMinGrowth,
+			"a_min_growth":   preset.AMinGrowth,
+			"a_min_years":    preset.AMinYears,
+			"s_volume_ratio": preset.SVolumeRatio,
+			"s_ma_period":    preset.SMAPeriod,
+			"l_min_rs":       preset.LMinRS,
+			"i_min_delta":    preset.IMinDelta,
 		}).Error
 	} else if !errors.Is(err, gorm.ErrRecordNotFound) {
 		return err

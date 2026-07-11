@@ -23,12 +23,15 @@ type AIAnalysisRequest struct {
 	DeepThinkLLM    string            `json:"deep_think_llm"`
 	QuickThinkLLM   string            `json:"quick_think_llm"`
 	BackendURL      string            `json:"backend_url"`
-	MaxDebateRounds int               `json:"max_debate_rounds"`
-	MaxRiskRounds   int               `json:"max_risk_rounds"`
+	MaxDebateRounds int               `json:"max_debate_rounds,omitempty"`
+	MaxRiskRounds   int               `json:"max_risk_rounds,omitempty"`
 	OnlineTools     bool              `json:"online_tools"`
 	Analysts        []string          `json:"analysts"`
 	APIKeys         map[string]string `json:"api_keys,omitempty"`
 	AnalysisContext map[string]any    `json:"analysis_context,omitempty"`
+	RunID           string            `json:"run_id,omitempty"`
+	Resume          bool              `json:"resume,omitempty"`
+	LastEventID     int               `json:"last_event_id,omitempty"`
 }
 
 type AIAnalysisProviderConfig struct {
@@ -54,6 +57,7 @@ type AIAnalysisAnalystConfig struct {
 type AIAnalysisContract struct {
 	Version        string   `json:"version"`
 	ConfigEndpoint string   `json:"config_endpoint"`
+	ModelsEndpoint string   `json:"models_endpoint"`
 	StreamEndpoint string   `json:"stream_endpoint"`
 	UpstreamMode   string   `json:"upstream_mode"`
 	Events         []string `json:"events"`
@@ -128,6 +132,7 @@ func DefaultAIAnalysisConfig() AIAnalysisConfigResponse {
 		Contract: AIAnalysisContract{
 			Version:        AIAnalysisContractVersion,
 			ConfigEndpoint: "/api/v1/analysis/ai/config",
+			ModelsEndpoint: "/api/v1/analysis/ai/models",
 			StreamEndpoint: "/api/v1/analysis/{symbol}/ai",
 			UpstreamMode:   "sse",
 			Events: []string{

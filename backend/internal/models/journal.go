@@ -8,25 +8,36 @@ import (
 )
 
 const (
-	TradeDirectionBuy  = "buy"
-	TradeDirectionSell = "sell"
+	TradeSideBuy  = "buy"
+	TradeSideSell = "sell"
+
+	TradeMarketUS     = "us"
+	TradeMarketHK     = "hk"
+	TradeMarketChinaA = "china_a"
+	TradeMarketCrypto = "crypto"
+	TradeMarketOther  = "other"
 )
 
+// TradeJournalEntry is one immutable execution/fill. Its public JSON contract
+// mirrors Vibe-Trading's TradeRecord instead of mixing plans with executions.
 type TradeJournalEntry struct {
-	ID           uuid.UUID `gorm:"type:uuid;primaryKey"`
-	CreatedAt    time.Time `gorm:"index:idx_trade_journal_created_at,sort:desc"`
-	UpdatedAt    time.Time
-	Ticker       string    `gorm:"type:text;not null"`
-	Direction    string    `gorm:"type:text;not null;check:direction IN ('buy','sell')"`
-	TradeDate    time.Time `gorm:"type:date;not null"`
-	Price        float64   `gorm:"type:numeric(12,4);not null"`
-	PositionSize float64   `gorm:"type:numeric(6,2);not null"`
-	StopLoss     float64   `gorm:"type:numeric(12,4);not null"`
-	Notes        *string   `gorm:"type:text"`
-	ExitPrice    *float64  `gorm:"type:numeric(12,4)"`
-	PnLPct       *float64  `gorm:"column:pnl_pct;type:numeric(8,4)"`
-	Reflection   *string   `gorm:"type:text"`
-	Phase1Locked bool      `gorm:"not null;default:false"`
+	ID         uuid.UUID `gorm:"type:uuid;primaryKey"`
+	CreatedAt  time.Time `gorm:"index:idx_trade_journal_created_at,sort:desc"`
+	UpdatedAt  time.Time
+	ExecutedAt time.Time `gorm:"column:executed_at;not null;default:CURRENT_TIMESTAMP;index:idx_trade_journal_executed_at,sort:desc"`
+	Symbol     string    `gorm:"type:text;not null;default:'';index:idx_trade_journal_symbol"`
+	Name       string    `gorm:"type:text;not null;default:''"`
+	Side       string    `gorm:"type:text;not null;default:'buy';check:side IN ('buy','sell')"`
+	Quantity   float64   `gorm:"type:numeric(20,8);not null;default:0"`
+	Price      float64   `gorm:"type:numeric(20,8);not null;default:0"`
+	Amount     float64   `gorm:"type:numeric(24,8);not null;default:0"`
+	Fee        float64   `gorm:"type:numeric(20,8);not null;default:0"`
+	Market     string    `gorm:"type:text;not null;default:'other';index:idx_trade_journal_market"`
+	Currency   string    `gorm:"type:text;not null;default:''"`
+	OrderID    *string   `gorm:"column:order_id;type:text;index"`
+	Source     string    `gorm:"type:text;not null;default:'manual'"`
+	Notes      *string   `gorm:"type:text"`
+	Reflection *string   `gorm:"type:text"`
 }
 
 func (entry *TradeJournalEntry) BeforeCreate(_ *gorm.DB) error {
@@ -36,6 +47,15 @@ func (entry *TradeJournalEntry) BeforeCreate(_ *gorm.DB) error {
 	return nil
 }
 
-func ValidTradeDirection(direction string) bool {
-	return direction == TradeDirectionBuy || direction == TradeDirectionSell
+func ValidTradeSide(side string) bool {
+	return side == TradeSideBuy || side == TradeSideSell
+}
+
+func ValidTradeMarket(market string) bool {
+	switch market {
+	case TradeMarketUS, TradeMarketHK, TradeMarketChinaA, TradeMarketCrypto, TradeMarketOther:
+		return true
+	default:
+		return false
+	}
 }

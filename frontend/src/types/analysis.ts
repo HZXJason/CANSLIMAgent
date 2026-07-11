@@ -86,9 +86,21 @@ export interface AIAnalystConfig {
 export interface AIAnalysisContract {
   version: string;
   config_endpoint: string;
+  models_endpoint?: string;
   stream_endpoint: string;
   upstream_mode: 'sse' | string;
   events: AIAnalysisStreamEventName[];
+}
+
+export interface AIModelDiscoveryInput {
+  provider: string;
+  backend_url: string;
+  api_key: string;
+}
+
+export interface AIModelDiscoveryResponse {
+  models: string[];
+  source: string;
 }
 
 export interface AIAnalysisConfigResponse {
@@ -248,6 +260,8 @@ export interface SymbolAnalysisState {
   aiError: string | null;
   thoughtExpanded: boolean;
   nLabelWritten: boolean;
+  aiRunId: string | null;
+  aiLastEventId: number;
 }
 
 export interface NLabelResponse {

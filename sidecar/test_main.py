@@ -1,8 +1,74 @@
 import unittest
+import tempfile
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
 import main
+import data_auditor
+import vibe_decision_flow
+
+
+class ApplicationContextTest(unittest.TestCase):
+    def test_attaches_structured_go_context_to_instrument_context(self):
+        class FakeGraph:
+            def resolve_instrument_context(self, ticker, asset_type="stock"):
+                return f"instrument={ticker};asset={asset_type}"
+
+        graph = FakeGraph()
+        request = main.AnalysisRequest(
+            ticker="NVDA",
+            analysis_context={
+                "trade_journal": {
+                    "schema_version": "vibe.trade_record.v1",
+                    "records": [{"symbol": "NVDA", "side": "buy", "quantity": 5}],
+                }
+            },
+        )
+
+        main.attach_application_context(graph, request)
+        context = graph.resolve_instrument_context("NVDA")
+
+        self.assertIn("instrument=NVDA", context)
+        self.assertIn("vibe.trade_record.v1", context)
+        self.assertIn('"quantity": 5', context)
+        self.assertIn("behavioral context", context)
+
+    def test_checkpoint_directory_is_scoped_by_run_id(self):
+        request = main.AnalysisRequest(ticker="NVDA", run_id="run-nvda-checkpoint-001")
+        config = {}
+        with tempfile.TemporaryDirectory() as directory, patch.dict(
+            main.os.environ, {"AI_ANALYSIS_CHECKPOINT_DIR": directory}
+        ):
+            main.configure_analysis_checkpoint(config, request)
+
+        self.assertTrue(config["checkpoint_enabled"])
+        self.assertEqual(
+            config["data_cache_dir"],
+            str((Path(directory) / "run-nvda-checkpoint-001").resolve()),
+        )
+
+    def test_compact_context_redacts_unaudited_financial_payloads(self):
+        request = main.AnalysisRequest(
+            ticker="AUPH",
+            analysis_context={
+                "vibe_trading": {
+                    "source_traces": [
+                        {
+                            "evidence_key": "financial_indicators_annual",
+                            "payload": {"data": {"AUPH.US": {"revenue": 77114000}}},
+                        }
+                    ]
+                },
+                "data_audit": {"canonical_facts": [{"id": "annual_revenue_2025", "value": 283055000}]},
+            },
+        )
+
+        payload = main.compact_context_json(request)
+
+        self.assertNotIn("77114000", payload)
+        self.assertIn("283055000", payload)
+        self.assertIn("governed by data_audit", payload)
 
 
 class DisplayTextSanitizationTest(unittest.TestCase):
@@ -67,6 +133,7 @@ class AnalysisEventsOrderTest(unittest.IsolatedAsyncioTestCase):
         request = main.AnalysisRequest(
             ticker="GEV",
             analysts=["fundamental", "sentiment"],
+            online_tools=False,
         )
         state = {
             "fundamentals_report": "基本面真实分析正文",
@@ -109,6 +176,7 @@ class AnalysisEventsOrderTest(unittest.IsolatedAsyncioTestCase):
         request = main.AnalysisRequest(
             ticker="GEV",
             analysts=["fundamental", "sentiment"],
+            online_tools=False,
         )
         state = {
             "fundamentals_report": "基本面真实分析正文",
@@ -136,7 +204,11 @@ class AnalysisEventsOrderTest(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(any(event.startswith("event: done") for event in events))
 
     async def test_graph_failure_errors_without_local_report_or_done(self):
-        request = main.AnalysisRequest(ticker="GEV", analysts=["fundamental", "sentiment"])
+        request = main.AnalysisRequest(
+            ticker="GEV",
+            analysts=["fundamental", "sentiment"],
+            online_tools=False,
+        )
 
         with patch.object(main, "run_analysis", side_effect=RuntimeError("tool calling failed")):
             events = [event async for event in main.analysis_events(request)]
@@ -144,6 +216,189 @@ class AnalysisEventsOrderTest(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(any(event.startswith("event: error") for event in events))
         self.assertFalse(any(event.startswith("event: report_delta") for event in events))
         self.assertFalse(any(event.startswith("event: done") for event in events))
+
+
+class VibeEvidenceIntegrationTest(unittest.IsolatedAsyncioTestCase):
+    async def test_prefetch_result_is_injected_before_tradingagents_runs(self):
+        bundle = {
+            "schema_version": "vibe.research_evidence.v1",
+            "provider": "vibe-trading",
+            "symbol": "AUPH",
+            "market_symbol": "AUPH.US",
+            "status": "complete",
+            "summary": {"requested": 1, "ok": 1, "failed": 0},
+            "evidence": {"market": {}},
+            "source_traces": [
+                {
+                    "tool": "get_market_data",
+                    "role": "market",
+                    "status": "ok",
+                    "source": "vibe-trading:auto",
+                    "duration_ms": 12,
+                }
+            ],
+        }
+        request = main.AnalysisRequest(ticker="AUPH", analysts=["technical"])
+        observed_context = {}
+
+        def fake_analysis(received, _callbacks=None):
+            observed_context.update(received.analysis_context)
+            return {"market_report": "技术结论", "final_trade_decision": "HOLD"}, "HOLD"
+
+        validation = {
+            "schema_version": "vibe.execution_validation.v1",
+            "status": "complete",
+            "reflection": "The signal held up in backtest.",
+        }
+        with patch.object(main, "prefetch_vibe_evidence_async", return_value=bundle), patch.object(
+            main, "run_analysis", side_effect=fake_analysis
+        ), patch.object(main, "validate_execution_plan", return_value=validation), patch.object(main, "REPORT_DELTA_DELAY", 0):
+            events = [event async for event in main.analysis_events(request)]
+
+        self.assertEqual(observed_context["vibe_trading"], bundle)
+        self.assertEqual(observed_context["vibe_research_pack"]["schema_version"], "vibe.research_pack.v1")
+        self.assertEqual(observed_context["data_audit"]["schema_version"], "vibe.data_audit.v1")
+        vibe_result_index = next(
+            index
+            for index, event in enumerate(events)
+            if event.startswith("event: result") and '"agent": "VibeEvidence"' in event
+        )
+        technical_report_index = next(
+            index
+            for index, event in enumerate(events)
+            if event.startswith("event: report_delta") and "技术分析师" in event
+        )
+        self.assertLess(vibe_result_index, technical_report_index)
+        self.assertIn("get_market_data", events[vibe_result_index])
+        self.assertTrue(any('"agent": "DataAuditor"' in event for event in events))
+        self.assertTrue(any('"agent": "VibeEvidenceReconciler"' in event for event in events))
+        self.assertTrue(any('"agent": "VibeExecutionValidation"' in event for event in events))
+
+
+class VibeDecisionFlowTest(unittest.TestCase):
+    def test_research_pack_keeps_failed_evidence_out_of_available_coverage(self):
+        pack = vibe_decision_flow.build_research_pack(
+            {
+                "symbol": "AAPL",
+                "status": "partial",
+                "source_traces": [
+                    {"role": "market", "status": "ok", "source": "yahoo"},
+                    {"role": "market", "status": "error", "source": "stooq", "error": "timeout"},
+                ],
+            }
+        )
+
+        self.assertEqual(pack["roles"]["market"]["coverage"], "partial")
+        self.assertEqual(pack["roles"]["market"]["available"], 1)
+        self.assertEqual(pack["roles"]["market"]["gaps"][0]["reason"], "timeout")
+
+    def test_execution_gate_only_blocks_completed_negative_validation(self):
+        action, _ = vibe_decision_flow.apply_execution_gate(
+            "BUY", {"status": "unavailable", "error": "source offline"}
+        )
+        self.assertEqual(action, "BUY")
+
+        action, note = vibe_decision_flow.apply_execution_gate(
+            "BUY", {"status": "complete", "reflection": "The signal did not hold up in backtest."}
+        )
+        self.assertEqual(action, "HOLD")
+        self.assertIn("未通过", note)
+
+
+class DataAuditorTest(unittest.TestCase):
+    def test_prefers_period_aware_annual_series_and_blocks_ambiguous_vibe_10k_value(self):
+        annual_payload = {
+            "data": {
+                "AUPH.US": {
+                    "periods": {
+                        "items": [
+                            {
+                                "REPORT_DATE": "2025-12-31",
+                                "FISCAL_YEAR": 2025,
+                                "FISCAL_PERIOD": "FY",
+                                "FORM": "10-K",
+                                "ACCESSION": "0001600620-26-000017",
+                                "RevenueFromContractWithCustomerExcludingAssessedTax": 77114000.0,
+                            }
+                        ]
+                    }
+                }
+            }
+        }
+        quarterly_payload = {
+            "data": {
+                "AUPH.US": {
+                    "periods": {
+                        "items": [
+                            {
+                                "REPORT_DATE": "2026-03-31",
+                                "FISCAL_YEAR": 2026,
+                                "FISCAL_PERIOD": "Q1",
+                                "FORM": "10-Q",
+                                "ACCESSION": "0001600620-26-000049",
+                                "EarningsPerShareDiluted": 0.25,
+                            }
+                        ]
+                    }
+                }
+            }
+        }
+        bundle = {
+            "source_traces": [
+                {"evidence_key": "financial_indicators_annual", "payload": annual_payload},
+                {"evidence_key": "financial_indicators_quarterly", "payload": quarterly_payload},
+            ]
+        }
+        context = {
+            "revenue": {"source": "SEC EDGAR", "years": [{"year": 2025, "revenue": 283055000, "data_sufficient": True}]},
+            "eps": {"source": "SEC EDGAR", "quarters": [{"period": "2026Q1", "eps": 0.25, "data_sufficient": True}]},
+        }
+
+        audit = data_auditor.audit_data(bundle, context)
+        annual = next(item for item in audit["findings"] if item["id"] == "annual_revenue_2025")
+        quarter = next(item for item in audit["findings"] if item["id"] == "diluted_eps_2026Q1")
+
+        self.assertEqual(annual["status"], "conflict")
+        self.assertEqual(annual["selected"]["value"], 283055000.0)
+        self.assertEqual(quarter["status"], "verified")
+        self.assertEqual(quarter["selected"]["value"], 0.25)
+        self.assertIn("annual_revenue_2025", {item["id"] for item in audit["canonical_facts"]})
+
+
+class ReconnectableAnalyzeEndpointTest(unittest.IsolatedAsyncioTestCase):
+    async def asyncSetUp(self):
+        main.analysis_run_registry.clear()
+
+    async def test_resume_replays_events_after_cursor(self):
+        async def fake_events(_request):
+            yield main.sse("progress", {"agent": "Test", "status": "running", "message": "one"})
+            yield main.sse("done", {})
+
+        first_request = main.AnalysisRequest(
+            ticker="AAPL",
+            analysts=["technical"],
+            online_tools=False,
+            run_id="run-test-aapl-001",
+        )
+        with patch.object(main, "analysis_events", side_effect=fake_events):
+            first_response = await main.analyze(first_request)
+            first_events = [chunk async for chunk in first_response.body_iterator]
+
+            resume_request = main.AnalysisRequest(
+                ticker="AAPL",
+                analysts=["technical"],
+                online_tools=False,
+                run_id="run-test-aapl-001",
+                resume=True,
+                last_event_id=1,
+            )
+            resumed_response = await main.analyze(resume_request)
+            resumed_events = [chunk async for chunk in resumed_response.body_iterator]
+
+        self.assertEqual(len(first_events), 2)
+        self.assertTrue(str(first_events[0]).startswith("id: 1"))
+        self.assertEqual(len(resumed_events), 1)
+        self.assertTrue(str(resumed_events[0]).startswith("id: 2"))
 
 
 if __name__ == "__main__":

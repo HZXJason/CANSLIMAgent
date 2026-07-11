@@ -5,17 +5,40 @@ import json
 import os
 import re
 import traceback
+import uuid
 from queue import Empty, Queue
 from datetime import date
+from pathlib import Path
 from typing import Any, AsyncIterator, Iterable
 
 import uvicorn
 from dotenv import load_dotenv
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.responses import StreamingResponse
 from langchain_core.callbacks import BaseCallbackHandler
 from langchain_core.messages import HumanMessage, SystemMessage
 from pydantic import BaseModel, Field
+
+from analysis_runs import (
+    RunConflictError,
+    analysis_run_registry,
+    request_fingerprint,
+    validate_run_id,
+)
+from data_auditor import audit_data, render_data_audit
+from journal_reflection import build_journal_reflection
+from ai_runtime import (
+    patched_tradingagents_graph,
+    prefetch_vibe_evidence_async,
+    runtime_status,
+)
+from vibe_decision_flow import (
+    apply_execution_gate,
+    build_research_pack,
+    render_evidence_reconciliation,
+    render_execution_validation,
+    validate_execution_plan,
+)
 
 load_dotenv()
 
@@ -36,6 +59,14 @@ class AnalysisRequest(BaseModel):
     )
     api_keys: dict[str, str] = Field(default_factory=dict)
     analysis_context: dict[str, Any] = Field(default_factory=dict)
+    run_id: str | None = Field(default=None, min_length=8, max_length=128)
+    resume: bool = False
+    last_event_id: int = Field(default=0, ge=0)
+
+
+class JournalReflectionRequest(BaseModel):
+    schema_version: str = "vibe.trade_record.v1"
+    records: list[dict[str, Any]] = Field(default_factory=list)
 
 
 ANALYST_MAP = {
@@ -60,6 +91,10 @@ REPORT_FIELDS = [
 ]
 
 AGENT_DISPLAY_NAMES = {
+    "VibeEvidence": "Vibe 数据证据",
+    "DataAuditor": "数据审计员",
+    "VibeEvidenceReconciler": "Vibe 证据对账",
+    "VibeExecutionValidation": "Vibe 执行验证",
     "FundamentalsAnalyst": "基本面分析师",
     "SentimentAnalyst": "情绪分析师",
     "NewsAnalyst": "新闻分析师",
@@ -677,13 +712,52 @@ def configured_graph(
     config["max_risk_rounds"] = request.max_risk_rounds
     config["online_tools"] = request.online_tools
     config["output_language"] = OUTPUT_LANGUAGE_INSTRUCTION
+    configure_analysis_checkpoint(config, request)
 
-    return TradingAgentsGraph(
-        selected_analysts=analysts,
-        debug=False,
-        config=config,
-        callbacks=callbacks,
+    with patched_tradingagents_graph():
+        graph = TradingAgentsGraph(
+            selected_analysts=analysts,
+            debug=False,
+            config=config,
+            callbacks=callbacks,
+        )
+    attach_application_context(graph, request)
+    return graph
+
+
+def configure_analysis_checkpoint(config: dict[str, Any], request: AnalysisRequest) -> None:
+    config["checkpoint_enabled"] = True
+    run_id = validate_run_id(request.run_id or f"legacy-{uuid.uuid4()}")
+    checkpoint_root = Path(
+        os.getenv("AI_ANALYSIS_CHECKPOINT_DIR", str(Path(__file__).resolve().parent / "data" / "ai-runs"))
+    ).expanduser()
+    config["data_cache_dir"] = str((checkpoint_root / run_id).resolve())
+
+
+def attach_application_context(graph: Any, request: AnalysisRequest) -> None:
+    """Inject Go/frontend structured data into every TradingAgents role."""
+    if not request.analysis_context:
+        return
+
+    original_resolver = graph.resolve_instrument_context
+    context_json = compact_context_json(request)
+    instruction = (
+        "\n\nCANSLIMAgent application-provided structured context follows. "
+        "Treat it as point-in-time user/application evidence, preserve unknown values, "
+        "and do not invent missing fields. The trade_journal object, when present, "
+        "uses vibe.trade_record.v1 fills and describes the user's own executions; "
+        "it is behavioral context, not current market data. When vibe_research_pack is present, "
+        "use only complete/partial successful coverage as factual support, identify the source "
+        "for material claims, explicitly name contrary evidence, and keep unavailable evidence unknown. "
+        "When data_audit is present, use only its canonical_facts for audited numerical claims; "
+        "never state blocked_claims as facts and disclose unresolved figures as unknown.\n"
+        + context_json
     )
+
+    def resolve_with_application_context(ticker: str, asset_type: str = "stock") -> str:
+        return original_resolver(ticker, asset_type) + instruction
+
+    graph.resolve_instrument_context = resolve_with_application_context
 
 
 def run_analysis(request: AnalysisRequest, callbacks: list[Any] | None = None) -> tuple[dict[str, Any], Any]:
@@ -735,11 +809,96 @@ def compose_custom_reports(reports: list[tuple[str, str]]) -> str:
     return "\n\n".join(sections)
 
 
+def render_vibe_evidence(bundle: dict[str, Any]) -> str:
+    """Render auditable MCP source traces without exposing bulky raw payloads."""
+    summary = bundle.get("summary") if isinstance(bundle.get("summary"), dict) else {}
+    traces = bundle.get("source_traces") if isinstance(bundle.get("source_traces"), list) else []
+    lines = [
+        "Vibe-Trading 已在 TradingAgents 分析前执行数据预取，以下调用结果也已注入各分析角色的结构化上下文。",
+        "",
+        f"- 状态：**{bundle.get('status', 'unknown')}**",
+        f"- 标的：`{bundle.get('market_symbol') or bundle.get('symbol') or '-'}`",
+        f"- 工具调用：{summary.get('ok', 0)}/{summary.get('requested', len(traces))} 成功",
+        "",
+        "| Vibe 工具 | 数据角色 | 状态 | 实际来源 | 耗时 |",
+        "|---|---|---|---|---:|",
+    ]
+    for raw_trace in traces:
+        if not isinstance(raw_trace, dict):
+            continue
+        status = str(raw_trace.get("status") or "unknown")
+        status_text = "成功" if status == "ok" else "失败/降级"
+        source = str(raw_trace.get("source") or "vibe-trading").replace("|", "\\|")
+        tool = str(raw_trace.get("tool") or "unknown").replace("|", "\\|")
+        role = str(raw_trace.get("role") or "-").replace("|", "\\|")
+        duration = raw_trace.get("duration_ms")
+        lines.append(f"| `{tool}` | {role} | {status_text} | `{source}` | {duration or 0} ms |")
+        if raw_trace.get("error"):
+            error = str(raw_trace["error"]).replace("\n", " ")[:500]
+            lines.append(f"\n> `{tool}` 降级原因：{error}")
+    if not traces:
+        lines.extend(["", "> 本次没有请求 Vibe 工具；TradingAgents 将仅使用应用上下文和自身数据源。"])
+    lines.extend(
+        [
+            "",
+            "TradingAgents 自带的 verified snapshot 仍会独立运行，用于与上述 Vibe 证据交叉核验；单个 Vibe 工具失败不会中断整份报告。",
+        ]
+    )
+    return "\n".join(lines).strip()
+
+
+async def attach_vibe_evidence(request: AnalysisRequest) -> dict[str, Any]:
+    """Execute Vibe MCP calls and copy their compact evidence into the request."""
+    if request.online_tools:
+        roles: tuple[str, ...] | None = selected_builtin_analysts(request)
+        if not roles and selected_custom_analysts(request):
+            roles = None
+        bundle = await prefetch_vibe_evidence_async(
+            request.ticker,
+            analysis_date=date.today().isoformat(),
+            analysts=roles,
+        )
+    else:
+        bundle = {
+            "schema_version": "vibe.research_evidence.v1",
+            "provider": "vibe-trading",
+            "symbol": request.ticker.strip().upper(),
+            "status": "disabled",
+            "summary": {"requested": 0, "ok": 0, "failed": 0},
+            "evidence": {},
+            "source_traces": [],
+        }
+    request.analysis_context = dict(request.analysis_context or {})
+    request.analysis_context["vibe_trading"] = bundle
+    request.analysis_context["vibe_research_pack"] = build_research_pack(bundle)
+    request.analysis_context["data_audit"] = audit_data(bundle, request.analysis_context)
+    return bundle
+
+
 def compact_context_json(request: AnalysisRequest) -> str:
+    provided_data = copy.deepcopy(request.analysis_context or {})
+    # The Vibe compact financial rows can include comparative values without an
+    # XBRL duration.  Do not leave those raw values beside the audit contract:
+    # a model could otherwise quote a rejected candidate as a fact.
+    vibe_bundle = provided_data.get("vibe_trading")
+    if isinstance(vibe_bundle, dict):
+        traces = vibe_bundle.get("source_traces")
+        if isinstance(traces, list):
+            for trace in traces:
+                if not isinstance(trace, dict):
+                    continue
+                if trace.get("evidence_key") in {
+                    "stock_profile",
+                    "financial_indicators_annual",
+                    "financial_indicators_quarterly",
+                }:
+                    trace["payload"] = {
+                        "redacted": "Financial values are governed by data_audit.canonical_facts and blocked_claims."
+                    }
     payload = {
         "ticker": request.ticker.strip().upper(),
         "analysis_date": date.today().isoformat(),
-        "provided_data": request.analysis_context or {},
+        "provided_data": provided_data,
     }
     return json.dumps(payload, ensure_ascii=False, indent=2, default=str)
 
@@ -968,6 +1127,82 @@ def user_error_message(exc: Exception) -> str:
 
 
 async def analysis_events(request: AnalysisRequest):
+    emit_vibe_report = not request.resume or request.last_event_id == 0
+    if emit_vibe_report:
+        yield sse(
+            "progress",
+            {
+                "agent": "VibeEvidence",
+                "status": "running",
+                "message": "正在通过 Vibe-Trading MCP 预取并核验数据来源...",
+            },
+        )
+    try:
+        vibe_bundle = await attach_vibe_evidence(request)
+        vibe_markdown = render_vibe_evidence(vibe_bundle)
+        if emit_vibe_report:
+            yield sse("result", {"agent": "VibeEvidence", "content": vibe_markdown})
+        vibe_status = "done" if vibe_bundle.get("status") in {"complete", "partial", "disabled", "not_requested"} else "error"
+        yield sse(
+            "progress",
+            {
+                "agent": "VibeEvidence",
+                "status": vibe_status,
+                "message": (
+                    ("Vibe 数据预取完成，已注入 TradingAgents" if emit_vibe_report else "Vibe 数据已重新核验，正在从 checkpoint 恢复")
+                    if vibe_status == "done"
+                    else "Vibe 数据不可用，已记录来源轨迹并降级"
+                ),
+            },
+        )
+        data_audit = request.analysis_context.get("data_audit", {})
+        if emit_vibe_report:
+            yield sse(
+                "progress",
+                {
+                    "agent": "DataAuditor",
+                    "status": "running",
+                    "message": "正在按来源、报告期和原始表单审计关键数据...",
+                },
+            )
+            yield sse("result", {"agent": "DataAuditor", "content": render_data_audit(data_audit)})
+            audit_status = "done" if data_audit.get("status") in {"clean", "issues_found", "not_available"} else "error"
+            yield sse(
+                "progress",
+                {
+                    "agent": "DataAuditor",
+                    "status": audit_status,
+                    "message": "数据审计完成；冲突值已从可引用事实中排除" if audit_status == "done" else "数据审计不可用",
+                },
+            )
+    except Exception as exc:  # noqa: BLE001 - data-source failure must degrade
+        request.analysis_context = dict(request.analysis_context or {})
+        request.analysis_context["vibe_trading"] = {
+            "schema_version": "vibe.research_evidence.v1",
+            "provider": "vibe-trading",
+            "status": "unavailable",
+            "error": str(exc),
+            "summary": {"requested": 0, "ok": 0, "failed": 0},
+            "evidence": {},
+            "source_traces": [],
+        }
+        request.analysis_context["data_audit"] = audit_data(request.analysis_context["vibe_trading"], request.analysis_context)
+        if emit_vibe_report:
+            yield sse("result", {"agent": "VibeEvidence", "content": render_vibe_evidence(request.analysis_context["vibe_trading"])})
+            yield sse("result", {"agent": "DataAuditor", "content": render_data_audit(request.analysis_context["data_audit"])})
+        yield sse(
+            "progress",
+            {
+                "agent": "VibeEvidence",
+                "status": "error",
+                "message": "Vibe 预取异常，TradingAgents 已降级继续运行",
+            },
+        )
+        yield sse(
+            "progress",
+            {"agent": "DataAuditor", "status": "error", "message": "原始数据不可用，无法完成可复算审计"},
+        )
+
     selected_keys = set(selected_builtin_analysts(request))
     custom_agents = selected_custom_analysts(request)
     emitted_agents: list[str] = []
@@ -1014,6 +1249,68 @@ async def analysis_events(request: AnalysisRequest):
         for agent, _ in iter_reports(state):
             yield sse("progress", {"agent": agent, "status": "done", "message": "分析完成"})
 
+        selected_roles = selected_builtin_analysts(request)
+        yield sse(
+            "progress",
+            {
+                "agent": "VibeEvidenceReconciler",
+                "status": "running",
+                "message": "正在对账分析师结论与 Vibe 证据覆盖度...",
+            },
+        )
+        reconciliation = render_evidence_reconciliation(
+            request.analysis_context.get("vibe_trading", {}), state, selected_roles
+        )
+        yield sse("result", {"agent": "VibeEvidenceReconciler", "content": reconciliation})
+        yield sse(
+            "progress",
+            {
+                "agent": "VibeEvidenceReconciler",
+                "status": "done",
+                "message": "证据对账完成；缺失数据已标记为未知",
+            },
+        )
+
+        yield sse(
+            "progress",
+            {
+                "agent": "VibeExecutionValidation",
+                "status": "running",
+                "message": "正在把 PM 交易建议交给 Vibe 做历史执行验证...",
+            },
+        )
+        if request.online_tools:
+            original_pm_decision = state.get("final_trade_decision") or decision
+            validation_future = loop.run_in_executor(
+                None,
+                validate_execution_plan,
+                request.ticker,
+                original_pm_decision,
+                state.get("trader_investment_plan", ""),
+            )
+            while not validation_future.done():
+                yield sse("heartbeat", {})
+                await asyncio.sleep(NARRATION_INTERVAL_SECONDS)
+            validation = await validation_future
+        else:
+            validation = {"schema_version": "vibe.execution_validation.v1", "status": "disabled"}
+        request.analysis_context["vibe_execution_validation"] = validation
+        yield sse("result", {"agent": "VibeExecutionValidation", "content": render_execution_validation(validation)})
+        validation_status = "done" if validation.get("status") in {"complete", "not_actionable", "disabled"} else "error"
+        validation_message = (
+            "历史执行验证完成，最终建议将携带该验证结果"
+            if validation_status == "done"
+            else "执行验证不可用；最终建议将明确标记为未验证"
+        )
+        yield sse(
+            "progress",
+            {
+                "agent": "VibeExecutionValidation",
+                "status": validation_status,
+                "message": validation_message,
+            },
+        )
+
         for agent in custom_agents:
             yield sse(
                 "progress",
@@ -1058,6 +1355,11 @@ async def analysis_events(request: AnalysisRequest):
             action = normalize_action(decision)
             summary = str(state.get("final_trade_decision") or decision or "")
             confidence = confidence_for_action(action, decision)
+            action, execution_gate_note = apply_execution_gate(action, validation)
+            if execution_gate_note:
+                summary = "\n\n".join(part for part in [summary, f"Vibe 执行门：{execution_gate_note}"] if part)
+            if action == "HOLD" and validation.get("status") == "complete":
+                confidence = "LOW"
         yield sse(
             "decision",
             {
@@ -1074,21 +1376,57 @@ async def analysis_events(request: AnalysisRequest):
 
 @app.get("/health")
 def health():
-    return {"status": "ok"}
+    return {"status": "ok", "runtime": runtime_status()}
 
 
 @app.post("/analyze")
 async def analyze(request: AnalysisRequest):
+    run_id = request.run_id or f"run-{uuid.uuid4()}"
+    try:
+        request.run_id = validate_run_id(run_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    fingerprint_payload = {
+        "ticker": request.ticker.strip().upper(),
+        "llm_provider": request.llm_provider,
+        "deep_think_llm": request.deep_think_llm,
+        "quick_think_llm": request.quick_think_llm,
+        "backend_url": request.backend_url,
+        "max_debate_rounds": request.max_debate_rounds,
+        "max_risk_rounds": request.max_risk_rounds,
+        "online_tools": request.online_tools,
+        "analysts": request.analysts,
+        "run_id": request.run_id,
+    }
+    fingerprint = request_fingerprint(fingerprint_payload)
+    try:
+        run, _ = analysis_run_registry.get_or_create(
+            run_id=request.run_id,
+            fingerprint=fingerprint,
+            last_event_id=request.last_event_id,
+            resume=request.resume,
+            source_factory=lambda: analysis_events(request),
+        )
+    except RunConflictError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     headers = {
         "Cache-Control": "no-cache",
         "Connection": "keep-alive",
         "X-Accel-Buffering": "no",
+        "X-Analysis-Run-ID": request.run_id,
     }
     return StreamingResponse(
-        analysis_events(request),
+        run.stream_after(request.last_event_id),
         media_type="text/event-stream",
         headers=headers,
     )
+
+
+@app.post("/journal/reflect")
+async def reflect_journal(request: JournalReflectionRequest):
+    if request.schema_version != "vibe.trade_record.v1":
+        raise HTTPException(status_code=400, detail="schema_version must be vibe.trade_record.v1")
+    return await asyncio.to_thread(build_journal_reflection, request.records)
 
 
 if __name__ == "__main__":

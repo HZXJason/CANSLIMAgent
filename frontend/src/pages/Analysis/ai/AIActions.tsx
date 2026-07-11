@@ -1,4 +1,4 @@
-import { Check, RefreshCw, Tag } from 'lucide-react';
+import { Check, Download, RefreshCw, Tag } from 'lucide-react';
 import { useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { Button } from '../../../components/ui/button';
@@ -20,6 +20,30 @@ export default function AIActions({ symbol, reportContent, nLabelWritten, onRege
   const [error, setError] = useState<string | null>(null);
   const setNLabelWritten = useAnalysisStore((store) => store.setNLabelWritten);
   const updateState = useAnalysisStore((store) => store.updateState);
+
+  const handleExportMarkdown = () => {
+    if (!reportContent.trim()) return;
+    const generatedAt = new Date().toISOString();
+    const markdown = [
+      '# ' + symbol.trim().toUpperCase() + ' AI 分析报告',
+      '',
+      '> 生成时间：' + generatedAt,
+      '> 来源：CANSLIMAgent 多智能体 AI 分析',
+      '',
+      reportContent.trim(),
+      ''
+    ].join('\n');
+    const blob = new Blob([markdown], { type: 'text/markdown;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    const stamp = generatedAt.replace(/[:.]/g, '-');
+    link.href = url;
+    link.download = symbol.trim().toUpperCase() + '-ai-analysis-' + stamp + '.md';
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    window.setTimeout(() => URL.revokeObjectURL(url), 0);
+  };
 
   const handleWriteNLabel = async () => {
     setWriting(true);
@@ -50,6 +74,10 @@ export default function AIActions({ symbol, reportContent, nLabelWritten, onRege
         <Button variant="outline" onClick={() => setConfirmOpen(true)}>
           <RefreshCw className="h-4 w-4" />
           重新生成
+        </Button>
+        <Button variant="outline" disabled={!reportContent.trim()} onClick={handleExportMarkdown}>
+          <Download className="h-4 w-4" />
+          另存为 Markdown
         </Button>
         <Button
           variant="outline"

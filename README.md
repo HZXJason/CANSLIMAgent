@@ -1,328 +1,173 @@
-# AlphaLens / CANSLIMAgent
+# CANSLIMAgent
 
-AlphaLens / CANSLIMAgent 是一个面向美股 CANSLIM 研究流程的本地 Web 工作台。它把股票池扫描、指标缓存、个股研究、AI 多智能体分析、N 标签写回和交易日志放在一个可重复运行的本地环境里，定位是 human-in-the-loop 的投资研究决策支持工具，而不是自动交易系统或收益承诺工具。
+CANSLIMAgent 是一个面向美股研究的本地优先工作台：从 CANSLIM 选股、个股证据核查，到多智能体研究、数据审计、交易计划和交易复盘，形成一条可复查的人机协作流程。它是研究决策支持工具，不会自动下单，也不构成投资建议或收益承诺。
 
-前端、后端和 AI 分析输出默认使用中文。
+界面与 AI 报告默认使用中文；数据、推理过程和最终动作都应由使用者自行复核。
 
 ## 核心能力
 
-- Module 1：CANSLIM 选股器，支持 SP500、Nasdaq 100、Russell 2000 代理股票池扫描
-- Module 2：个股深度分析，覆盖价格 K 线、RS、EPS、营收、毛利率等研究指标
-- Module 3：交易日志与复盘，用于记录观察、操作与后续复盘
-- TradingAgents Python sidecar：多智能体 AI 分析，支持 SSE 流式输出、中文报告和 N 标签写回
-- 免费优先数据源：SEC EDGAR、公开股票池、Nasdaq 机构持仓、Stooq、Yahoo Finance、yfinance 优先，FMP/Polygon 作为可选增强
-- 可复用本地开发：`make dev` / `scripts/dev.sh` 一键启动 PostgreSQL、Go API、Python sidecar 和 Vite 前端
-
-## 技术栈
-
-- 前端：React 18、TypeScript、Zustand、TanStack Query、Tailwind CSS、Recharts
-- 后端：Go、Gin、GORM、PostgreSQL
-- AI Sidecar：Python、FastAPI、TradingAgents
-- 数据源：SEC EDGAR、免费股票池、Nasdaq 机构持仓、Stooq、Yahoo Finance、yfinance；FMP/Polygon 可作为可选增强
+- 扫描 S&P 500、Nasdaq 100 与 Russell 2000 代理股票池，并按 CANSLIM 指标筛选。
+- 展示价格、相对强度、EPS、营收、毛利率、公司概况与机构持仓等研究证据。
+- 运行基本面、情绪、新闻、技术、看多/看空、交易员、风控与投资组合经理组成的多智能体分析。
+- 在分析前通过 Vibe-Trading MCP 预取申报文件、财务报表、行情、新闻、期权和公司资料。
+- 使用确定性的 `DataAuditor` 按来源、申报类型、报告期间和 accession 审计冲突数据；可验证事实进入分析上下文，期间不明或冲突的数值会被阻止引用并明确显示为未知。
+- 在投资组合经理初步结论后执行 Vibe 历史执行验证。完成但统计证据不足的验证可将 BUY/SELL 拦截为 HOLD；无法执行时会如实标记为“未验证”，不会伪造成功结果。
+- 记录交易日志、生成 `vibe.trade_record.v1` 兼容导出，并给出确定性的交易行为复盘。
+- 通过 SSE 实时显示进度和报告，支持暂停/续传，并可将完整 AI 报告另存为 Markdown。
 
 ## 架构
 
-项目采用本地优先的四层结构：
+```text
+React + TypeScript
+        │ REST / SSE
+        ▼
+Go API（Gin） ── PostgreSQL
+        │
+        ▼
+Python sidecar（FastAPI）
+  ├─ 内置 TradingAgents 图
+  ├─ 内置 Vibe 桥接层
+  ├─ DataAuditor
+  └─ Vibe MCP / 独立的 Vibe 回测运行时
+```
 
-- React 前端工作台：承载选股器、个股分析、AI 流式报告、参数设置和交易日志
-- Go API 层：提供 REST / SSE 接口、股票池扫描、指标聚合、AI sidecar 代理和日志接口
-- PostgreSQL 数据层：缓存股票、指标、筛选阈值、AI 写回结果和交易日志
-- Python AI sidecar：封装 TradingAgents 多智能体流程，并把进度、叙述和报告分段推回前端
+浏览器只访问 Go 服务的 `/api/v1`；Go 服务再代理到可替换的 Python sidecar（`AI_ANALYSIS_UPSTREAM_URL`）。因此前端、API 与 AI 编排解耦，同时保持流式事件契约稳定。
 
-组合架构图见 [docs/portfolio-architecture.md](docs/portfolio-architecture.md)。
+项目拥有的 AI 源码均在 `sidecar/`：
 
-## 目录结构
+- `sidecar/main.py`：编排、审计接入与 SSE 生产者。
+- `sidecar/ai_runtime.py`：内置运行时和 Vibe 工具加载。
+- `sidecar/vendor/tradingagents/`：随项目提交的 TradingAgents 图运行时。
+- `sidecar/vendor/ta_vibe_bridge/`：随项目提交的 MCP 与回测桥接层。
+- `sidecar/data_auditor.py`：来源与期间感知的数据审计。
+- `sidecar/vibe_decision_flow.py`：证据协调与执行验证门。
+
+`Vibe-Trading` 本身保持为独立运行时：其 MCP 服务与回测引擎有单独的依赖栈。仅在启用 Vibe 工具、执行验证或日志复盘时需要一个本地 checkout，并通过 `VIBE_TRADING_ROOT` 指定；核心 AI 编排与桥接源码不再依赖 `TradingAgent2.0` 目录。
+
+## AI 研究流程
 
 ```text
-CANSLIMAgent/
-├── backend/      # Go API 服务
-├── docs/         # 项目架构与作品集图
-├── frontend/     # React 前端
-├── scripts/      # 本地开发启动脚本
-├── sidecar/      # TradingAgents FastAPI sidecar
-├── Makefile      # make dev 入口
-└── docker-compose.yml
+Vibe MCP 证据预取
+  → DataAuditor（来源、表单、期间、accession）
+  → 分析师团队
+  → 看多 / 看空研究
+  → 交易员与风控审阅
+  → 投资组合经理初步结论
+  → Vibe 证据协调
+  → Vibe 历史执行验证
+  → 面向人工的最终动作
 ```
 
-## 环境要求
+DataAuditor 不是第二个会“猜测赢家”的 LLM。例如，一条没有 XBRL 期间长度的简化 10-K 数值，不能覆盖可追溯的 SEC 年度序列。冲突与排除原因会保留在输出中，歧义值不会进入分析师提示词。
 
-- Go 1.22+
-- Node.js 20+
-- Python 3.10+
-- Docker / Docker Compose
-- PostgreSQL 15（可直接使用本项目的 docker-compose）
+## 技术栈与要求
 
-macOS、Windows 都可以运行。macOS 上建议用 Homebrew 安装 Go、Node、Python，并使用 `python3`/`pip3`。
+- 前端：React、TypeScript、Vite、Zustand、TanStack Query、Tailwind CSS。
+- 后端：Go 1.22+、Gin、PostgreSQL 15。
+- AI sidecar：Python 3.12+、FastAPI、LangGraph、TradingAgents；推荐用 `uv` 管理 Python 环境。
+- 运行环境：macOS 或 Linux、Node.js 20+、Docker Desktop。
+- AI 分析：至少配置一种受支持的 LLM API Key。
 
 ## 快速启动
-
-### 一键开发启动
-
-```bash
-make dev
-```
-
-等价于：
-
-```bash
-./scripts/dev.sh
-```
-
-脚本会启动 Docker PostgreSQL，并复用本机 Go、Node、uv 管理的 Python sidecar 环境。若某个服务已经在本机运行，脚本会复用它而不是重复启动。服务启动后默认地址：
-
-- 前端：`http://127.0.0.1:5173/`
-- 后端：`http://localhost:8080`
-- Sidecar：`http://127.0.0.1:8765`
-
-按 `Ctrl+C` 会停止本次脚本启动的本地服务；Docker PostgreSQL 默认保留运行。若希望退出时也停止数据库：
-
-```bash
-STOP_DOCKER_ON_EXIT=1 make dev
-```
-
-### 1. 克隆项目
 
 ```bash
 git clone git@github.com:HZXJason/CANSLIMAgent.git
 cd CANSLIMAgent
-```
 
-### 2. 准备环境变量
-
-```bash
 cp backend/.env.example backend/.env
 cp frontend/.env.example frontend/.env
 cp sidecar/.env.example sidecar/.env
+
+make dev
 ```
 
-按需编辑：
+打开 `http://127.0.0.1:5173`。`make dev` 会在服务未运行时启动 Docker PostgreSQL、Python sidecar、Go API 和 Vite 前端。
 
-- `backend/.env`：默认启用免费数据源；如需增强行情可填写 `FMP_API_KEY`、`POLYGON_API_KEY`
-- `sidecar/.env`：填写 `OPENAI_API_KEY`、`ANTHROPIC_API_KEY`、`GOOGLE_API_KEY`，或 `OPENAI_COMPATIBLE_API_KEY`
-- `frontend/.env`：默认指向 `http://localhost:8080/api/v1`
+## 配置
 
-关键后端开关：
+本地配置不会提交到 Git：
 
-- `ENABLE_FREE_UNIVERSE=true`：启用免费股票池
-- `ENABLE_SEC_DATA=true`：启用 SEC EDGAR 财务数据
-- `ENABLE_INSTITUTIONAL_DATA=true`：启用 Nasdaq 免费机构持仓摘要，用于 CANSLIM `I` 标签
-- `ENABLE_STOOQ_DATA=true`：启用 Stooq 价格/K 线数据
-- `ENABLE_YAHOO_FALLBACK=true`、`ENABLE_YFINANCE_FALLBACK=true`：保留 Yahoo/yfinance 兜底
-- `REQUEST_TIMEOUT_SECONDS=20`、`SCAN_DELAY_MS=80`：控制外部请求超时和扫描节奏
+| 文件 | 用途 |
+|---|---|
+| `backend/.env` | 数据库、免费/可选行情源与 AI 上游地址 |
+| `sidecar/.env` | LLM 凭据、Vibe 运行时位置与 AI 开关 |
+| `frontend/.env` | 浏览器 API 基地址 |
 
-后端默认数据源优先级：
+关键 sidecar 配置：
 
-- 成分股：免费股票池（SP500 CSV、Nasdaq 100 JSON、IWM 持仓代理 Russell 2000、Nasdaq Trader 目录补充） -> FMP -> yfinance/Wikipedia
-- 财报/EPS/营收/毛利率：SEC EDGAR -> FMP -> yfinance
-- 机构持仓 `I`：Nasdaq institutional holdings 摘要，使用 `增持机构数 + 新建机构数 - 减持机构数 - 清仓机构数` 作为近似变化值
-- 价格/K 线：Stooq -> Polygon -> FMP -> Yahoo Finance -> yfinance
+```dotenv
+# 只填写实际使用的模型供应商
+OPENAI_API_KEY=
+ANTHROPIC_API_KEY=
+GOOGLE_API_KEY=
+OPENAI_COMPATIBLE_API_KEY=
 
-建议在 `backend/.env` 设置 `SEC_USER_AGENT`，写成能联系到你的格式，例如 `CANSLIMAgent/1.0 your-email@example.com`。
-如果 Stooq 在当前网络返回浏览器验证页，后端会在本次运行中自动跳过它；也可以设置 `ENABLE_STOOQ_DATA=false`。
-罗素 2000 使用 BlackRock/iShares IWM 持仓下载作为免费股票池代理；这不是 FTSE Russell 官方授权成分股文件，适合本地研究筛选，不适合当作正式指数授权数据。
+# 独立的 Vibe-Trading 运行时；未设置时仅兼容旧的同级安装
+VIBE_TRADING_ROOT=/absolute/path/to/Vibe-Trading
+ENABLE_VIBE_MCP_TOOLS=true
 
-环境变量文件不会提交到 Git。
-
-### 3. 启动 PostgreSQL
-
-```bash
-docker compose up -d postgres
+# 在投资组合经理初步建议之后执行历史验证
+ENABLE_VIBE_EXECUTION_VALIDATION=true
+VIBE_EXECUTION_VALIDATION_TIMEOUT_SECONDS=90
 ```
 
-### 4. 启动后端
+Vibe 功能是可选的。禁用或不可用时，系统会明确记录能力降级，而不会生成替代证据。
 
-```bash
-cd backend
-go mod download
-go run ./cmd/server
-```
+## 数据策略
 
-默认地址：
+项目坚持免费优先和可追溯：
+
+- 财报与申报：SEC EDGAR 优先。
+- 价格与图表：Stooq、Yahoo Finance 与 yfinance 兜底；FMP/Polygon 可选增强。
+- 公司资料、期权与新闻：可用时使用公开的 Yahoo 衍生路线。
+- 机构持仓：Nasdaq 的逐股票持仓数据。
+
+来源失败、报告日期和数据不足会显示给用户；缺失数据不会被当作 0 或确认信号。
+
+## 主要 API
 
 ```text
-http://localhost:8080
+GET   /api/v1/health
+GET   /api/v1/screener/scan
+GET   /api/v1/screener/results
+POST  /api/v1/screener/refresh
+GET   /api/v1/stocks/:symbol/summary
+GET   /api/v1/stocks/:symbol/profile
+GET   /api/v1/stocks/:symbol/kline
+GET   /api/v1/stocks/:symbol/rs
+GET   /api/v1/stocks/:symbol/eps/quarterly
+GET   /api/v1/stocks/:symbol/revenue/annual
+POST  /api/v1/analysis/:symbol/ai
+GET   /api/v1/analysis/ai/config
+POST  /api/v1/analysis/ai/models
+GET   /api/v1/journal
+POST  /api/v1/journal
+GET   /api/v1/journal/export
+POST  /api/v1/journal/reflections
+GET   /api/v1/trade-plans
+POST  /api/v1/trade-plans
 ```
 
-### 5. 启动 AI sidecar
+AI 分析会转发 `progress`、`result`、`report_start`、`report_delta`、`decision`、`done` 和 `error` 等 SSE 事件。
 
-Windows PowerShell：
+## 验证
 
-```powershell
-cd sidecar
-.\start.ps1
-```
-
-macOS / Linux：
+在仓库根目录运行：
 
 ```bash
-cd sidecar
-chmod +x start.sh
-./start.sh
+cd backend && go test ./...
+cd ../sidecar && .venv/bin/python -m unittest test_main.py test_ai_runtime.py test_journal_reflection.py test_analysis_runs.py
+cd ../frontend && pnpm run typecheck && pnpm run build
+docker compose build sidecar
 ```
 
-默认地址：
-
-```text
-http://127.0.0.1:8765
-```
-
-健康检查：
+基本健康检查：
 
 ```bash
+curl http://127.0.0.1:8080/api/v1/health
 curl http://127.0.0.1:8765/health
 ```
 
-### 6. 启动前端
+## 仓库约定
 
-```bash
-cd frontend
-npm install
-npm run dev
-```
-
-默认地址：
-
-```text
-http://localhost:5173
-```
-
-## AI 多智能体分析
-
-个股分析页顶部有“AI 多智能体分析配置”面板，可配置：
-
-- LLM 提供商
-- 深度思考模型
-- 快速响应模型
-- 分析深度
-- 分析师角色
-- API Key
-- OpenAI-compatible 自定义 API 地址
-
-分析过程会通过 SSE 持续输出：
-
-- `progress`：当前智能体或阶段状态
-- `narration_delta`：等待期间的增量叙述，避免页面长时间空白
-- `report_start` / `report_delta`：最终研究报告分段输出
-- `decision`：最终动作、摘要和 N 标签写回信息
-- `done`：本次分析结束
-
-TradingAgents 的报告输出语言已在 sidecar 中强制设置为中文：
-
-```python
-config["output_language"] = "Chinese"
-```
-
-AI 结论会写回股票的 `N` 标签。选股器工具栏可以直接筛选 `N`，用于把 AI 识别出的“新高、新闻、新产品、新管理层、新产业变化”等线索纳入后续人工复核。
-
-### Vercel AI Gateway
-
-选择 `OpenAI 兼容网关` 时，默认 API 地址为：
-
-```text
-https://ai-gateway.vercel.sh/v1
-```
-
-Vercel AI Gateway 使用 OpenAI Chat Completions 兼容接口，模型名通常是：
-
-```text
-anthropic/claude-haiku-4.5
-google/gemini-3.1-flash-lite-preview
-openai/...
-```
-
-免费层可能无法使用 Sonnet、Opus、GPT 高阶模型。如果遇到 403 `Free tier users do not have access to this model`，请换成：
-
-```text
-anthropic/claude-haiku-4.5
-```
-
-或给 Vercel AI Gateway 充值后再使用受限模型。
-
-## 验证命令
-
-后端测试：
-
-```bash
-cd backend
-go test ./...
-```
-
-前端类型检查：
-
-```bash
-cd frontend
-npm run typecheck
-```
-
-前端构建：
-
-```bash
-cd frontend
-npm run build
-```
-
-sidecar 语法检查：
-
-```bash
-python3 -m py_compile sidecar/main.py
-```
-
-本地服务健康检查：
-
-```bash
-curl http://localhost:8080/api/v1/health
-curl http://127.0.0.1:8765/health
-```
-
-## 关键 API
-
-- `GET /api/v1/health`
-- `GET /api/v1/screener/scan?market=SP500`
-- `GET /api/v1/screener/results?market=SP500`
-- `POST /api/v1/screener/refresh`
-- `GET /api/v1/stocks/:symbol/summary`
-- `GET /api/v1/stocks/:symbol/rs`
-- `GET /api/v1/stocks/:symbol/eps/quarterly`
-- `GET /api/v1/stocks/:symbol/revenue/annual`
-- `GET /api/v1/stocks/:symbol/margin/gross/quarterly`
-- `PATCH /api/v1/stocks/:symbol/n-label`
-- `GET /api/v1/analysis/ai/config`
-- `POST /api/v1/analysis/:symbol/ai`
-- `GET /api/v1/journal`
-- `POST /api/v1/journal`
-- `PATCH /api/v1/journal/:id`
-
-## Docker
-
-当前 `docker-compose.yml` 包含 PostgreSQL 和 sidecar：
-
-```bash
-docker compose up -d postgres sidecar
-```
-
-运行 sidecar 前请先准备：
-
-```bash
-cp sidecar/.env.example sidecar/.env
-```
-
-## 跨机器使用说明
-
-换到另一台 Mac、Windows 或 Linux 机器时，建议按下面流程恢复：
-
-1. 安装 Go、Node.js、Python、Docker Desktop
-2. `git clone git@github.com:HZXJason/CANSLIMAgent.git`
-3. 复制 `.env.example` 为 `.env`
-4. 填入自己的 API Key 和 `SEC_USER_AGENT`
-5. 优先运行 `make dev`；如果需要排错，再按“快速启动”中的分步命令启动 PostgreSQL、后端、sidecar、前端
-
-注意：
-
-- API Key 不会跟随 Git 同步，需要在目标机器上重新填写
-- `sidecar/.venv`、`frontend/node_modules` 不会提交，需要在目标机器上重新安装
-- Windows 使用 `sidecar/start.ps1`，macOS 使用 `sidecar/start.sh`
-- 如果使用 Vercel AI Gateway，目标机器上同样填写 `OPENAI_COMPATIBLE_API_KEY` 或在前端配置面板填写即可
-
-## 使用边界
-
-本项目用于研究流程、数据整理、AI 辅助分析和交易复盘。AI 输出和筛选结果都应由使用者复核，不构成投资建议，也不代表自动交易信号。
+提交的内容只包括运行源码、测试、配置示例、必要的第三方许可证和本 README。`frontend/dist`、Python `__pycache__`、本地虚拟环境、分析 checkpoint、`.env` 与其他生成文件均不纳入版本控制。

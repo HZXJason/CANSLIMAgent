@@ -11,11 +11,13 @@ import type { AIAnalysisContext, AnalysisConfig } from '../types/analysis';
 
 interface StreamConnection {
   abortController: AbortController;
+  runId: string;
 }
 
 interface StreamTextBuffer {
   narrationByAgent: Record<string, string>;
   report: string;
+  lastEventId: number;
   timer: ReturnType<typeof setTimeout> | null;
 }
 
@@ -49,7 +51,7 @@ function getTextBuffer(symbol: string) {
   const normalized = normalizeSymbol(symbol);
   let buffer = textBuffers.get(normalized);
   if (!buffer) {
-    buffer = { narrationByAgent: {}, report: '', timer: null };
+    buffer = { narrationByAgent: {}, report: '', lastEventId: 0, timer: null };
     textBuffers.set(normalized, buffer);
   }
   return buffer;
@@ -73,9 +75,11 @@ function flushTextBuffer(symbol: string) {
   }
   const narrationByAgent = buffer.narrationByAgent;
   const report = buffer.report;
+  const lastEventId = buffer.lastEventId;
   buffer.narrationByAgent = {};
   buffer.report = '';
-  if (Object.keys(narrationByAgent).length === 0 && !report) return;
+  buffer.lastEventId = 0;
+  if (Object.keys(narrationByAgent).length === 0 && !report && !lastEventId) return;
 
   const store = useAnalysisStore.getState();
   for (const [agent, content] of Object.entries(narrationByAgent)) {
@@ -84,6 +88,7 @@ function flushTextBuffer(symbol: string) {
     store.appendAgentNarration(normalized, agent, content);
   }
   if (report) store.appendReport(normalized, report);
+  if (lastEventId) store.setAIEventCursor(normalized, lastEventId);
 }
 
 function clearTextBuffer(symbol: string) {
@@ -99,7 +104,13 @@ function scheduleTextFlush(symbol: string) {
   buffer.timer = setTimeout(() => flushTextBuffer(symbol), STREAM_FLUSH_MS);
 }
 
-function appendBufferedText(symbol: string, key: 'narration' | 'report', content: string, agent = 'AnalysisAgent') {
+function appendBufferedText(
+  symbol: string,
+  key: 'narration' | 'report',
+  content: string,
+  agent = 'AnalysisAgent',
+  eventId = 0
+) {
   if (!content) return;
   const buffer = getTextBuffer(symbol);
   if (key === 'narration') {
@@ -108,6 +119,7 @@ function appendBufferedText(symbol: string, key: 'narration' | 'report', content
   } else {
     buffer.report += content;
   }
+  buffer.lastEventId = Math.max(buffer.lastEventId, eventId);
   scheduleTextFlush(symbol);
 }
 
@@ -123,24 +135,33 @@ function closeConnection(symbol: string) {
 
 function handleStreamEvent(symbol: string, parsed: ParsedAIAnalysisStreamEvent) {
   const store = useAnalysisStore.getState();
+  const eventId = parsed.id ?? 0;
+  if (eventId > 0 && eventId <= store.getStateForSymbol(symbol).aiLastEventId) return;
+  const commitCursor = () => {
+    if (eventId > 0) store.setAIEventCursor(symbol, eventId);
+  };
 
-  if (parsed.event === 'heartbeat') return;
+  if (parsed.event === 'heartbeat') {
+    commitCursor();
+    return;
+  }
 
   if (parsed.event === 'narration_delta') {
     const payload = parseJSON<{ agent: string; content: string }>(parsed.data, { agent: 'AnalysisAgent', content: '' });
-    appendBufferedText(symbol, 'narration', payload.content, payload.agent);
+    appendBufferedText(symbol, 'narration', payload.content, payload.agent, eventId);
     return;
   }
 
   if (parsed.event === 'report_start') {
     flushTextBuffer(symbol);
     store.clearLiveNarration(symbol);
+    commitCursor();
     return;
   }
 
   if (parsed.event === 'report_delta') {
     const payload = parseJSON<{ content: string }>(parsed.data, { content: '' });
-    appendBufferedText(symbol, 'report', payload.content);
+    appendBufferedText(symbol, 'report', payload.content, 'AnalysisAgent', eventId);
     return;
   }
 
@@ -158,6 +179,7 @@ function handleStreamEvent(symbol: string, parsed: ParsedAIAnalysisStreamEvent) 
       status: payload.status || 'running',
       message: payload.message || ''
     });
+    commitCursor();
     return;
   }
 
@@ -168,6 +190,7 @@ function handleStreamEvent(symbol: string, parsed: ParsedAIAnalysisStreamEvent) 
       agent: payload.agent || 'AnalysisAgent',
       content: payload.content
     });
+    commitCursor();
     return;
   }
 
@@ -178,6 +201,7 @@ function handleStreamEvent(symbol: string, parsed: ParsedAIAnalysisStreamEvent) 
       summary: ''
     });
     store.setAIDecision(symbol, payload);
+    commitCursor();
     return;
   }
 
@@ -189,17 +213,20 @@ function handleStreamEvent(symbol: string, parsed: ParsedAIAnalysisStreamEvent) 
       content: payload.content,
       timestamp: Date.now()
     });
+    commitCursor();
     return;
   }
 
   if (parsed.event === 'report') {
     const payload = parseJSON<{ content: string }>(parsed.data, { content: '' });
     if (payload.content) store.appendReport(symbol, payload.content);
+    commitCursor();
     return;
   }
 
   if (parsed.event === 'done') {
     flushTextBuffer(symbol);
+    commitCursor();
     store.markDone(symbol);
     closeConnection(symbol);
     return;
@@ -208,26 +235,37 @@ function handleStreamEvent(symbol: string, parsed: ParsedAIAnalysisStreamEvent) 
   if (parsed.event === 'error') {
     const payload = parseJSON<{ message: string }>(parsed.data, { message: '分析中断，请检查 AI 服务配置后重试' });
     flushTextBuffer(symbol);
+    commitCursor();
     store.markAIError(symbol, readableAIError(payload.message));
     closeConnection(symbol);
   }
 }
 
-async function connect(symbol: string, config: AnalysisConfig, context?: AIAnalysisContext) {
+function newRunId() {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') return 'run-' + crypto.randomUUID();
+  return 'run-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2);
+}
+
+async function connect(symbol: string, config: AnalysisConfig, context: AIAnalysisContext | undefined, resume: boolean) {
   const normalized = normalizeSymbol(symbol);
+  const previousState = useAnalysisStore.getState().getStateForSymbol(normalized);
+  const runId = resume && previousState.aiRunId ? previousState.aiRunId : newRunId();
+  const lastEventId = resume ? previousState.aiLastEventId : 0;
+  flushTextBuffer(normalized);
   closeConnection(normalized);
 
   const abortController = new AbortController();
-  connections.set(normalized, { abortController });
+  connections.set(normalized, { abortController, runId });
   const store = useAnalysisStore.getState();
   clearTextBuffer(normalized);
-  store.resetAI(normalized);
+  if (resume) store.resumeAIRun(normalized);
+  else store.beginAIRun(normalized, runId);
 
   try {
     const response = await fetch(aiAnalysisStreamURL(normalized), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(buildAIAnalysisStartRequest(config, context)),
+      body: JSON.stringify(buildAIAnalysisStartRequest(config, context, { runId, resume, lastEventId })),
       signal: abortController.signal
     });
 
@@ -263,13 +301,14 @@ async function connect(symbol: string, config: AnalysisConfig, context?: AIAnaly
     const current = useAnalysisStore.getState().getStateForSymbol(normalized);
     if (current.aiStatus === 'streaming') {
       flushTextBuffer(normalized);
-      store.markDone(normalized);
+      store.markPaused(normalized);
     }
   } catch (error) {
     if (abortController.signal.aborted) return;
     flushTextBuffer(normalized);
     const message = error instanceof Error ? error.message : '分析中断，请检查网络连接后重新生成';
-    store.markAIError(normalized, readableAIError(message));
+    store.markPaused(normalized);
+    store.updateState(normalized, { aiError: readableAIError(message) });
   } finally {
     const active = connections.get(normalized);
     if (active?.abortController === abortController) {
@@ -288,7 +327,7 @@ export function useAIStream(symbol: string) {
 
   const start = useCallback(
     (config: AnalysisConfig, context?: AIAnalysisContext) => {
-      void connect(normalized, config, context);
+      void connect(normalized, config, context, false);
     },
     [normalized]
   );
@@ -302,5 +341,12 @@ export function useAIStream(symbol: string) {
     }
   }, [normalized]);
 
-  return { start, abort };
+  const resume = useCallback(
+    (config: AnalysisConfig, context?: AIAnalysisContext) => {
+      void connect(normalized, config, context, true);
+    },
+    [normalized]
+  );
+
+  return { start, resume, abort };
 }
