@@ -1,6 +1,7 @@
 import type { APIResponse, Market, RefreshJob, RefreshJobResponse, StockWithMetrics, ThresholdConfig, ThresholdPreset } from '../types';
 import type {
-  AIAnalysisConfigResponse,
+	AIAnalysisMarkResponse,
+	AIAnalysisConfigResponse,
   AIModelDiscoveryInput,
   AIModelDiscoveryResponse,
   CompanyProfile,
@@ -130,6 +131,12 @@ export function updateNLabel(symbol: string, nLabel: boolean, analysisSummary: s
     method: 'PATCH',
     body: JSON.stringify({ n_label: nLabel, analysis_summary: analysisSummary })
   });
+}
+
+export function markAIAnalysisCompleted(symbol: string) {
+	return request<AIAnalysisMarkResponse>('/stocks/' + encodeURIComponent(symbol) + '/ai-analysis', {
+		method: 'PATCH'
+	});
 }
 
 export function fetchJournalEntries() {

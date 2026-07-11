@@ -35,6 +35,7 @@ type priceSignal struct {
 	TwelveMonthReturn *float64
 	Sufficient        bool
 	DataAsOf          *time.Time
+	Source            string
 }
 
 func (c *PolygonClient) FetchPriceSignal(ctx context.Context, symbol string, asOf time.Time) (priceSignal, error) {

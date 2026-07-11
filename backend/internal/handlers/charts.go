@@ -10,19 +10,28 @@ import (
 
 type ChartsHandler struct {
 	analysis *services.AnalysisService
+	scanner  *services.ScannerService
 }
 
-func NewChartsHandler(analysis *services.AnalysisService) *ChartsHandler {
-	return &ChartsHandler{analysis: analysis}
+func NewChartsHandler(analysis *services.AnalysisService, scanner *services.ScannerService) *ChartsHandler {
+	return &ChartsHandler{analysis: analysis, scanner: scanner}
 }
 
 func (h *ChartsHandler) Summary(c *gin.Context) {
 	symbol := normalizeSymbolParam(c.Param("symbol"))
+	var sources map[string]services.MetricSourcePayload
+	if h.scanner != nil {
+		refreshedSources, _, err := h.scanner.HydrateStockMetrics(c.Request.Context(), symbol)
+		if err == nil {
+			sources = refreshedSources
+		}
+	}
 	data, err := h.analysis.StockSummary(c.Request.Context(), symbol)
 	if err != nil {
 		Fail(c, http.StatusNotFound, "未找到股票基础信息，请先在选股器中刷新市场数据")
 		return
 	}
+	data.MetricSources = sources
 	OK(c, data)
 }
 

@@ -18,11 +18,12 @@ export interface StockMetrics {
 }
 
 export interface StockWithMetrics {
-  symbol: string;
-  name: string;
-  market: Market;
-  metrics: StockMetrics;
-  data_as_of: string;
+	symbol: string;
+	name: string;
+	market: Market;
+	metrics: StockMetrics;
+	ai_analyzed: boolean;
+	data_as_of: string;
 }
 
 export interface ThresholdConfig {

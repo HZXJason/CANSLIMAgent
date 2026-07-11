@@ -33,6 +33,7 @@ type StockMetric struct {
 	LDataSufficient   bool       `gorm:"column:l_data_sufficient;default:false" json:"l_data_sufficient"`
 	IInstitutionDelta *int       `gorm:"column:i_institution_delta" json:"i_institution_delta"`
 	IDataSufficient   bool       `gorm:"column:i_data_sufficient;default:false" json:"i_data_sufficient"`
+	AIAnalysisAt      *time.Time `gorm:"column:ai_analysis_at" json:"ai_analysis_at"`
 	NLabel            *bool      `gorm:"column:n_label" json:"n_label"`
 	NAnalysisAt       *time.Time `gorm:"column:n_analysis_at" json:"n_analysis_at"`
 	NAnalysisSummary  string     `gorm:"column:n_analysis_summary;type:text" json:"n_analysis_summary"`

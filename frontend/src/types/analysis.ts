@@ -114,11 +114,13 @@ export interface AIAnalysisConfigResponse {
 export interface StockSummary {
   symbol: string;
   name: string;
-  market: string;
-  metrics: StockMetrics;
-  data_as_of: string;
+	market: string;
+	metrics: StockMetrics;
+	ai_analyzed: boolean;
+	data_as_of: string;
   n_analysis_at: string | null;
   n_analysis_summary: string;
+  metric_sources?: Partial<Record<'s' | 'l' | 'i', { source: string; status: string }>>;
 }
 
 export interface CompanyProfile {
@@ -268,4 +270,10 @@ export interface NLabelResponse {
   symbol: string;
   n_label: boolean;
   n_analysis_at: string;
+}
+
+export interface AIAnalysisMarkResponse {
+	symbol: string;
+	ai_analyzed: boolean;
+	ai_analysis_at: string;
 }

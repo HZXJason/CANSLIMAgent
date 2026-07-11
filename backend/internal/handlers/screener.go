@@ -100,3 +100,13 @@ func (h *ScreenerHandler) UpdateNLabel(c *gin.Context) {
 	}
 	OK(c, gin.H{"symbol": symbol, "n_label": req.NLabel, "n_analysis_at": analysisAt})
 }
+
+func (h *ScreenerHandler) MarkAIAnalysisCompleted(c *gin.Context) {
+	symbol := normalizeSymbolParam(c.Param("symbol"))
+	analysisAt, err := h.scanner.MarkAIAnalysisCompleted(c.Request.Context(), symbol)
+	if err != nil {
+		Fail(c, http.StatusBadRequest, "AI 分析标记写回失败："+err.Error())
+		return
+	}
+	OK(c, gin.H{"symbol": symbol, "ai_analyzed": true, "ai_analysis_at": analysisAt})
+}

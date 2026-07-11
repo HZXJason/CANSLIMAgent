@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { Activity, DatabaseZap, RefreshCw, ShieldCheck } from 'lucide-react';
+import { Activity, DatabaseZap, Pause, Play, RefreshCw, ShieldCheck } from 'lucide-react';
 import { Button } from '../../components/ui/button';
 import { Card, CardHeader, CardTitle } from '../../components/ui/card';
 import { API_BASE_URL, createPreset, deletePreset, fetchCachedResults, fetchPresets, fetchRefreshJob, refreshMarket } from '../../lib/api';
@@ -26,6 +26,9 @@ export default function ScreenerPage() {
   const defaultPresetAppliedRef = useRef(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const [isScanPaused, setIsScanPaused] = useState(false);
+  const [scanCompletedMarket, setScanCompletedMarket] = useState<Market | null>(null);
+  const [isRefreshing, setIsRefreshing] = useState(false);
 
   const {
     selectedMarket,
@@ -143,6 +146,8 @@ export default function ScreenerPage() {
       clearScanTimeout();
       setActiveScanMarket(null);
       setIsScanning(false);
+		setIsScanPaused(false);
+		setScanCompletedMarket(null);
       setScanStatus(null);
       setNotice(null);
       setErrorMessage(message);
@@ -195,6 +200,8 @@ export default function ScreenerPage() {
             clearScanTimeout();
             setScanProgress(event.data);
             setIsScanning(false);
+			setIsScanPaused(false);
+			setScanCompletedMarket(market);
             setScanStatus(null);
             setActiveScanMarket(null);
             source.close();
@@ -245,6 +252,8 @@ export default function ScreenerPage() {
     const runID = scanRunRef.current;
     setErrorMessage(null);
     setNotice(null);
+		setIsScanPaused(false);
+		setScanCompletedMarket(null);
     setScanStatus(null);
 
     if (typeof navigator !== 'undefined' && !navigator.onLine) {
@@ -271,6 +280,37 @@ export default function ScreenerPage() {
     setScanStatus
   ]);
 
+	const pauseScan = useCallback(() => {
+		if (!isScanning) return;
+		scanRunRef.current += 1;
+		eventSourceRef.current?.close();
+		eventSourceRef.current = null;
+		clearScanTimeout();
+		setIsScanning(false);
+		setIsScanPaused(true);
+		setScanStatus('扫描已暂停；数据源任务仍在后台保留，可继续接收进度');
+		setNotice('扫描已暂停。点击“继续扫描”可接回当前进度。');
+	}, [clearScanTimeout, isScanning, setIsScanning, setScanStatus]);
+
+	const resumeScan = useCallback(() => {
+		const market = activeScanMarket ?? selectedMarket;
+		if (!isScanPaused) {
+			startScan();
+			return;
+		}
+		retryRef.current = 0;
+		scanRunRef.current += 1;
+		const runID = scanRunRef.current;
+		setErrorMessage(null);
+		setNotice(null);
+		setIsScanPaused(false);
+		setActiveScanMarket(market);
+		setIsScanning(true);
+		setScanStatus('正在继续接收后台扫描进度');
+		armScanTimeout(runID, market);
+		connectToScan(runID, market);
+	}, [activeScanMarket, armScanTimeout, connectToScan, isScanPaused, selectedMarket, setActiveScanMarket, setIsScanning, setScanStatus, startScan]);
+
   useEffect(() => {
     if (!isScanning || eventSourceRef.current) return;
     const market = activeScanMarket ?? selectedMarket;
@@ -287,6 +327,7 @@ export default function ScreenerPage() {
     if (market === selectedMarket) return;
     setErrorMessage(null);
     setNotice(null);
+		setScanCompletedMarket(null);
     setMarket(market);
   };
 
@@ -323,29 +364,64 @@ export default function ScreenerPage() {
       await new Promise((resolve) => window.setTimeout(resolve, 1000));
       const job = await fetchRefreshJob(jobID);
       if (job.status === 'completed') {
-        setNotice('数据刷新完成，可以重新开始筛选');
+		setNotice('覆盖刷新完成，缓存已更新。');
+		setIsRefreshing(false);
+		setScanCompletedMarket(selectedMarket);
         await queryClient.invalidateQueries({ queryKey: ['screener-results', selectedMarket] });
         return;
       }
       if (job.status === 'failed') {
+		setIsRefreshing(false);
         throw new Error(job.error ?? '数据刷新失败');
       }
     }
-    setNotice('刷新任务仍在后台执行，可稍后重新获取缓存结果');
+		setNotice('覆盖刷新仍在后台执行；完成后会自动更新缓存。');
+		setIsRefreshing(false);
   };
 
   const handleRefresh = async () => {
+		if (isScanning || isScanPaused || isRefreshing) return;
     setErrorMessage(null);
+		setNotice(null);
+		setIsRefreshing(true);
     try {
       const job = await refreshMarket(selectedMarket);
-      setNotice('刷新任务已创建：' + job.job_id.slice(0, 8));
+		setNotice('正在覆盖刷新 ' + marketLabel[selectedMarket] + ' 全部缓存数据…');
       void pollRefreshJob(job.job_id).catch((error) => {
-        setErrorMessage(error instanceof Error ? error.message : '数据获取失败，请检查网络连接');
+		setIsRefreshing(false);
+		setErrorMessage('覆盖刷新失败：' + (error instanceof Error ? error.message : '后端任务异常'));
       });
     } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : '数据获取失败，请检查网络连接');
+		setIsRefreshing(false);
+		setErrorMessage('覆盖刷新请求失败：' + (error instanceof Error ? error.message : '无法创建后台任务'));
     }
   };
+
+	const scanBusy = isScanning || isScanPaused;
+	const primaryActionLabel = isScanning
+		? '暂停扫描'
+		: isScanPaused
+			? '继续扫描'
+			: isRefreshing
+				? '覆盖刷新中'
+				: scanCompletedMarket === selectedMarket
+					? '覆盖刷新'
+					: '开始扫描';
+	const handlePrimaryAction = () => {
+		if (isScanning) {
+			pauseScan();
+			return;
+		}
+		if (isScanPaused) {
+			resumeScan();
+			return;
+		}
+		if (scanCompletedMarket === selectedMarket) {
+			void handleRefresh();
+			return;
+		}
+		startScan();
+	};
 
   return (
     <section className="mx-auto w-full max-w-[1440px] px-4 py-6 sm:px-6 lg:px-8">
@@ -362,10 +438,6 @@ export default function ScreenerPage() {
               <span className="rounded-full border border-slate-700 bg-slate-950/30 px-4 py-2 text-sm text-slate-400">
                 数据截止 {formatDateCN(selectedMarketDataAsOf)}
               </span>
-              <Button variant="outline" onClick={handleRefresh} disabled={isScanning}>
-                <RefreshCw className="h-4 w-4" />
-                刷新覆盖
-              </Button>
             </div>
           </header>
 
@@ -380,7 +452,7 @@ export default function ScreenerPage() {
                 </span>
               </CardTitle>
             </CardHeader>
-            <MarketSelector selectedMarket={selectedMarket} onChange={handleMarketChange} disabled={isScanning} />
+			<MarketSelector selectedMarket={selectedMarket} onChange={handleMarketChange} disabled={scanBusy || isRefreshing} />
           </Card>
 
           <section className="mt-6 space-y-6">
@@ -410,14 +482,10 @@ export default function ScreenerPage() {
               <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-center">
                 <ScanProgress progress={scanProgress} isScanning={isScanning} statusMessage={scanStatus} />
                 <div className="flex flex-wrap gap-3 lg:justify-end">
-                  <Button onClick={startScan} disabled={isScanning}>
-                    <Activity className="h-4 w-4" />
-                    {isScanning ? '扫描中' : '开始/继续扫描'}
-                  </Button>
-                  <Button variant="outline" onClick={handleRefresh} disabled={isScanning}>
-                    <RefreshCw className="h-4 w-4" />
-                    刷新覆盖
-                  </Button>
+				  <Button onClick={handlePrimaryAction} disabled={isRefreshing}>
+					{isScanning ? <Pause className="h-4 w-4" /> : isScanPaused ? <Play className="h-4 w-4" /> : scanCompletedMarket === selectedMarket || isRefreshing ? <RefreshCw className="h-4 w-4" /> : <Activity className="h-4 w-4" />}
+					{primaryActionLabel}
+				  </Button>
                 </div>
               </div>
               <div className="mt-5 grid gap-3 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-center">

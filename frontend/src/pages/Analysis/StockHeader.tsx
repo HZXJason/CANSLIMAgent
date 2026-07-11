@@ -32,6 +32,7 @@ export default function StockHeader({ symbol, tabName, summary }: StockHeaderPro
         name: summary.name,
         market: summary.market as Market,
         metrics: summary.metrics,
+		ai_analyzed: summary.ai_analyzed,
         data_as_of: summary.data_as_of
       }
     : null;
@@ -62,6 +63,14 @@ export default function StockHeader({ symbol, tabName, summary }: StockHeaderPro
                 数据截止 {formatDateCN(summary?.data_as_of ?? null)}
               </span>
             </div>
+            {summary?.metric_sources ? (
+              <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-[11px] text-slate-500">
+                {(['s', 'l', 'i'] as const).map((key) => {
+                  const source = summary.metric_sources?.[key];
+                  return source ? <span key={key}>{key.toUpperCase()}: {source.source}{source.status === 'unavailable' ? '（暂不可用）' : ''}</span> : null;
+                })}
+              </div>
+            ) : null}
           </div>
         </div>
 

@@ -1,4 +1,4 @@
-import { useEffect, useMemo } from 'react';
+import { useEffect, useMemo, useRef } from 'react';
 import { fetchCompanyProfile, fetchEPSQuarterly, fetchGrossMarginQuarterly, fetchKLine, fetchRevenueAnnual, fetchRS, fetchSecondLayerData, fetchStockSummary } from '../../lib/api';
 import { createInitialAnalysisState, useAnalysisStore } from '../../stores/analysisStore';
 import type { ChartStatus } from '../../types/analysis';
@@ -22,7 +22,8 @@ function statusForLength(length: number): ChartStatus {
 }
 
 export default function AnalysisPage({ symbol, tabName }: AnalysisPageProps) {
-  const normalized = symbol.toUpperCase();
+	const normalized = symbol.toUpperCase();
+	const profileRefreshRef = useRef(new Set<string>());
   const fallbackState = useMemo(() => createInitialAnalysisState(), [normalized]);
   const state = useAnalysisStore((store) => store.analysisStates[normalized]) ?? fallbackState;
   const setSummary = useAnalysisStore((store) => store.setSummary);
@@ -54,7 +55,10 @@ export default function AnalysisPage({ symbol, tabName }: AnalysisPageProps) {
   useEffect(() => {
     let cancelled = false;
     const current = useAnalysisStore.getState().getStateForSymbol(normalized);
-    if (current.companyProfile && current.chartStatus.profile !== 'loading') return;
+		const cachedDescription = current.companyProfile?.description ?? '';
+		const cachedProfileNeedsChineseRefresh = Boolean(cachedDescription) && !/[\u4e00-\u9fff]/.test(cachedDescription) && !profileRefreshRef.current.has(normalized);
+		if (cachedProfileNeedsChineseRefresh) profileRefreshRef.current.add(normalized);
+		if (current.companyProfile && current.chartStatus.profile !== 'loading' && !cachedProfileNeedsChineseRefresh) return;
 
     updateChartStatus(normalized, 'profile', 'loading');
     fetchCompanyProfile(normalized)

@@ -80,6 +80,7 @@ func normalizeStockMetricSufficiency(database *gorm.DB) error {
 		"UPDATE stock_metrics SET s_data_sufficient = false WHERE s_volume_ratio IS NULL",
 		"UPDATE stock_metrics SET l_data_sufficient = false WHERE l_rs_rating IS NULL",
 		"UPDATE stock_metrics SET i_data_sufficient = false WHERE i_institution_delta IS NULL",
+		"UPDATE stock_metrics SET ai_analysis_at = n_analysis_at WHERE ai_analysis_at IS NULL AND n_analysis_at IS NOT NULL",
 	}
 	for _, statement := range statements {
 		if err := database.Exec(statement).Error; err != nil {

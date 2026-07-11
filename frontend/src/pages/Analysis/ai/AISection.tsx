@@ -1,5 +1,6 @@
 import { PauseCircle, PlayCircle, Sparkles } from 'lucide-react';
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
 import AIAnalysisConfig, { type AnalysisConfig } from '../../../components/analysis/AIAnalysisConfig';
 import AIAnalysisStream from '../../../components/analysis/AIAnalysisStream';
 import { Button } from '../../../components/ui/button';
@@ -8,6 +9,8 @@ import { ConfirmDialog } from '../../../components/ui/confirm-dialog';
 import { useAIStream } from '../../../hooks/useAIStream';
 import { buildAIAnalysisContext } from '../../../lib/aiAnalysisContext';
 import { readStoredAIAnalysisConfig } from '../../../lib/aiAnalysisConfig';
+import { markAIAnalysisCompleted } from '../../../lib/api';
+import { useAnalysisStore } from '../../../stores/analysisStore';
 import type { SymbolAnalysisState } from '../../../types/analysis';
 import AIActions from './AIActions';
 
@@ -17,10 +20,13 @@ interface AISectionProps {
 }
 
 export default function AISection({ symbol, state }: AISectionProps) {
-  const { start, resume, abort } = useAIStream(symbol);
+	const { start, resume, abort } = useAIStream(symbol);
+	const queryClient = useQueryClient();
+	const updateState = useAnalysisStore((store) => store.updateState);
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [pendingConfig, setPendingConfig] = useState<AnalysisConfig | null>(null);
-  const lastConfigRef = useRef<AnalysisConfig | null>(readStoredAIAnalysisConfig() as AnalysisConfig | null);
+	const lastConfigRef = useRef<AnalysisConfig | null>(readStoredAIAnalysisConfig() as AnalysisConfig | null);
+	const markedRunRef = useRef<string | null>(null);
   const isAnalyzing = state.aiStatus === 'streaming';
   const hasOutput =
     state.thoughtLines.length > 0 ||
@@ -30,7 +36,23 @@ export default function AISection({ symbol, state }: AISectionProps) {
     state.aiProgress.length > 0 ||
     state.aiResults.length > 0 ||
     Boolean(state.aiDecision);
-  const canResume = Boolean(state.aiRunId) && (state.aiStatus === 'paused' || state.aiStatus === 'error');
+	const canResume = Boolean(state.aiRunId) && (state.aiStatus === 'paused' || state.aiStatus === 'error');
+
+	useEffect(() => {
+		if (state.aiStatus !== 'done' || !state.aiRunId || state.stockSummary?.ai_analyzed || markedRunRef.current === state.aiRunId) return;
+		const runID = state.aiRunId;
+		markedRunRef.current = runID;
+		void markAIAnalysisCompleted(symbol)
+			.then(() => {
+				if (state.stockSummary) {
+					updateState(symbol, { stockSummary: { ...state.stockSummary, ai_analyzed: true } });
+				}
+				return queryClient.invalidateQueries({ queryKey: ['screener-results'] });
+			})
+			.catch(() => {
+				if (markedRunRef.current === runID) markedRunRef.current = null;
+			});
+	}, [queryClient, state.aiRunId, state.aiStatus, state.stockSummary, symbol, updateState]);
 
   const runAnalysis = (config: AnalysisConfig) => {
     lastConfigRef.current = config;

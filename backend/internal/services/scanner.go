@@ -31,11 +31,19 @@ type MetricsPayload struct {
 }
 
 type StockResult struct {
-	Symbol   string         `json:"symbol"`
-	Name     string         `json:"name"`
-	Market   string         `json:"market"`
-	Metrics  MetricsPayload `json:"metrics"`
-	DataAsOf string         `json:"data_as_of"`
+	Symbol     string         `json:"symbol"`
+	Name       string         `json:"name"`
+	Market     string         `json:"market"`
+	Metrics    MetricsPayload `json:"metrics"`
+	AIAnalyzed bool           `json:"ai_analyzed"`
+	DataAsOf   string         `json:"data_as_of"`
+}
+
+// MetricSourcePayload identifies the provider that supplied a live per-symbol
+// backfill, so clients can distinguish an old cache from unavailable upstream data.
+type MetricSourcePayload struct {
+	Source string `json:"source"`
+	Status string `json:"status"`
 }
 
 type ScanEvent struct {
@@ -420,7 +428,10 @@ func (s *ScannerService) StartRefresh(ctx context.Context, market string) (*Refr
 	s.jobs.Store(job.ID, job)
 
 	go func() {
-		err := s.refreshMarketData(ctx, market)
+		// A refresh outlives the short POST request that created it. Passing the
+		// request context here cancelled the job as soon as the handler replied,
+		// which the UI misleadingly presented as a network failure.
+		err := s.refreshMarketData(refreshJobContext(ctx), market)
 		finishedAt := time.Now().UTC()
 		job.FinishedAt = &finishedAt
 		if err != nil {
@@ -433,6 +444,10 @@ func (s *ScannerService) StartRefresh(ctx context.Context, market string) (*Refr
 	}()
 
 	return job, nil
+}
+
+func refreshJobContext(ctx context.Context) context.Context {
+	return context.WithoutCancel(ctx)
 }
 
 func (s *ScannerService) GetRefreshJob(jobID string) (*RefreshJob, bool) {
@@ -460,11 +475,122 @@ func (s *ScannerService) UpdateNLabel(ctx context.Context, symbol string, nLabel
 		Model(&models.StockMetric{}).
 		Where("stock_id = ?", stock.ID).
 		Updates(map[string]interface{}{
+			"ai_analysis_at":     now,
 			"n_label":            nLabel,
 			"n_analysis_at":      now,
 			"n_analysis_summary": summary,
 		}).Error
 	return now, err
+}
+
+func (s *ScannerService) MarkAIAnalysisCompleted(ctx context.Context, symbol string) (time.Time, error) {
+	symbol = strings.ToUpper(strings.TrimSpace(symbol))
+	if symbol == "" {
+		return time.Time{}, errors.New("股票代码不能为空")
+	}
+
+	var stock models.Stock
+	if err := s.db.WithContext(ctx).Where("symbol = ?", symbol).Order("market asc").First(&stock).Error; err != nil {
+		return time.Time{}, err
+	}
+	now := time.Now().UTC()
+	err := s.db.WithContext(ctx).Model(&models.StockMetric{}).Where("stock_id = ?", stock.ID).Update("ai_analysis_at", now).Error
+	return now, err
+}
+
+// HydrateStockMetrics refreshes the S/L/I metrics needed by an individual
+// analysis tab without a full market scan. The screener still calculates L as
+// a cross-sectional rank; a single-stock request uses the same bounded score
+// against SPY so it never fabricates a market percentile from one observation.
+func (s *ScannerService) HydrateStockMetrics(ctx context.Context, symbol string) (map[string]MetricSourcePayload, bool, error) {
+	symbol = strings.ToUpper(strings.TrimSpace(symbol))
+	if symbol == "" {
+		return nil, false, errors.New("股票代码不能为空")
+	}
+
+	var stock models.Stock
+	if err := s.db.WithContext(ctx).Preload("Metric").Where("symbol = ?", symbol).Order("market asc").First(&stock).Error; err != nil {
+		return nil, false, err
+	}
+	if !needsSingleStockHydration(stock.Metric) {
+		return map[string]MetricSourcePayload{
+			"s": {Source: "本地缓存", Status: "cached"},
+			"l": {Source: "本地缓存", Status: "cached"},
+			"i": {Source: "本地缓存", Status: "cached"},
+		}, false, nil
+	}
+
+	sources := map[string]MetricSourcePayload{}
+	metric := stock.Metric
+	now := time.Now().UTC()
+	price, priceOK := s.fetchPriceSignal(ctx, stock.Symbol, now)
+	if priceOK && price.VolumeRatio != nil {
+		metric.SVolumeRatio = price.VolumeRatio
+		metric.SDataSufficient = true
+		if price.DataAsOf != nil && !price.DataAsOf.IsZero() {
+			metric.DataAsOf = *price.DataAsOf
+		}
+		sources["s"] = MetricSourcePayload{Source: price.Source, Status: "live"}
+	} else {
+		metric.SVolumeRatio = nil
+		metric.SDataSufficient = false
+		sources["s"] = MetricSourcePayload{Source: "价格路由", Status: "unavailable"}
+	}
+
+	if priceOK && price.TwelveMonthReturn != nil {
+		benchmark, benchmarkOK := s.fetchPriceSignal(ctx, "SPY", now)
+		if benchmarkOK && benchmark.TwelveMonthReturn != nil {
+			rating := int(math.Round(rsScore(*price.TwelveMonthReturn, *benchmark.TwelveMonthReturn)))
+			metric.LRSRating = &rating
+			metric.LDataSufficient = true
+			sources["l"] = MetricSourcePayload{Source: price.Source + " / " + benchmark.Source + "（相对 SPY）", Status: "live"}
+		} else {
+			metric.LRSRating = nil
+			metric.LDataSufficient = false
+			sources["l"] = MetricSourcePayload{Source: "价格路由 / SPY", Status: "unavailable"}
+		}
+	} else {
+		metric.LRSRating = nil
+		metric.LDataSufficient = false
+		sources["l"] = MetricSourcePayload{Source: "价格路由", Status: "unavailable"}
+	}
+
+	if s.institutional != nil && s.institutional.Configured() {
+		signal, err := s.institutional.FetchInstitutionalSignal(ctx, stock.Symbol)
+		if err == nil && signal.Sufficient && signal.Delta != nil {
+			metric.IInstitutionDelta = signal.Delta
+			metric.IDataSufficient = true
+			sources["i"] = MetricSourcePayload{Source: "Nasdaq 机构持仓", Status: "live"}
+		} else {
+			metric.IInstitutionDelta = nil
+			metric.IDataSufficient = false
+			sources["i"] = MetricSourcePayload{Source: "Nasdaq 机构持仓", Status: "unavailable"}
+		}
+	} else {
+		sources["i"] = MetricSourcePayload{Source: "机构持仓数据源未启用", Status: "disabled"}
+	}
+
+	metric.FetchedAt = now
+	if err := s.db.WithContext(ctx).Model(&models.StockMetric{}).Where("stock_id = ?", stock.ID).Updates(map[string]interface{}{
+		"s_volume_ratio":      metric.SVolumeRatio,
+		"s_data_sufficient":   metric.SDataSufficient,
+		"l_rs_rating":         metric.LRSRating,
+		"l_data_sufficient":   metric.LDataSufficient,
+		"i_institution_delta": metric.IInstitutionDelta,
+		"i_data_sufficient":   metric.IDataSufficient,
+		"data_as_of":          metric.DataAsOf,
+		"fetched_at":          metric.FetchedAt,
+	}).Error; err != nil {
+		return sources, false, err
+	}
+	return sources, true, nil
+}
+
+func needsSingleStockHydration(metric models.StockMetric) bool {
+	if !metric.SDataSufficient || metric.SVolumeRatio == nil || !metric.LDataSufficient || metric.LRSRating == nil || !metric.IDataSufficient || metric.IInstitutionDelta == nil {
+		return true
+	}
+	return metric.DataAsOf.IsZero() || metric.DataAsOf.Before(time.Now().UTC().AddDate(0, 0, -3))
 }
 
 func (s *ScannerService) ensureMarketData(ctx context.Context, market string) error {
@@ -643,33 +769,41 @@ func (s *ScannerService) applyEPSFallback(ctx context.Context, symbol string, me
 }
 
 func (s *ScannerService) fetchPriceSignal(ctx context.Context, symbol string, asOf time.Time) (priceSignal, bool) {
+	// Vibe-Trading's US-equity router leads with Yahoo because its public chart
+	// endpoint is generally more throttle-tolerant than Stooq's browser-guarded
+	// download endpoint. Keep every existing provider as a fallback.
+	if s.yahoo != nil && s.yahoo.Configured() {
+		price, err := s.yahoo.FetchPriceSignal(ctx, symbol, asOf)
+		if err == nil && price.Sufficient {
+			price.Source = "Yahoo Finance"
+			return price, true
+		}
+	}
 	if s.stooq != nil && s.stooq.Configured() {
 		price, err := s.stooq.FetchPriceSignal(ctx, symbol, asOf)
 		if err == nil && price.Sufficient {
+			price.Source = "Stooq"
 			return price, true
 		}
 	}
 	if s.polygon != nil && s.polygon.Configured() {
 		price, err := s.polygon.FetchPriceSignal(ctx, symbol, asOf)
 		if err == nil && price.Sufficient {
+			price.Source = "Polygon"
 			return price, true
 		}
 	}
 	if s.fmp != nil && s.fmp.Configured() {
 		price, err := s.fmp.FetchPriceSignal(ctx, symbol, asOf)
 		if err == nil && price.Sufficient {
-			return price, true
-		}
-	}
-	if s.yahoo != nil && s.yahoo.Configured() {
-		price, err := s.yahoo.FetchPriceSignal(ctx, symbol, asOf)
-		if err == nil && price.Sufficient {
+			price.Source = "FMP"
 			return price, true
 		}
 	}
 	if s.yfinance != nil && s.yfinance.Configured() {
 		price, err := s.yfinance.FetchPriceSignal(ctx, symbol, asOf)
 		if err == nil && price.Sufficient {
+			price.Source = "yfinance"
 			return price, true
 		}
 	}
@@ -749,7 +883,8 @@ func toStockResult(stock models.Stock) StockResult {
 			I: MetricPayload{Value: intValue(metric.IInstitutionDelta), Sufficient: metric.IDataSufficient && metric.IInstitutionDelta != nil},
 			N: metric.NLabel,
 		},
-		DataAsOf: metric.DataAsOf.Format("2006-01-02"),
+		AIAnalyzed: metric.AIAnalysisAt != nil,
+		DataAsOf:   metric.DataAsOf.Format("2006-01-02"),
 	}
 }
 

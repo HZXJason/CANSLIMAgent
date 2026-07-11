@@ -37,13 +37,15 @@ type AnalysisService struct {
 }
 
 type StockSummary struct {
-	Symbol           string         `json:"symbol"`
-	Name             string         `json:"name"`
-	Market           string         `json:"market"`
-	Metrics          MetricsPayload `json:"metrics"`
-	DataAsOf         string         `json:"data_as_of"`
-	NAnalysisAt      *time.Time     `json:"n_analysis_at"`
-	NAnalysisSummary string         `json:"n_analysis_summary"`
+	Symbol           string                         `json:"symbol"`
+	Name             string                         `json:"name"`
+	Market           string                         `json:"market"`
+	Metrics          MetricsPayload                 `json:"metrics"`
+	AIAnalyzed       bool                           `json:"ai_analyzed"`
+	DataAsOf         string                         `json:"data_as_of"`
+	NAnalysisAt      *time.Time                     `json:"n_analysis_at"`
+	NAnalysisSummary string                         `json:"n_analysis_summary"`
+	MetricSources    map[string]MetricSourcePayload `json:"metric_sources,omitempty"`
 }
 
 type CompanyProfile struct {
@@ -171,6 +173,7 @@ func (s *AnalysisService) StockSummary(ctx context.Context, symbol string) (Stoc
 		Name:             result.Name,
 		Market:           result.Market,
 		Metrics:          result.Metrics,
+		AIAnalyzed:       result.AIAnalyzed,
 		DataAsOf:         result.DataAsOf,
 		NAnalysisAt:      stock.Metric.NAnalysisAt,
 		NAnalysisSummary: stock.Metric.NAnalysisSummary,
@@ -1061,8 +1064,8 @@ func (s *AnalysisService) localizeCompanyProfile(ctx context.Context, profile Co
 		}
 		profile.Industry = value
 	}
-	if translated && profile.Source != "" && !strings.Contains(profile.Source, "Google Translate") {
-		profile.Source = profile.Source + " · Google Translate"
+	if translated && profile.Source != "" && !strings.Contains(profile.Source, "中文翻译") {
+		profile.Source = profile.Source + " · 中文翻译"
 	}
 	return profile
 }

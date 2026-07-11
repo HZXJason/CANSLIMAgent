@@ -62,7 +62,7 @@ func main() {
 	analysisService := services.NewAnalysisService(database, alphaVantageClient, translationClient, secClient, stooqClient, fmpClient, polygonClient, yahooClient, yfinanceClient)
 	screenerHandler := handlers.NewScreenerHandler(scanner)
 	presetHandler := handlers.NewPresetHandler(database)
-	chartsHandler := handlers.NewChartsHandler(analysisService)
+	chartsHandler := handlers.NewChartsHandler(analysisService, scanner)
 	analysisHandler := handlers.NewAnalysisHandler(analysisService, cfg.AIStreamURL, cfg.RequestTimeout)
 	aiAnalysisUpstream := services.NewHTTPAIAnalysisUpstream(cfg.AIAnalysisUpstreamURL, cfg.AIAnalysisTimeout)
 	aiAnalysisHandler := handlers.NewAIAnalysisHandlerWithUpstreamAndJournal(aiAnalysisUpstream, cfg.AIAnalysisTimeout, database)
@@ -99,6 +99,7 @@ func main() {
 		api.GET("/stocks/:symbol/margin/gross/quarterly", chartsHandler.GrossMarginQuarterly)
 		api.GET("/stocks/:symbol/second-layer-data", chartsHandler.SecondLayerData)
 		api.PATCH("/stocks/:symbol/n-label", screenerHandler.UpdateNLabel)
+		api.PATCH("/stocks/:symbol/ai-analysis", screenerHandler.MarkAIAnalysisCompleted)
 		api.GET("/analysis/:symbol/*action", func(c *gin.Context) {
 			action := c.Param("action")
 			if c.Param("symbol") == "ai" && action == "/config" {

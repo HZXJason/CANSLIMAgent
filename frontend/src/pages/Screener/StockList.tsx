@@ -105,7 +105,7 @@ function stockIdentity(stock: ComputedStock) {
 }
 
 function stockHasAIAnalysis(stock: ComputedStock, aiAnalyzedSymbols: Set<string>) {
-  return aiAnalyzedSymbols.has(stock.symbol.toUpperCase()) || stock.metrics.n !== null;
+	return stock.ai_analyzed || aiAnalyzedSymbols.has(stock.symbol.toUpperCase());
 }
 
 interface StockRowProps {
