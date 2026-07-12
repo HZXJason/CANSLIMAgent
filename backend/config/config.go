@@ -1,6 +1,7 @@
 package config
 
 import (
+	"net"
 	"os"
 	"strconv"
 	"strings"
@@ -68,6 +69,9 @@ type BrokerGatewayConfig struct {
 
 func Load() Config {
 	_ = godotenv.Load(".env", "backend/.env")
+	futuGateway := loadBrokerGateway("BROKER_FUTU", "11111")
+	ibkrGateway := loadBrokerGateway("BROKER_IBKR", "7497")
+	ibkrGateway.ClientID = getEnv("BROKER_IBKR_CLIENT_ID", "9901")
 
 	return Config{
 		Port:                    getEnv("PORT", "8080"),
@@ -91,19 +95,37 @@ func Load() Config {
 		BrokerCredentialsKey:    strings.TrimSpace(os.Getenv("BROKER_CREDENTIALS_ENCRYPTION_KEY")),
 		BrokerLongPortOAuth:     loadBrokerOAuthConfig("BROKER_LONGPORT"),
 		BrokerTigerOAuth:        loadBrokerOAuthConfig("BROKER_TIGER"),
-		BrokerFutuGateway: BrokerGatewayConfig{
-			Host: getEnv("BROKER_FUTU_HOST", "127.0.0.1"),
-			Port: getEnv("BROKER_FUTU_PORT", "11111"),
-		},
-		BrokerIBKRGateway: BrokerGatewayConfig{
-			Host:     getEnv("BROKER_IBKR_HOST", "127.0.0.1"),
-			Port:     getEnv("BROKER_IBKR_PORT", "7497"),
-			ClientID: getEnv("BROKER_IBKR_CLIENT_ID", "9901"),
-		},
-		AllowedOrigins: splitOrigins(getEnv("ALLOWED_ORIGINS", "http://localhost:5173,http://127.0.0.1:5173")),
-		RequestTimeout: time.Duration(getEnvInt("REQUEST_TIMEOUT_SECONDS", 20)) * time.Second,
-		ScanDelay:      time.Duration(getEnvInt("SCAN_DELAY_MS", 80)) * time.Millisecond,
+		BrokerFutuGateway:       futuGateway,
+		BrokerIBKRGateway:       ibkrGateway,
+		AllowedOrigins:          splitOrigins(getEnv("ALLOWED_ORIGINS", "http://localhost:5173,http://127.0.0.1:5173")),
+		RequestTimeout:          time.Duration(getEnvInt("REQUEST_TIMEOUT_SECONDS", 20)) * time.Second,
+		ScanDelay:               time.Duration(getEnvInt("SCAN_DELAY_MS", 80)) * time.Millisecond,
 	}
+}
+
+func loadBrokerGateway(prefix, defaultPort string) BrokerGatewayConfig {
+	host := getEnv(prefix+"_HOST", "127.0.0.1")
+	port := getEnv(prefix+"_PORT", defaultPort)
+	if !isLoopbackHost(host) {
+		host = "127.0.0.1"
+	}
+	if !isValidPort(port) {
+		port = defaultPort
+	}
+	return BrokerGatewayConfig{Host: host, Port: port}
+}
+
+func isLoopbackHost(host string) bool {
+	if strings.EqualFold(strings.TrimSpace(host), "localhost") {
+		return true
+	}
+	ip := net.ParseIP(strings.TrimSpace(host))
+	return ip != nil && ip.IsLoopback()
+}
+
+func isValidPort(port string) bool {
+	value, err := strconv.Atoi(strings.TrimSpace(port))
+	return err == nil && value >= 1 && value <= 65535
 }
 
 func loadBrokerOAuthConfig(prefix string) BrokerOAuthConfig {
