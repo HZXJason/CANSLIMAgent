@@ -50,7 +50,7 @@ const connectedLongport = connection({
   connected: true,
   last_synced_at: '2026-07-12T02:30:00Z'
 });
-const unconnectedTiger = connection({ id: 'tiger-1', broker: 'tiger' });
+const unconnectedTiger = connection({ id: '', broker: 'tiger' });
 const unavailableFutu = connection({
   id: 'futu-1',
   broker: 'futu',
@@ -58,7 +58,15 @@ const unavailableFutu = connection({
   connection_status: 'gateway_unavailable',
   message: '请先启动 OpenD'
 });
-const unconnectedIBKR = connection({ id: 'ibkr-1', broker: 'ibkr', connection_method: 'gateway' });
+const reconnectRequiredLongport = connection({
+  id: 'longport-stale-1',
+  broker: 'longport',
+  account_name: 'Longbridge · 12345678',
+  connection_method: 'oauth',
+  connection_status: 'reconnect_required',
+  message: '授权已过期，请重新连接'
+});
+const unconnectedIBKR = connection({ id: '', broker: 'ibkr', connection_method: 'gateway' });
 
 const syncResult: BrokerSyncResult = {
   positions: [],
@@ -154,6 +162,14 @@ describe('BrokerConnections', () => {
     expect(screen.queryByText(/not-shown/)).not.toBeInTheDocument();
   });
 
+  it('shows disconnect for a persisted connection that requires reconnection', async () => {
+    mockFetchConnections.mockResolvedValue([reconnectRequiredLongport]);
+    render(<BrokerConnections />);
+
+    expect(await screen.findByRole('button', { name: '断开' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '同步预览' })).not.toBeInTheDocument();
+  });
+
   it('keeps sync preview, import, and disconnect available for a connected account', async () => {
     mockSyncBrokerConnection.mockResolvedValue(syncResult);
     mockImportBrokerExecutions.mockResolvedValue({ created: 1, skipped: 0, warnings: [] });
@@ -163,7 +179,7 @@ describe('BrokerConnections', () => {
     expect(await screen.findByText('0 项持仓，1 笔可导入成交')).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: '确认导入成交' }));
     await waitFor(() => expect(mockImportBrokerExecutions).toHaveBeenCalledWith('longport-1', syncResult.executions));
-    fireEvent.click(screen.getByRole('button', { name: '断开' }));
+    fireEvent.click(screen.getAllByRole('button', { name: '断开' })[0]);
     await waitFor(() => expect(mockDeleteBrokerConnection).toHaveBeenCalledWith('longport-1'));
   });
 });

@@ -16,7 +16,7 @@ const brokers: BrokerDefinition[] = [
 ];
 
 const emptyConnection = (broker: BrokerID): BrokerConnection => ({
-  id: broker,
+  id: '',
   broker,
   label: '',
   account_name: '',
@@ -112,9 +112,10 @@ export default function BrokerConnections() {
           const view = brokerConnectionView(connection);
           const connecting = busy === `connect:${definition.id}`;
           const isPending = connection.connection_status === 'pending_authorization';
+          const hasPersistedConnection = connection.id !== '';
           return <div key={definition.id} className="flex flex-col gap-4 rounded-lg border border-slate-800 bg-slate-950/25 p-4 lg:flex-row lg:items-center lg:justify-between">
             <div className="min-w-0"><div className="flex flex-wrap items-center gap-2"><p className="font-bold text-slate-100">{definition.name}</p><span className={`rounded-full px-2 py-0.5 text-xs ${connection.connected ? 'bg-emerald-950/80 text-emerald-300' : 'bg-slate-800 text-slate-300'}`}>{view.statusLabel}</span></div><p className="mt-1 text-sm text-slate-300">{connection.account_name || definition.summary}</p><p className="mt-1 text-xs text-slate-500">{connection.last_synced_at ? `上次同步：${new Date(connection.last_synced_at).toLocaleString()}` : connection.message || '尚未同步交易记录'}</p></div>
-            <div className="flex flex-wrap gap-2"><Button type="button" variant="outline" disabled={!secureStorageReady || busy !== null || isPending} onClick={() => void connect(definition)}>{connecting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Link2 className="h-4 w-4" />}{connecting ? '连接中' : view.actionLabel}</Button>{view.canSync ? <Button type="button" variant="outline" disabled={busy !== null} onClick={() => void sync(connection)}>{busy === `sync:${connection.id}` ? <Loader2 className="h-4 w-4 animate-spin" /> : <Eye className="h-4 w-4" />}同步预览</Button> : null}{connection.connected ? <Button type="button" variant="danger" disabled={busy !== null} onClick={() => void disconnect(connection)}><Trash2 className="h-4 w-4" />断开</Button> : null}</div>
+            <div className="flex flex-wrap gap-2"><Button type="button" variant="outline" disabled={!secureStorageReady || busy !== null || isPending} onClick={() => void connect(definition)}>{connecting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Link2 className="h-4 w-4" />}{connecting ? '连接中' : view.actionLabel}</Button>{view.canSync ? <Button type="button" variant="outline" disabled={busy !== null} onClick={() => void sync(connection)}>{busy === `sync:${connection.id}` ? <Loader2 className="h-4 w-4 animate-spin" /> : <Eye className="h-4 w-4" />}同步预览</Button> : null}{hasPersistedConnection ? <Button type="button" variant="danger" disabled={busy !== null} onClick={() => void disconnect(connection)}><Trash2 className="h-4 w-4" />断开</Button> : null}</div>
           </div>;
         })}
       </div>
