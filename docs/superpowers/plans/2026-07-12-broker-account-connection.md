@@ -87,10 +87,11 @@ Commit: `git add backend/internal/models/broker_connection.go backend/internal/m
 
 ```go
 type BrokerAuthorizer interface {
-    BeginOAuth(context.Context, string) (string, []byte, time.Time, error)
+    BeginOAuth(context.Context, string) (BrokerOAuthStart, error)
     CompleteOAuth(context.Context, string, string) (BrokerAuthorizationIdentity, error)
     DetectGateway(context.Context, string) (BrokerGatewayIdentity, error)
 }
+type BrokerOAuthStart struct { AuthorizationURL string; StateHash, VerifierCiphertext, VerifierNonce []byte; ExpiresAt time.Time }
 type BrokerAuthorizationIdentity struct { Credentials map[string]string; AccountName string; ExpiresAt *time.Time }
 type BrokerGatewayIdentity struct { AccountName string; Credentials map[string]string }
 ```
@@ -99,10 +100,10 @@ type BrokerGatewayIdentity struct { AccountName string; Credentials map[string]s
 
 ```go
 func TestBeginOAuthAddsStateAndPKCEChallenge(t *testing.T) {
-    rawURL, stateHash, _, err := newTestAuthorizer(t).BeginOAuth(context.Background(), models.BrokerLongPort)
-    if err != nil { t.Fatal(err) }; u, _ := url.Parse(rawURL)
+    start, err := newTestAuthorizer(t).BeginOAuth(context.Background(), models.BrokerLongPort)
+    if err != nil { t.Fatal(err) }; u, _ := url.Parse(start.AuthorizationURL)
     if u.Query().Get("state") == "" || u.Query().Get("code_challenge") == "" { t.Fatal("OAuth protections missing") }
-    if len(stateHash) != sha256.Size { t.Fatal("state must be hashed") }
+    if len(start.StateHash) != sha256.Size || len(start.VerifierCiphertext) == 0 || len(start.VerifierNonce) == 0 { t.Fatal("state or PKCE verifier is not safe to persist") }
 }
 func TestDetectGatewayRejectsRemoteSidecar(t *testing.T) {
     _, err := services.NewHTTPBrokerGatewayClient("https://broker.example.com").DetectGateway(context.Background(), "futu")
