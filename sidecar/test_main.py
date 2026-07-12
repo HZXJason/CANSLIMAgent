@@ -73,6 +73,40 @@ class ApplicationContextTest(unittest.TestCase):
 
 
 class BrokerGatewayDiscoveryTest(unittest.IsolatedAsyncioTestCase):
+    def test_futu_account_selection_honors_configured_account(self):
+        account_id = broker_sync._futu_active_account_id(
+            [{"acc_id": "12345678"}, {"acc_id": "87654321"}],
+            configured_account="87654321",
+        )
+
+        self.assertEqual(account_id, "87654321")
+
+    def test_futu_account_selection_rejects_ambiguous_accounts(self):
+        with self.assertRaisesRegex(RuntimeError, "自动绑定无法在多个账户中选择"):
+            broker_sync._futu_active_account_id(
+                [{"acc_id": "12345678"}, {"acc_id": "87654321"}],
+                configured_account="",
+            )
+
+    def test_futu_account_selection_accepts_single_discovered_account_when_configured_one_is_stale(self):
+        account_id = broker_sync._futu_active_account_id(
+            [{"acc_id": "12345678"}],
+            configured_account="87654321",
+        )
+
+        self.assertEqual(account_id, "12345678")
+
+    def test_gateway_status_surfaces_ambiguous_futu_account_error(self):
+        with patch.object(
+            broker_sync,
+            "_discover_futu_account",
+            side_effect=broker_sync.BrokerAccountSelectionError(
+                "自动绑定无法在多个账户中选择，请在服务器配置中明确指定 account"
+            ),
+        ):
+            with self.assertRaisesRegex(RuntimeError, "自动绑定无法在多个账户中选择"):
+                broker_sync.discover_broker_account("futu", {"host": "127.0.0.1", "port": "11111"})
+
     def test_gateway_status_returns_futu_account_name(self):
         credentials = {"host": "127.0.0.1", "port": "11111"}
         with patch.object(broker_sync, "_discover_futu_account", return_value="Futu 12345678"):

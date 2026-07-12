@@ -29,6 +29,8 @@ def discover_broker_account(broker: str, credentials: dict[str, str]) -> dict[st
     _require_loopback_gateway(credentials)
     try:
         account_name = adapter(credentials)
+    except BrokerAccountSelectionError:
+        raise
     except Exception as exc:
         raise RuntimeError(_gateway_unavailable_message(normalized_broker)) from exc
 
@@ -62,7 +64,7 @@ def _discover_futu_account(credentials: dict[str, str]) -> str:
         status, accounts = context.get_acc_list()
         if status != RET_OK:
             raise RuntimeError("富途 OpenD 无法读取账户")
-        account_id = _futu_active_account_id(accounts)
+        account_id = _futu_active_account_id(accounts, credentials.get("account", ""))
         if not account_id:
             raise RuntimeError("富途 OpenD 未返回已登录账户")
         return f"Futu {account_id}"
@@ -90,18 +92,29 @@ def _discover_ibkr_account(credentials: dict[str, str]) -> str:
             ib.disconnect()
 
 
-def _futu_active_account_id(accounts: Any) -> str:
+def _futu_active_account_id(accounts: Any, configured_account: str) -> str:
     rows = _futu_account_rows(accounts)
-    for marker in ("is_default", "default", "active"):
-        for row in rows:
-            if _truthy(row.get(marker)):
-                account_id = _first(row, "acc_id", "account_id", "account")
-                if account_id:
-                    return account_id
-    for row in rows:
-        account_id = _first(row, "acc_id", "account_id", "account")
-        if account_id:
-            return account_id
+    return _select_discovered_account(
+        (_first(row, "acc_id", "account_id", "account") for row in rows),
+        configured_account,
+    )
+
+
+def _select_discovered_account(account_ids: Any, configured_account: str) -> str:
+    discovered = list(dict.fromkeys(account_id for account_id in account_ids if account_id))
+    configured = str(configured_account).strip()
+    if configured and configured in discovered:
+        return configured
+    if len(discovered) == 1:
+        return discovered[0]
+    if len(discovered) > 1:
+        # Futu's get_acc_list() returns an account list, not a documented
+        # active-account selection. Its order is not a safe binding signal.
+        if configured:
+            raise BrokerAccountSelectionError(
+                "服务器配置的 account 未匹配已发现账户，自动绑定无法在多个账户中选择，请检查 account 配置"
+            )
+        raise BrokerAccountSelectionError("自动绑定无法在多个账户中选择，请在服务器配置中明确指定 account")
     return ""
 
 
@@ -120,8 +133,8 @@ def _futu_account_rows(accounts: Any) -> list[dict[str, Any]]:
     return [row for row in rows if isinstance(row, dict)]
 
 
-def _truthy(value: Any) -> bool:
-    return value is True or str(value).strip().casefold() in {"1", "true", "yes"}
+class BrokerAccountSelectionError(RuntimeError):
+    """A local gateway exposed multiple accounts without a safe selection rule."""
 
 
 def _gateway_unavailable_message(broker: str) -> str:
