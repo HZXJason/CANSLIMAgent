@@ -74,7 +74,15 @@ func main() {
 		log.Printf("券商凭据存储未启用：%v", brokerVaultErr)
 	}
 	brokerSyncUpstream := services.NewHTTPBrokerSyncUpstream(cfg.BrokerSyncUpstreamURL, 45*time.Second)
-	brokerHandler := handlers.NewBrokerHandler(database, brokerVault, brokerSyncUpstream)
+	brokerGatewayClient := services.NewHTTPBrokerGatewayClient(cfg.BrokerSyncUpstreamURL, map[string]config.BrokerGatewayConfig{
+		"futu": cfg.BrokerFutuGateway,
+		"ibkr": cfg.BrokerIBKRGateway,
+	})
+	brokerAuthorizer := services.NewHTTPBrokerAuthorizer(map[string]config.BrokerOAuthConfig{
+		"longport": cfg.BrokerLongPortOAuth,
+		"tiger":    cfg.BrokerTigerOAuth,
+	}, brokerVault, brokerGatewayClient, cfg.RequestTimeout)
+	brokerHandler := handlers.NewBrokerHandler(database, brokerVault, brokerSyncUpstream, brokerAuthorizer)
 
 	router := gin.Default()
 	router.Use(cors.New(cors.Config{
@@ -132,7 +140,9 @@ func main() {
 		api.PATCH("/journal/:id", journalHandler.Patch)
 		api.DELETE("/journal/:id", journalHandler.Delete)
 		api.GET("/brokers", brokerHandler.List)
-		api.POST("/brokers/connect/:broker", brokerHandler.Connect)
+		api.POST("/brokers/:broker/connect", brokerHandler.Connect)
+		api.GET("/brokers/oauth/:broker/callback", brokerHandler.OAuthCallback)
+		api.POST("/brokers/:broker/detect", brokerHandler.Detect)
 		api.DELETE("/brokers/:id", brokerHandler.Delete)
 		api.POST("/brokers/:id/sync", brokerHandler.Sync)
 		api.POST("/brokers/:id/import", brokerHandler.Import)

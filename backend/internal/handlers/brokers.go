@@ -2,10 +2,11 @@ package handlers
 
 import (
 	"context"
+	"crypto/sha256"
 	"errors"
-	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -17,24 +18,30 @@ import (
 )
 
 type BrokerHandler struct {
-	db     *gorm.DB
-	vault  *services.BrokerCredentialVault
-	syncer services.BrokerSyncUpstream
-	now    func() time.Time
+	db         *gorm.DB
+	vault      *services.BrokerCredentialVault
+	syncer     services.BrokerSyncUpstream
+	authorizer services.BrokerAuthorizer
+	now        func() time.Time
 }
 
 type brokerConnectionResponse struct {
-	ID                 string     `json:"id"`
-	Broker             string     `json:"broker"`
-	Label              string     `json:"label"`
-	Connected          bool       `json:"connected"`
-	SecureStorageReady bool       `json:"secure_storage_ready"`
-	LastSyncedAt       *time.Time `json:"last_synced_at"`
+	ID                 string                        `json:"id"`
+	Broker             string                        `json:"broker"`
+	Label              string                        `json:"label"`
+	AccountName        string                        `json:"account_name"`
+	ConnectionMethod   string                        `json:"connection_method"`
+	ConnectionStatus   models.BrokerConnectionStatus `json:"connection_status"`
+	Message            string                        `json:"message"`
+	Connected          bool                          `json:"connected"`
+	SecureStorageReady bool                          `json:"secure_storage_ready"`
+	LastSyncedAt       *time.Time                    `json:"last_synced_at"`
 }
 
-type connectBrokerRequest struct {
-	Label       string            `json:"label"`
-	Credentials map[string]string `json:"credentials"`
+type brokerConnectAction struct {
+	Action           string                        `json:"action"`
+	AuthorizationURL string                        `json:"authorization_url,omitempty"`
+	Status           models.BrokerConnectionStatus `json:"status,omitempty"`
 }
 
 type brokerSyncRequest struct {
@@ -46,8 +53,8 @@ type importBrokerExecutionsRequest struct {
 	Executions []services.BrokerExecution `json:"executions"`
 }
 
-func NewBrokerHandler(database *gorm.DB, vault *services.BrokerCredentialVault, syncer services.BrokerSyncUpstream) *BrokerHandler {
-	return &BrokerHandler{db: database, vault: vault, syncer: syncer, now: time.Now}
+func NewBrokerHandler(database *gorm.DB, vault *services.BrokerCredentialVault, syncer services.BrokerSyncUpstream, authorizer services.BrokerAuthorizer) *BrokerHandler {
+	return &BrokerHandler{db: database, vault: vault, syncer: syncer, authorizer: authorizer, now: time.Now}
 }
 
 func (h *BrokerHandler) List(c *gin.Context) {
@@ -63,11 +70,9 @@ func (h *BrokerHandler) List(c *gin.Context) {
 	response := make([]brokerConnectionResponse, 0, 4)
 	for _, broker := range []string{models.BrokerLongPort, models.BrokerTiger, models.BrokerFutu, models.BrokerIBKR} {
 		connection, connected := byBroker[broker]
-		item := brokerConnectionResponse{Broker: broker, Connected: connected, SecureStorageReady: h.vault != nil}
+		item := brokerConnectionResponse{Broker: broker, ConnectionStatus: models.BrokerConnectionStatusUnconnected, Message: brokerConnectionMessage(models.BrokerConnectionStatusUnconnected), SecureStorageReady: h.vault != nil}
 		if connected {
-			item.ID = connection.ID.String()
-			item.Label = connection.Label
-			item.LastSyncedAt = connection.LastSyncedAt
+			item = newBrokerConnectionResponse(connection, h.vault != nil)
 		}
 		response = append(response, item)
 	}
@@ -84,43 +89,149 @@ func (h *BrokerHandler) Connect(c *gin.Context) {
 		Fail(c, http.StatusNotFound, "unsupported broker")
 		return
 	}
-	var request connectBrokerRequest
-	if err := c.ShouldBindJSON(&request); err != nil {
-		Fail(c, http.StatusBadRequest, "request body is invalid")
+	if h.authorizer == nil {
+		Fail(c, http.StatusServiceUnavailable, "broker authorization is not configured")
 		return
 	}
-	credentials := cleanBrokerCredentials(request.Credentials)
-	if err := validateBrokerCredentials(broker, credentials); err != nil {
-		Fail(c, http.StatusBadRequest, err.Error())
+	if isGatewayBroker(broker) {
+		OK(c, brokerConnectAction{Action: "gateway_detection", Status: h.connectionStatus(c.Request.Context(), broker)})
 		return
 	}
-	ciphertext, nonce, err := h.vault.Encrypt(credentials)
+
+	start, err := h.authorizer.BeginOAuth(c.Request.Context(), broker)
+	if err != nil {
+		if strings.Contains(strings.ToLower(err.Error()), "not configured") {
+			Fail(c, http.StatusConflict, "OAuth 开发者应用尚未配置")
+			return
+		}
+		Fail(c, http.StatusBadGateway, "OAuth authorization could not be started")
+		return
+	}
+	if strings.TrimSpace(start.AuthorizationURL) == "" || len(start.StateHash) == 0 || len(start.VerifierCiphertext) == 0 || len(start.VerifierNonce) == 0 || !start.ExpiresAt.After(h.now()) {
+		Fail(c, http.StatusInternalServerError, "OAuth authorization could not be initialized")
+		return
+	}
+	now := h.now()
+	err = h.db.WithContext(c.Request.Context()).Transaction(func(tx *gorm.DB) error {
+		if err := tx.Where("broker = ? AND consumed_at IS NULL", broker).Delete(&models.BrokerAuthorizationSession{}).Error; err != nil {
+			return err
+		}
+		if err := h.setPendingOAuthConnection(tx, broker, now); err != nil {
+			return err
+		}
+		return tx.Create(&models.BrokerAuthorizationSession{
+			Broker:                 broker,
+			StateHash:              start.StateHash,
+			PKCEVerifierCiphertext: start.VerifierCiphertext,
+			PKCEVerifierNonce:      start.VerifierNonce,
+			ExpiresAt:              start.ExpiresAt,
+		}).Error
+	})
+	if err != nil {
+		Fail(c, http.StatusInternalServerError, "broker authorization could not be saved")
+		return
+	}
+	OK(c, brokerConnectAction{Action: "redirect", AuthorizationURL: start.AuthorizationURL})
+}
+
+func (h *BrokerHandler) OAuthCallback(c *gin.Context) {
+	broker := strings.ToLower(strings.TrimSpace(c.Param("broker")))
+	if !isOAuthBroker(broker) {
+		Fail(c, http.StatusNotFound, "unsupported OAuth broker")
+		return
+	}
+	session, ok := h.consumeOAuthSession(c.Request.Context(), broker, c.Query("state"))
+	if !ok {
+		Fail(c, http.StatusBadRequest, "OAuth authorization state is invalid or expired")
+		return
+	}
+	if providerError := strings.TrimSpace(c.Query("error")); providerError != "" {
+		h.clearPendingOAuthConnection(c.Request.Context(), broker)
+		h.redirectBrokerSettings(c, broker, providerError)
+		return
+	}
+	if strings.TrimSpace(c.Query("code")) == "" || h.authorizer == nil || h.vault == nil {
+		h.clearPendingOAuthConnection(c.Request.Context(), broker)
+		h.redirectBrokerSettings(c, broker, "authorization_failed")
+		return
+	}
+	if len(session.PKCEVerifierNonce) != 12 {
+		h.clearPendingOAuthConnection(c.Request.Context(), broker)
+		h.redirectBrokerSettings(c, broker, "authorization_failed")
+		return
+	}
+	verifier, err := h.vault.Decrypt(session.PKCEVerifierCiphertext, session.PKCEVerifierNonce)
+	if err != nil || strings.TrimSpace(verifier["pkce_verifier"]) == "" {
+		h.clearPendingOAuthConnection(c.Request.Context(), broker)
+		h.redirectBrokerSettings(c, broker, "authorization_failed")
+		return
+	}
+	identity, err := h.authorizer.CompleteOAuth(c.Request.Context(), broker, c.Query("code"), verifier["pkce_verifier"])
+	if err != nil || !serverCredentialsPresent(identity.Credentials) {
+		h.clearPendingOAuthConnection(c.Request.Context(), broker)
+		h.redirectBrokerSettings(c, broker, "authorization_failed")
+		return
+	}
+	ciphertext, nonce, err := h.vault.Encrypt(identity.Credentials)
 	if err != nil {
 		Fail(c, http.StatusInternalServerError, "broker credentials could not be encrypted")
 		return
 	}
-	label := strings.TrimSpace(request.Label)
-	if label == "" {
-		label = brokerDisplayName(broker)
-	}
-	var connection models.BrokerConnection
-	err = h.db.WithContext(c.Request.Context()).Where("broker = ?", broker).First(&connection).Error
-	if errors.Is(err, gorm.ErrRecordNotFound) {
-		connection = models.BrokerConnection{Broker: broker, Label: label, CredentialCiphertext: ciphertext, CredentialNonce: nonce}
-		err = h.db.WithContext(c.Request.Context()).Create(&connection).Error
-	} else if err == nil {
-		err = h.db.WithContext(c.Request.Context()).Model(&connection).Updates(map[string]any{"label": label, "credential_ciphertext": ciphertext, "credential_nonce": nonce, "updated_at": h.now().UTC()}).Error
-		if err == nil {
-			connection.Label = label
-			connection.CredentialCiphertext = ciphertext
-			connection.CredentialNonce = nonce
-		}
-	}
-	if err != nil {
+	if err := h.upsertConnectedConnection(c.Request.Context(), broker, "oauth", identity.AccountName, identity.ExpiresAt, ciphertext, nonce); err != nil {
 		Fail(c, http.StatusInternalServerError, "broker connection could not be saved")
 		return
 	}
-	OK(c, newBrokerConnectionResponse(connection, true, true))
+	h.redirectBrokerSettings(c, broker, "")
+}
+
+func (h *BrokerHandler) Detect(c *gin.Context) {
+	if h.vault == nil {
+		Fail(c, http.StatusServiceUnavailable, "secure broker credential storage is not configured")
+		return
+	}
+	broker := strings.ToLower(strings.TrimSpace(c.Param("broker")))
+	if !isGatewayBroker(broker) {
+		Fail(c, http.StatusNotFound, "unsupported gateway broker")
+		return
+	}
+	if h.authorizer == nil {
+		Fail(c, http.StatusServiceUnavailable, "broker authorization is not configured")
+		return
+	}
+	identity, err := h.authorizer.DetectGateway(c.Request.Context(), broker)
+	if err != nil {
+		var unavailable *services.BrokerGatewayUnavailableError
+		if errors.As(err, &unavailable) {
+			connection, saveErr := h.saveGatewayUnavailable(c.Request.Context(), broker)
+			if saveErr != nil {
+				Fail(c, http.StatusInternalServerError, "broker connection could not be saved")
+				return
+			}
+			OK(c, newBrokerConnectionResponse(connection, true))
+			return
+		}
+		Fail(c, http.StatusBadGateway, "broker gateway detection failed")
+		return
+	}
+	if !serverCredentialsPresent(identity.Credentials) || strings.TrimSpace(identity.AccountName) == "" {
+		Fail(c, http.StatusBadGateway, "broker gateway returned invalid account metadata")
+		return
+	}
+	ciphertext, nonce, err := h.vault.Encrypt(identity.Credentials)
+	if err != nil {
+		Fail(c, http.StatusInternalServerError, "broker credentials could not be encrypted")
+		return
+	}
+	if err := h.upsertConnectedConnection(c.Request.Context(), broker, "gateway", identity.AccountName, nil, ciphertext, nonce); err != nil {
+		Fail(c, http.StatusInternalServerError, "broker connection could not be saved")
+		return
+	}
+	var connection models.BrokerConnection
+	if err := h.db.WithContext(c.Request.Context()).Where("broker = ?", broker).First(&connection).Error; err != nil {
+		Fail(c, http.StatusInternalServerError, "broker connection could not be loaded")
+		return
+	}
+	OK(c, newBrokerConnectionResponse(connection, true))
 }
 
 func (h *BrokerHandler) Delete(c *gin.Context) {
@@ -128,7 +239,12 @@ func (h *BrokerHandler) Delete(c *gin.Context) {
 	if !ok {
 		return
 	}
-	if err := h.db.WithContext(c.Request.Context()).Delete(&connection).Error; err != nil {
+	if err := h.db.WithContext(c.Request.Context()).Transaction(func(tx *gorm.DB) error {
+		if err := tx.Where("broker = ?", connection.Broker).Delete(&models.BrokerAuthorizationSession{}).Error; err != nil {
+			return err
+		}
+		return tx.Delete(&connection).Error
+	}); err != nil {
 		Fail(c, http.StatusInternalServerError, "broker connection could not be deleted")
 		return
 	}
@@ -170,6 +286,12 @@ func (h *BrokerHandler) Sync(c *gin.Context) {
 	defer cancel()
 	result, err := h.syncer.Sync(ctx, services.BrokerSyncRequest{Broker: connection.Broker, Credentials: credentials, StartAt: startAt, EndAt: endAt})
 	if err != nil {
+		if isBrokerAuthorizationFailure(err) {
+			now := h.now().UTC()
+			_ = h.db.WithContext(c.Request.Context()).Model(&connection).Updates(map[string]any{"connection_status": models.BrokerConnectionStatusReconnectRequired, "updated_at": now}).Error
+			Fail(c, http.StatusUnauthorized, "broker authorization requires reconnection")
+			return
+		}
 		Fail(c, http.StatusBadGateway, err.Error())
 		return
 	}
@@ -221,7 +343,7 @@ func (h *BrokerHandler) Import(c *gin.Context) {
 		Fail(c, http.StatusInternalServerError, "broker executions could not be imported")
 		return
 	}
-	now := h.now().UTC()
+	now := h.now()
 	_ = h.db.WithContext(c.Request.Context()).Model(&connection).Updates(map[string]any{"last_synced_at": now, "updated_at": now}).Error
 	OK(c, gin.H{"created": created, "skipped": skipped, "warnings": warnings})
 }
@@ -254,6 +376,10 @@ func (h *BrokerHandler) readConnectionCredentials(c *gin.Context) (models.Broker
 	if !ok {
 		return models.BrokerConnection{}, nil, false
 	}
+	if connection.ConnectionStatus != models.BrokerConnectionStatusConnected {
+		Fail(c, http.StatusConflict, "broker connection is not authorized")
+		return models.BrokerConnection{}, nil, false
+	}
 	credentials, err := h.vault.Decrypt(connection.CredentialCiphertext, connection.CredentialNonce)
 	if err != nil {
 		Fail(c, http.StatusInternalServerError, "broker credentials could not be read")
@@ -262,35 +388,214 @@ func (h *BrokerHandler) readConnectionCredentials(c *gin.Context) (models.Broker
 	return connection, credentials, true
 }
 
-func newBrokerConnectionResponse(connection models.BrokerConnection, connected, secure bool) brokerConnectionResponse {
-	return brokerConnectionResponse{ID: connection.ID.String(), Broker: connection.Broker, Label: connection.Label, Connected: connected, SecureStorageReady: secure, LastSyncedAt: connection.LastSyncedAt}
+func newBrokerConnectionResponse(connection models.BrokerConnection, secure bool) brokerConnectionResponse {
+	status := connection.ConnectionStatus
+	if !models.ValidBrokerConnectionStatus(status) {
+		status = models.BrokerConnectionStatusUnconnected
+	}
+	return brokerConnectionResponse{
+		ID:                 connection.ID.String(),
+		Broker:             connection.Broker,
+		Label:              connection.Label,
+		AccountName:        connection.AccountName,
+		ConnectionMethod:   connection.ConnectionMethod,
+		ConnectionStatus:   status,
+		Message:            brokerConnectionMessage(status),
+		Connected:          status == models.BrokerConnectionStatusConnected,
+		SecureStorageReady: secure,
+		LastSyncedAt:       connection.LastSyncedAt,
+	}
 }
 
-func cleanBrokerCredentials(values map[string]string) map[string]string {
-	cleaned := map[string]string{}
-	for key, value := range values {
-		key = strings.ToLower(strings.TrimSpace(key))
-		value = strings.TrimSpace(value)
-		if key != "" && value != "" {
-			cleaned[key] = value
-		}
+func (h *BrokerHandler) connectionStatus(ctx context.Context, broker string) models.BrokerConnectionStatus {
+	var connection models.BrokerConnection
+	if err := h.db.WithContext(ctx).Select("connection_status").Where("broker = ?", broker).First(&connection).Error; err != nil || !models.ValidBrokerConnectionStatus(connection.ConnectionStatus) {
+		return models.BrokerConnectionStatusUnconnected
 	}
-	return cleaned
+	return connection.ConnectionStatus
 }
 
-func validateBrokerCredentials(broker string, values map[string]string) error {
-	required := map[string][]string{
-		models.BrokerLongPort: {"access_token"},
-		models.BrokerTiger:    {"tiger_id", "account", "private_key"},
-		models.BrokerFutu:     {"host", "port"},
-		models.BrokerIBKR:     {"host", "port"},
+func (h *BrokerHandler) setPendingOAuthConnection(tx *gorm.DB, broker string, now time.Time) error {
+	var connection models.BrokerConnection
+	err := tx.Where("broker = ?", broker).First(&connection).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return tx.Create(&models.BrokerConnection{
+			Broker:               broker,
+			Label:                brokerDisplayName(broker),
+			CredentialCiphertext: []byte{},
+			CredentialNonce:      []byte{},
+			ConnectionMethod:     "oauth",
+			ConnectionStatus:     models.BrokerConnectionStatusPending,
+			UpdatedAt:            now,
+		}).Error
 	}
-	for _, key := range required[broker] {
-		if values[key] == "" {
-			return fmt.Errorf("missing required broker setting: %s", key)
+	if err != nil {
+		return err
+	}
+	return tx.Model(&connection).Updates(map[string]any{
+		"account_name":             "",
+		"connection_method":        "oauth",
+		"connection_status":        models.BrokerConnectionStatusPending,
+		"authorization_expires_at": nil,
+		"updated_at":               now,
+	}).Error
+}
+
+func (h *BrokerHandler) consumeOAuthSession(ctx context.Context, broker, rawState string) (models.BrokerAuthorizationSession, bool) {
+	if strings.TrimSpace(rawState) == "" {
+		return models.BrokerAuthorizationSession{}, false
+	}
+	digest := sha256.Sum256([]byte(rawState))
+	now := h.now()
+	var session models.BrokerAuthorizationSession
+	err := h.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := tx.Where("broker = ? AND state_hash = ?", broker, digest[:]).First(&session).Error; err != nil {
+			return err
+		}
+		result := tx.Model(&models.BrokerAuthorizationSession{}).
+			Where("id = ? AND consumed_at IS NULL AND expires_at > ?", session.ID, now).
+			Updates(map[string]any{"consumed_at": now, "updated_at": now})
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected != 1 {
+			return gorm.ErrRecordNotFound
+		}
+		return nil
+	})
+	return session, err == nil
+}
+
+func (h *BrokerHandler) clearPendingOAuthConnection(ctx context.Context, broker string) {
+	now := h.now()
+	_ = h.db.WithContext(ctx).Model(&models.BrokerConnection{}).
+		Where("broker = ? AND connection_status = ?", broker, models.BrokerConnectionStatusPending).
+		Updates(map[string]any{
+			"account_name":             "",
+			"connection_method":        "",
+			"connection_status":        models.BrokerConnectionStatusUnconnected,
+			"authorization_expires_at": nil,
+			"updated_at":               now,
+		}).Error
+}
+
+func (h *BrokerHandler) upsertConnectedConnection(ctx context.Context, broker, method, accountName string, expiresAt *time.Time, ciphertext, nonce []byte) error {
+	now := h.now()
+	return h.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var connection models.BrokerConnection
+		err := tx.Where("broker = ?", broker).First(&connection).Error
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return tx.Create(&models.BrokerConnection{
+				Broker:                 broker,
+				Label:                  brokerDisplayName(broker),
+				CredentialCiphertext:   ciphertext,
+				CredentialNonce:        nonce,
+				AccountName:            strings.TrimSpace(accountName),
+				ConnectionMethod:       method,
+				ConnectionStatus:       models.BrokerConnectionStatusConnected,
+				AuthorizationExpiresAt: expiresAt,
+				UpdatedAt:              now,
+			}).Error
+		}
+		if err != nil {
+			return err
+		}
+		return tx.Model(&connection).Updates(map[string]any{
+			"credential_ciphertext":    ciphertext,
+			"credential_nonce":         nonce,
+			"account_name":             strings.TrimSpace(accountName),
+			"connection_method":        method,
+			"connection_status":        models.BrokerConnectionStatusConnected,
+			"authorization_expires_at": expiresAt,
+			"updated_at":               now,
+		}).Error
+	})
+}
+
+func (h *BrokerHandler) saveGatewayUnavailable(ctx context.Context, broker string) (models.BrokerConnection, error) {
+	now := h.now().UTC()
+	var connection models.BrokerConnection
+	err := h.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		err := tx.Where("broker = ?", broker).First(&connection).Error
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			connection = models.BrokerConnection{
+				Broker:               broker,
+				Label:                brokerDisplayName(broker),
+				CredentialCiphertext: []byte{},
+				CredentialNonce:      []byte{},
+				ConnectionMethod:     "gateway",
+				ConnectionStatus:     models.BrokerConnectionStatusGatewayUnavailable,
+				UpdatedAt:            now,
+			}
+			return tx.Create(&connection).Error
+		}
+		if err != nil {
+			return err
+		}
+		if err := tx.Model(&connection).Updates(map[string]any{
+			"account_name":      "",
+			"connection_method": "gateway",
+			"connection_status": models.BrokerConnectionStatusGatewayUnavailable,
+			"updated_at":        now,
+		}).Error; err != nil {
+			return err
+		}
+		connection.AccountName = ""
+		connection.ConnectionMethod = "gateway"
+		connection.ConnectionStatus = models.BrokerConnectionStatusGatewayUnavailable
+		return nil
+	})
+	return connection, err
+}
+
+func (h *BrokerHandler) redirectBrokerSettings(c *gin.Context, broker, connectionError string) {
+	query := url.Values{"broker": {broker}}
+	if strings.TrimSpace(connectionError) != "" {
+		query.Set("connection_error", connectionError)
+	}
+	c.Redirect(http.StatusFound, "/settings?"+query.Encode())
+}
+
+func serverCredentialsPresent(values map[string]string) bool {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return true
 		}
 	}
-	return nil
+	return false
+}
+
+func isOAuthBroker(broker string) bool {
+	return broker == models.BrokerLongPort || broker == models.BrokerTiger
+}
+
+func isGatewayBroker(broker string) bool {
+	return broker == models.BrokerFutu || broker == models.BrokerIBKR
+}
+
+func isBrokerAuthorizationFailure(err error) bool {
+	message := strings.ToLower(err.Error())
+	for _, marker := range []string{"authorization", "unauthorized", "authentication", "invalid token", "token expired", "token revoked"} {
+		if strings.Contains(message, marker) {
+			return true
+		}
+	}
+	return false
+}
+
+func brokerConnectionMessage(status models.BrokerConnectionStatus) string {
+	switch status {
+	case models.BrokerConnectionStatusPending:
+		return "等待授权完成"
+	case models.BrokerConnectionStatusConnected:
+		return "已连接"
+	case models.BrokerConnectionStatusReconnectRequired:
+		return "授权已失效，请重新连接"
+	case models.BrokerConnectionStatusGatewayUnavailable:
+		return "未检测到本地券商网关"
+	default:
+		return "未连接"
+	}
 }
 
 func brokerDisplayName(broker string) string {
