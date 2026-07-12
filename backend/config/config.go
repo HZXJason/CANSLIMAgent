@@ -65,6 +65,7 @@ type BrokerGatewayConfig struct {
 	Host     string
 	Port     string
 	ClientID string
+	Account  string
 }
 
 func Load() Config {
@@ -112,7 +113,7 @@ func loadBrokerGateway(prefix, defaultPort string) BrokerGatewayConfig {
 	if !isValidPort(port) {
 		port = defaultPort
 	}
-	return BrokerGatewayConfig{Host: host, Port: port}
+	return BrokerGatewayConfig{Host: host, Port: port, Account: strings.TrimSpace(os.Getenv(prefix + "_ACCOUNT"))}
 }
 
 func isLoopbackHost(host string) bool {

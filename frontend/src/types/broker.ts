@@ -1,6 +1,6 @@
 export type BrokerID = 'longport' | 'tiger' | 'futu' | 'ibkr';
 
-export type BrokerConnectionMethod = 'oauth' | 'gateway' | '';
+export type BrokerConnectionMethod = 'oauth' | 'local_gateway' | '';
 
 export type BrokerConnectionStatus =
   | 'unconnected'

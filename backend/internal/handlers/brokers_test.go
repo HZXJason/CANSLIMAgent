@@ -223,7 +223,7 @@ func TestGatewayDetectionStoresStateOnlyConnection(t *testing.T) {
 			router, database := setupBrokerRouter(t, authorizer)
 			connect := httptest.NewRecorder()
 			router.ServeHTTP(connect, httptest.NewRequest(http.MethodPost, "/api/v1/brokers/"+broker+"/connect", nil))
-			if connect.Code != http.StatusOK || strings.Contains(connect.Body.String(), `"action"`) || strings.Contains(connect.Body.String(), "127.0.0.1") || !strings.Contains(connect.Body.String(), `"account_name":"`+accountName+`"`) {
+			if connect.Code != http.StatusOK || strings.Contains(connect.Body.String(), `"action"`) || strings.Contains(connect.Body.String(), "127.0.0.1") || !strings.Contains(connect.Body.String(), `"account_name":"`+accountName+`"`) || !strings.Contains(connect.Body.String(), `"connection_method":"local_gateway"`) {
 				t.Fatalf("connect: %d %s", connect.Code, connect.Body.String())
 			}
 			if authorizer.gatewayCalls != 1 {
@@ -242,10 +242,18 @@ func TestGatewayDetectionStoresStateOnlyConnection(t *testing.T) {
 			if err := database.Where("broker = ?", broker).First(&connection).Error; err != nil {
 				t.Fatal(err)
 			}
-			if connection.ConnectionStatus != models.BrokerConnectionStatusConnected || connection.ConnectionMethod != "gateway" {
+			if connection.ConnectionStatus != models.BrokerConnectionStatusConnected || connection.ConnectionMethod != "local_gateway" {
 				t.Fatalf("unexpected gateway connection: %#v", connection)
 			}
 		})
+	}
+}
+
+func TestBrokerConnectionResponseNormalizesLegacyGatewayMethod(t *testing.T) {
+	response := newBrokerConnectionResponse(models.BrokerConnection{ConnectionMethod: "gateway"}, true)
+
+	if got, want := response.ConnectionMethod, "local_gateway"; got != want {
+		t.Fatalf("connection method = %q, want %q", got, want)
 	}
 }
 

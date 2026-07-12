@@ -82,14 +82,27 @@ def _discover_ibkr_account(credentials: dict[str, str]) -> str:
     client_id = int(credentials.get("client_id", "9901"))
     try:
         ib.connect(credentials["host"], int(credentials["port"]), clientId=client_id, readonly=True, timeout=15)
-        accounts = ib.managedAccounts()
-        account_id = next((str(account).strip() for account in accounts if str(account).strip()), "")
+        account_id = _select_ibkr_account(ib.managedAccounts(), credentials.get("account", ""))
         if not account_id:
             raise RuntimeError("IBKR 未返回已登录账户")
         return f"IBKR {account_id}"
     finally:
         if ib.isConnected():
             ib.disconnect()
+
+
+def _select_ibkr_account(accounts: Any, configured_account: str) -> str:
+    discovered = list(dict.fromkeys(str(account).strip() for account in accounts if str(account).strip()))
+    configured = str(configured_account).strip()
+    if configured:
+        if configured in discovered:
+            return configured
+        raise BrokerAccountSelectionError("服务器配置的 account 未匹配已发现账户，请检查 account 配置")
+    if len(discovered) == 1:
+        return discovered[0]
+    if len(discovered) > 1:
+        raise BrokerAccountSelectionError("自动绑定无法在多个账户中选择，请在服务器配置中明确指定 account")
+    return ""
 
 
 def _futu_active_account_id(accounts: Any, configured_account: str) -> str:

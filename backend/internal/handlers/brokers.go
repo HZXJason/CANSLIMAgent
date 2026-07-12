@@ -227,7 +227,7 @@ func (h *BrokerHandler) detectGateway(c *gin.Context, broker string) {
 		Fail(c, http.StatusInternalServerError, "broker credentials could not be encrypted")
 		return
 	}
-	if err := h.upsertConnectedConnection(c.Request.Context(), broker, "gateway", identity.AccountName, nil, ciphertext, nonce); err != nil {
+	if err := h.upsertConnectedConnection(c.Request.Context(), broker, "local_gateway", identity.AccountName, nil, ciphertext, nonce); err != nil {
 		Fail(c, http.StatusInternalServerError, "broker connection could not be saved")
 		return
 	}
@@ -398,12 +398,16 @@ func newBrokerConnectionResponse(connection models.BrokerConnection, secure bool
 	if !models.ValidBrokerConnectionStatus(status) {
 		status = models.BrokerConnectionStatusUnconnected
 	}
+	method := connection.ConnectionMethod
+	if method == "gateway" {
+		method = "local_gateway"
+	}
 	return brokerConnectionResponse{
 		ID:                 connection.ID.String(),
 		Broker:             connection.Broker,
 		Label:              connection.Label,
 		AccountName:        connection.AccountName,
-		ConnectionMethod:   connection.ConnectionMethod,
+		ConnectionMethod:   method,
 		ConnectionStatus:   status,
 		Message:            brokerConnectionMessage(status),
 		Connected:          status == models.BrokerConnectionStatusConnected,
@@ -545,7 +549,7 @@ func (h *BrokerHandler) saveGatewayUnavailable(ctx context.Context, broker strin
 				Label:                brokerDisplayName(broker),
 				CredentialCiphertext: []byte{},
 				CredentialNonce:      []byte{},
-				ConnectionMethod:     "gateway",
+				ConnectionMethod:     "local_gateway",
 				ConnectionStatus:     models.BrokerConnectionStatusGatewayUnavailable,
 				UpdatedAt:            now,
 			}
@@ -556,14 +560,14 @@ func (h *BrokerHandler) saveGatewayUnavailable(ctx context.Context, broker strin
 		}
 		if err := tx.Model(&connection).Updates(map[string]any{
 			"account_name":      "",
-			"connection_method": "gateway",
+			"connection_method": "local_gateway",
 			"connection_status": models.BrokerConnectionStatusGatewayUnavailable,
 			"updated_at":        now,
 		}).Error; err != nil {
 			return err
 		}
 		connection.AccountName = ""
-		connection.ConnectionMethod = "gateway"
+		connection.ConnectionMethod = "local_gateway"
 		connection.ConnectionStatus = models.BrokerConnectionStatusGatewayUnavailable
 		return nil
 	})

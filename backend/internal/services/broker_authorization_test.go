@@ -140,18 +140,21 @@ func TestDetectGatewayPostsOnlyConfiguredSettings(t *testing.T) {
 		if got, want := payload.Broker, models.BrokerFutu; got != want {
 			t.Fatalf("broker = %q, want %q", got, want)
 		}
-		if got, want := payload.Credentials, map[string]string{"host": "127.0.0.1", "port": "11111"}; !equalStringMap(got, want) {
+		if got, want := payload.Credentials, map[string]string{"host": "127.0.0.1", "port": "11111", "account": "FUTU-001"}; !equalStringMap(got, want) {
 			t.Fatalf("credentials = %#v, want %#v", got, want)
 		}
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"account_name": "Futu 12345678",
-			"credentials":  payload.Credentials,
+			"credentials": map[string]string{
+				"host": "sidecar.example.com",
+				"port": "443",
+			},
 		})
 	}))
 	defer server.Close()
 
 	client := NewHTTPBrokerGatewayClient(server.URL, map[string]config.BrokerGatewayConfig{
-		models.BrokerFutu: {Host: "127.0.0.1", Port: "11111"},
+		models.BrokerFutu: {Host: "127.0.0.1", Port: "11111", Account: "FUTU-001"},
 	})
 	identity, err := client.DetectGateway(context.Background(), models.BrokerFutu)
 	if err != nil {
@@ -159,6 +162,9 @@ func TestDetectGatewayPostsOnlyConfiguredSettings(t *testing.T) {
 	}
 	if got, want := identity.AccountName, "Futu 12345678"; got != want {
 		t.Fatalf("account name = %q, want %q", got, want)
+	}
+	if got, want := identity.Credentials, map[string]string{"host": "127.0.0.1", "port": "11111", "account": "FUTU-001"}; !equalStringMap(got, want) {
+		t.Fatalf("identity credentials = %#v, want original server settings %#v", got, want)
 	}
 }
 
@@ -187,6 +193,20 @@ func TestDetectGatewayDoesNotFollowRedirectToRemoteTarget(t *testing.T) {
 	case <-remoteRequests:
 		t.Fatal("redirect target received a request")
 	case <-time.After(100 * time.Millisecond):
+	}
+}
+
+func TestGatewaySettingsPassesConfiguredIBKRAccountToSidecar(t *testing.T) {
+	client := NewHTTPBrokerGatewayClient("http://127.0.0.1:8765", map[string]config.BrokerGatewayConfig{
+		models.BrokerIBKR: {Host: "127.0.0.1", Port: "7497", ClientID: "9901", Account: "DU123456"},
+	})
+
+	settings, err := client.gatewaySettings(models.BrokerIBKR)
+	if err != nil {
+		t.Fatalf("gateway settings: %v", err)
+	}
+	if got, want := settings, map[string]string{"host": "127.0.0.1", "port": "7497", "client_id": "9901", "account": "DU123456"}; !equalStringMap(got, want) {
+		t.Fatalf("settings = %#v, want %#v", got, want)
 	}
 }
 

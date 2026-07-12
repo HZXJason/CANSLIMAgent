@@ -5,8 +5,10 @@ import "testing"
 func TestLoadBrokerGatewaysAcceptsLoopbackHosts(t *testing.T) {
 	t.Setenv("BROKER_FUTU_HOST", "localhost")
 	t.Setenv("BROKER_FUTU_PORT", "11112")
+	t.Setenv("BROKER_FUTU_ACCOUNT", "FUTU-001")
 	t.Setenv("BROKER_IBKR_HOST", "::1")
 	t.Setenv("BROKER_IBKR_PORT", "7498")
+	t.Setenv("BROKER_IBKR_ACCOUNT", "DU123456")
 
 	cfg := Load()
 
@@ -16,11 +18,17 @@ func TestLoadBrokerGatewaysAcceptsLoopbackHosts(t *testing.T) {
 	if got, want := cfg.BrokerFutuGateway.Port, "11112"; got != want {
 		t.Fatalf("Futu port = %q, want %q", got, want)
 	}
+	if got, want := cfg.BrokerFutuGateway.Account, "FUTU-001"; got != want {
+		t.Fatalf("Futu account = %q, want %q", got, want)
+	}
 	if got, want := cfg.BrokerIBKRGateway.Host, "::1"; got != want {
 		t.Fatalf("IBKR host = %q, want %q", got, want)
 	}
 	if got, want := cfg.BrokerIBKRGateway.Port, "7498"; got != want {
 		t.Fatalf("IBKR port = %q, want %q", got, want)
+	}
+	if got, want := cfg.BrokerIBKRGateway.Account, "DU123456"; got != want {
+		t.Fatalf("IBKR account = %q, want %q", got, want)
 	}
 }
 

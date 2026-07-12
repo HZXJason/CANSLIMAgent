@@ -141,9 +141,11 @@ openssl rand -base64 32
    ```dotenv
    BROKER_FUTU_HOST=127.0.0.1
    BROKER_FUTU_PORT=11111
+   BROKER_FUTU_ACCOUNT=
    BROKER_IBKR_HOST=127.0.0.1
    BROKER_IBKR_PORT=7497
    BROKER_IBKR_CLIENT_ID=9901
+   BROKER_IBKR_ACCOUNT=
    ```
 
    后端只允许 loopback 网关地址；不要将其改成远程主机。
@@ -151,7 +153,7 @@ openssl rand -base64 32
 
 长桥和老虎的 OAuth 卡片始终会显示，且不会因为服务端 OAuth 应用尚未配置而预先禁用。点击“连接账户”后，若缺少 `CLIENT_ID`、`CLIENT_SECRET` 或任一 OAuth 端点/回调 URL 配置，服务端会返回 HTTP 409 和 `OAuth 开发者应用尚未配置`，前端会显示该配置错误；不会退回为让用户在浏览器粘贴令牌或私钥。
 
-`*_SCOPES` 不参与上述开发者应用是否已配置的判定：即使客户端与端点配置齐全，空的或不符合只读规则的 scope 仍会在 OAuth 启动时被拒绝，并不保证返回该 409 配置错误。请改为至少一项显式只读 scope 后再重试。富途和 IBKR 则只检查已经登录的本机 loopback 网关。
+`*_SCOPES` 不参与上述开发者应用是否已配置的判定：即使客户端与端点配置齐全，空的或不符合只读规则的 scope 仍会在 OAuth 启动时被拒绝，并不保证返回该 409 配置错误。请改为至少一项显式只读 scope 后再重试。富途和 IBKR 则只检查已经登录的本机 loopback 网关。若本机发现多个账户，请在服务器环境变量中设置对应的 `BROKER_FUTU_ACCOUNT` 或 `BROKER_IBKR_ACCOUNT`；这些配置只会传给本机 sidecar，不会发送到浏览器。
 
 关键 sidecar 配置：
 

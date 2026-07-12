@@ -96,6 +96,22 @@ class BrokerGatewayDiscoveryTest(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(account_id, "12345678")
 
+    def test_ibkr_account_selection_requires_the_configured_account_to_match(self):
+        account_id = broker_sync._select_ibkr_account(["DU123456", "DU654321"], "DU654321")
+
+        self.assertEqual(account_id, "DU654321")
+
+    def test_ibkr_account_selection_accepts_only_a_sole_account_when_unset(self):
+        account_id = broker_sync._select_ibkr_account(["DU123456"], "")
+
+        self.assertEqual(account_id, "DU123456")
+
+    def test_ibkr_account_selection_rejects_ambiguous_or_mismatched_accounts(self):
+        with self.assertRaisesRegex(RuntimeError, "多个账户"):
+            broker_sync._select_ibkr_account(["DU123456", "DU654321"], "")
+        with self.assertRaisesRegex(RuntimeError, "未匹配"):
+            broker_sync._select_ibkr_account(["DU123456"], "DU654321")
+
     def test_gateway_status_surfaces_ambiguous_futu_account_error(self):
         with patch.object(
             broker_sync,

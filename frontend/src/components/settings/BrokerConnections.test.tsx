@@ -54,7 +54,7 @@ const unconnectedTiger = connection({ id: '', broker: 'tiger' });
 const unavailableFutu = connection({
   id: 'futu-1',
   broker: 'futu',
-  connection_method: 'gateway',
+  connection_method: 'local_gateway',
   connection_status: 'gateway_unavailable',
   message: '请先启动 OpenD'
 });
@@ -66,7 +66,7 @@ const reconnectRequiredLongport = connection({
   connection_status: 'reconnect_required',
   message: '授权已过期，请重新连接'
 });
-const unconnectedIBKR = connection({ id: '', broker: 'ibkr', connection_method: 'gateway' });
+const unconnectedIBKR = connection({ id: '', broker: 'ibkr', connection_method: 'local_gateway' });
 
 const syncResult: BrokerSyncResult = {
   positions: [],
@@ -131,7 +131,7 @@ describe('BrokerConnections', () => {
       id: 'futu-1',
       broker: 'futu',
       account_name: 'Futu · 9988',
-      connection_method: 'gateway',
+      connection_method: 'local_gateway',
       connection_status: 'connected',
       connected: true
     }));
@@ -141,7 +141,7 @@ describe('BrokerConnections', () => {
         id: 'futu-1',
         broker: 'futu',
         account_name: 'Futu · 9988',
-        connection_method: 'gateway',
+        connection_method: 'local_gateway',
         connection_status: 'connected',
         connected: true
       }), unconnectedIBKR]);

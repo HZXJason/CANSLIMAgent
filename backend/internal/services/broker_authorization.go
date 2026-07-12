@@ -388,8 +388,7 @@ func (c *HTTPBrokerGatewayClient) DetectGateway(ctx context.Context, broker stri
 		return BrokerGatewayIdentity{}, &BrokerGatewayUnavailableError{Broker: broker, Err: fmt.Errorf("gateway status request failed: %s", resp.Status)}
 	}
 	var response struct {
-		AccountName string            `json:"account_name"`
-		Credentials map[string]string `json:"credentials"`
+		AccountName string `json:"account_name"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&response); err != nil {
 		return BrokerGatewayIdentity{}, &BrokerGatewayUnavailableError{Broker: broker, Err: fmt.Errorf("decode gateway status response: %w", err)}
@@ -397,10 +396,7 @@ func (c *HTTPBrokerGatewayClient) DetectGateway(ctx context.Context, broker stri
 	if strings.TrimSpace(response.AccountName) == "" {
 		return BrokerGatewayIdentity{}, &BrokerGatewayUnavailableError{Broker: broker, Err: errors.New("gateway status response did not include an account name")}
 	}
-	if response.Credentials == nil {
-		response.Credentials = settings
-	}
-	return BrokerGatewayIdentity{AccountName: strings.TrimSpace(response.AccountName), Credentials: response.Credentials}, nil
+	return BrokerGatewayIdentity{AccountName: strings.TrimSpace(response.AccountName), Credentials: settings}, nil
 }
 
 func (c *HTTPBrokerGatewayClient) gatewaySettings(broker string) (map[string]string, error) {
@@ -421,6 +417,9 @@ func (c *HTTPBrokerGatewayClient) gatewaySettings(broker string) (map[string]str
 	settings := map[string]string{"host": strings.TrimSpace(gateway.Host), "port": strconv.Itoa(port)}
 	if clientID := strings.TrimSpace(gateway.ClientID); clientID != "" {
 		settings["client_id"] = clientID
+	}
+	if account := strings.TrimSpace(gateway.Account); account != "" {
+		settings["account"] = account
 	}
 	return settings, nil
 }
