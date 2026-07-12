@@ -84,7 +84,8 @@ func main() {
 	}, brokerVault, brokerGatewayClient, cfg.RequestTimeout)
 	brokerHandler := handlers.NewBrokerHandler(database, brokerVault, brokerSyncUpstream, brokerAuthorizer)
 
-	router := gin.Default()
+	router := gin.New()
+	router.Use(safeAccessLogger(), gin.Recovery())
 	router.Use(cors.New(cors.Config{
 		AllowOrigins:        cfg.AllowedOrigins,
 		AllowOriginFunc:     allowConfiguredOrLocalOrigin(cfg.AllowedOrigins),
@@ -206,4 +207,26 @@ func allowConfiguredOrLocalOrigin(allowedOrigins []string) func(string) bool {
 		}
 		return port == "5174" && (host == "localhost" || host == "127.0.0.1" || host == "::1")
 	}
+}
+
+// safeAccessLogger keeps Gin's default access logging for ordinary requests
+// while preventing one-time OAuth codes and state values from reaching logs.
+func safeAccessLogger() gin.HandlerFunc {
+	return gin.LoggerWithConfig(gin.LoggerConfig{
+		Output: gin.DefaultWriter,
+		Skip: func(c *gin.Context) bool {
+			return isOAuthCallbackPath(c.Request.URL.Path)
+		},
+	})
+}
+
+func isOAuthCallbackPath(path string) bool {
+	parts := strings.Split(path, "/")
+	return len(parts) == 7 &&
+		parts[1] == "api" &&
+		parts[2] == "v1" &&
+		parts[3] == "brokers" &&
+		parts[4] == "oauth" &&
+		parts[5] != "" &&
+		parts[6] == "callback"
 }
