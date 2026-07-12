@@ -87,8 +87,33 @@ CREATE TABLE IF NOT EXISTS broker_connections (
   label                 TEXT NOT NULL DEFAULT '',
   credential_ciphertext BYTEA NOT NULL,
   credential_nonce      BYTEA NOT NULL,
+  account_name          TEXT NOT NULL DEFAULT '',
+  connection_method     TEXT NOT NULL DEFAULT '',
+  connection_status     TEXT NOT NULL DEFAULT 'unconnected',
+  authorization_expires_at TIMESTAMPTZ,
   last_synced_at        TIMESTAMPTZ
 );
+
+CREATE INDEX IF NOT EXISTS idx_broker_connections_connection_status ON broker_connections (connection_status);
+CREATE INDEX IF NOT EXISTS idx_broker_connections_authorization_expires_at ON broker_connections (authorization_expires_at);
+
+-- OAuth state is stored only as a SHA-256 digest; the raw browser value is
+-- never written to the database.
+CREATE TABLE IF NOT EXISTS broker_authorization_sessions (
+  id                       UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  created_at               TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at               TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  broker                   TEXT NOT NULL,
+  state_hash               BYTEA NOT NULL UNIQUE,
+  pkce_verifier_ciphertext BYTEA NOT NULL,
+  pkce_verifier_nonce      BYTEA NOT NULL,
+  expires_at               TIMESTAMPTZ NOT NULL,
+  consumed_at              TIMESTAMPTZ
+);
+
+CREATE INDEX IF NOT EXISTS idx_broker_authorization_sessions_broker ON broker_authorization_sessions (broker);
+CREATE INDEX IF NOT EXISTS idx_broker_authorization_sessions_expires_at ON broker_authorization_sessions (expires_at);
+CREATE INDEX IF NOT EXISTS idx_broker_authorization_sessions_consumed_at ON broker_authorization_sessions (consumed_at);
 
 -- Vibe-Trading 交易画像与行为反思运行记录
 CREATE TABLE IF NOT EXISTS trade_journal_reflections (
