@@ -88,7 +88,7 @@ Commit: `git add backend/internal/models/broker_connection.go backend/internal/m
 ```go
 type BrokerAuthorizer interface {
     BeginOAuth(context.Context, string) (BrokerOAuthStart, error)
-    CompleteOAuth(context.Context, string, string) (BrokerAuthorizationIdentity, error)
+    CompleteOAuth(context.Context, string, string, string) (BrokerAuthorizationIdentity, error)
     DetectGateway(context.Context, string) (BrokerGatewayIdentity, error)
 }
 type BrokerOAuthStart struct { AuthorizationURL string; StateHash, VerifierCiphertext, VerifierNonce []byte; ExpiresAt time.Time }
@@ -170,7 +170,7 @@ Expected: FAIL because the handler still parses credentials and lacks a callback
 
 - [ ] **Step 3: Implement lifecycle handlers**
 
-Remove `connectBrokerRequest`, `cleanBrokerCredentials`, and `validateBrokerCredentials`. OAuth with missing provider configuration returns `409 OAuth 开发者应用尚未配置`; enabled OAuth creates a ten-minute state record and returns a URL. Gateway connect calls `DetectGateway`, stores only verified account metadata plus encrypted server-derived settings, and returns the state DTO. The callback atomically checks broker/state/expiry/consumed status, consumes the state, exchanges code, and upserts encrypted credentials with `connected`; denial/failure clears pending metadata and redirects to `/settings?broker=<broker>&connection_error=<code>`. Extend List with account/method/status/message and map a sync authorization failure to persisted `reconnect_required`. Keep Import/Delete, with Delete removing pending sessions.
+Remove `connectBrokerRequest`, `cleanBrokerCredentials`, and `validateBrokerCredentials`. OAuth with missing provider configuration returns `409 OAuth 开发者应用尚未配置`; enabled OAuth creates a ten-minute state record and returns a URL. Gateway connect calls `DetectGateway`, stores only verified account metadata plus encrypted server-derived settings, and returns the state DTO. The callback atomically checks broker/state/expiry/consumed status, decrypts the stored PKCE verifier, consumes the state, passes that verifier to `CompleteOAuth`, and upserts encrypted credentials with `connected`; denial/failure clears pending metadata and redirects to `/settings?broker=<broker>&connection_error=<code>`. Extend List with account/method/status/message and map a sync authorization failure to persisted `reconnect_required`. Keep Import/Delete, with Delete removing pending sessions.
 
 - [ ] **Step 4: Verify routes, wire dependencies and commit**
 
