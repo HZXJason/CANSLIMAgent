@@ -232,8 +232,8 @@ Commit: `git add sidecar/broker_sync.py sidecar/main.py sidecar/test_main.py && 
 **Produces:**
 
 ```ts
-export type BrokerConnectionAction = { action: 'redirect'; authorization_url: string } | { action: 'gateway_detection'; status: BrokerConnectionStatus };
-export function startBrokerConnection(broker: BrokerID): Promise<BrokerConnectionAction>;
+export type BrokerConnectionStart = { action: 'redirect'; authorization_url: string } | BrokerConnection;
+export function startBrokerConnection(broker: BrokerID): Promise<BrokerConnectionStart>;
 export function brokerConnectionView(connection: BrokerConnection): { statusLabel: string; actionLabel: string; canSync: boolean };
 ```
 
