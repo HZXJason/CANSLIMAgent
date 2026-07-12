@@ -162,6 +162,34 @@ func TestDetectGatewayPostsOnlyConfiguredSettings(t *testing.T) {
 	}
 }
 
+func TestDetectGatewayDoesNotFollowRedirectToRemoteTarget(t *testing.T) {
+	remoteRequests := make(chan struct{}, 1)
+	remote := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		remoteRequests <- struct{}{}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer remote.Close()
+
+	sidecar := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, remote.URL, http.StatusFound)
+	}))
+	defer sidecar.Close()
+
+	client := NewHTTPBrokerGatewayClient(sidecar.URL, map[string]config.BrokerGatewayConfig{
+		models.BrokerFutu: {Host: "127.0.0.1", Port: "11111"},
+	})
+	_, err := client.DetectGateway(context.Background(), models.BrokerFutu)
+	if err == nil {
+		t.Fatal("redirected gateway detection must fail")
+	}
+
+	select {
+	case <-remoteRequests:
+		t.Fatal("redirect target received a request")
+	case <-time.After(100 * time.Millisecond):
+	}
+}
+
 func newTestAuthorizer(t *testing.T) *HTTPBrokerAuthorizer {
 	t.Helper()
 	return newTestAuthorizerWithConfig(t, config.BrokerOAuthConfig{
@@ -218,5 +246,19 @@ func TestBeginOAuthRejectsUnconfiguredBroker(t *testing.T) {
 	_, err := newTestAuthorizer(t).BeginOAuth(context.Background(), models.BrokerTiger)
 	if err == nil || !strings.Contains(err.Error(), "not configured") {
 		t.Fatalf("expected unconfigured broker error, got %v", err)
+	}
+}
+
+func TestBeginOAuthRejectsWriteScopeBeforeCreatingAuthorizationURL(t *testing.T) {
+	authorizer := newTestAuthorizerWithConfig(t, config.BrokerOAuthConfig{
+		ClientID: "client-id", ClientSecret: "client-secret",
+		AuthorizeURL: "://invalid", TokenURL: "https://oauth.example/token",
+		AccountURL: "https://oauth.example/account", RedirectURL: "http://127.0.0.1:5173/settings",
+		Scopes: []string{"account.read", "orders.write"},
+	})
+
+	_, err := authorizer.BeginOAuth(context.Background(), models.BrokerLongPort)
+	if err == nil || !strings.Contains(err.Error(), "orders.write") {
+		t.Fatalf("expected rejected write scope error, got %v", err)
 	}
 }

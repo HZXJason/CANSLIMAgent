@@ -94,6 +94,9 @@ func (a *HTTPBrokerAuthorizer) BeginOAuth(_ context.Context, broker string) (Bro
 	if err != nil {
 		return BrokerOAuthStart{}, err
 	}
+	if err := validateOAuthScopes(oauth.Scopes); err != nil {
+		return BrokerOAuthStart{}, err
+	}
 
 	state, err := randomOAuthValue()
 	if err != nil {
@@ -270,11 +273,32 @@ func randomOAuthValue() (string, error) {
 func readOnlyScopes(scopes []string) []string {
 	result := make([]string, 0, len(scopes))
 	for _, scope := range scopes {
-		if scope = strings.TrimSpace(scope); scope != "" {
+		if strings.TrimSpace(scope) != "" {
 			result = append(result, scope)
 		}
 	}
 	return result
+}
+
+func validateOAuthScopes(scopes []string) error {
+	for _, scope := range scopes {
+		normalized := normalizeOAuthScope(scope)
+		for _, forbidden := range []string{
+			"write", "execute", "place_order", "order.write", "trade.write",
+			"withdraw", "transfer", "cancel", "modify",
+		} {
+			if strings.Contains(normalized, forbidden) {
+				return fmt.Errorf("configured OAuth scope %q grants a prohibited capability", scope)
+			}
+		}
+	}
+	return nil
+}
+
+func normalizeOAuthScope(scope string) string {
+	scope = strings.ToLower(strings.TrimSpace(scope))
+	scope = strings.ReplaceAll(scope, "-", "_")
+	return strings.ReplaceAll(scope, ":", "_")
 }
 
 // BrokerGatewayUnavailableError marks a local broker-sidecar failure so the
@@ -311,8 +335,13 @@ func NewHTTPBrokerGatewayClient(sidecarURL string, gatewayConfigs ...map[string]
 		}
 	}
 	return &HTTPBrokerGatewayClient{
-		url:              strings.TrimRight(strings.TrimSpace(sidecarURL), "/") + "/broker/connection-status",
-		client:           &http.Client{Timeout: 15 * time.Second},
+		url: strings.TrimRight(strings.TrimSpace(sidecarURL), "/") + "/broker/connection-status",
+		client: &http.Client{
+			Timeout: 15 * time.Second,
+			CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
+				return http.ErrUseLastResponse
+			},
+		},
 		gatewaysByBroker: configs,
 	}
 }
