@@ -9,9 +9,125 @@ imported by this module.
 from __future__ import annotations
 
 from datetime import datetime, timezone
+import ipaddress
 from typing import Any, Callable
 
 import requests
+
+
+def discover_broker_account(broker: str, credentials: dict[str, str]) -> dict[str, object]:
+    """Read a locally logged-in gateway's active account without placing orders."""
+    normalized_broker = broker.strip().lower()
+    adapters: dict[str, Callable[[dict[str, str]], str]] = {
+        "futu": _discover_futu_account,
+        "ibkr": _discover_ibkr_account,
+    }
+    adapter = adapters.get(normalized_broker)
+    if adapter is None:
+        raise ValueError("unsupported broker")
+
+    _require_loopback_gateway(credentials)
+    try:
+        account_name = adapter(credentials)
+    except Exception as exc:
+        raise RuntimeError(_gateway_unavailable_message(normalized_broker)) from exc
+
+    if not account_name.strip():
+        raise RuntimeError(_gateway_unavailable_message(normalized_broker))
+    return {"account_name": account_name, "credentials": dict(credentials)}
+
+
+def _require_loopback_gateway(credentials: dict[str, str]) -> None:
+    host = credentials.get("host", "").strip()
+    # `localhost` is accepted as a literal only; do not DNS-resolve a hostname
+    # supplied for broker gateway discovery.
+    if host.casefold() == "localhost":
+        return
+    try:
+        is_loopback = ipaddress.ip_address(host).is_loopback
+    except ValueError as exc:
+        raise ValueError("broker gateway host must be a loopback address") from exc
+    if not is_loopback:
+        raise ValueError("broker gateway host must be a loopback address")
+
+
+def _discover_futu_account(credentials: dict[str, str]) -> str:
+    try:
+        from futu import OpenSecTradeContext, RET_OK
+    except ImportError as exc:
+        raise RuntimeError("富途适配器未安装") from exc
+
+    context = OpenSecTradeContext(host=credentials["host"], port=int(credentials["port"]))
+    try:
+        status, accounts = context.get_acc_list()
+        if status != RET_OK:
+            raise RuntimeError("富途 OpenD 无法读取账户")
+        account_id = _futu_active_account_id(accounts)
+        if not account_id:
+            raise RuntimeError("富途 OpenD 未返回已登录账户")
+        return f"Futu {account_id}"
+    finally:
+        context.close()
+
+
+def _discover_ibkr_account(credentials: dict[str, str]) -> str:
+    try:
+        from ib_insync import IB
+    except ImportError as exc:
+        raise RuntimeError("IBKR 适配器未安装") from exc
+
+    ib = IB()
+    client_id = int(credentials.get("client_id", "9901"))
+    try:
+        ib.connect(credentials["host"], int(credentials["port"]), clientId=client_id, readonly=True, timeout=15)
+        accounts = ib.managedAccounts()
+        account_id = next((str(account).strip() for account in accounts if str(account).strip()), "")
+        if not account_id:
+            raise RuntimeError("IBKR 未返回已登录账户")
+        return f"IBKR {account_id}"
+    finally:
+        if ib.isConnected():
+            ib.disconnect()
+
+
+def _futu_active_account_id(accounts: Any) -> str:
+    rows = _futu_account_rows(accounts)
+    for marker in ("is_default", "default", "active"):
+        for row in rows:
+            if _truthy(row.get(marker)):
+                account_id = _first(row, "acc_id", "account_id", "account")
+                if account_id:
+                    return account_id
+    for row in rows:
+        account_id = _first(row, "acc_id", "account_id", "account")
+        if account_id:
+            return account_id
+    return ""
+
+
+def _futu_account_rows(accounts: Any) -> list[dict[str, Any]]:
+    if hasattr(accounts, "to_dict"):
+        try:
+            rows = accounts.to_dict("records")
+        except (TypeError, ValueError):
+            rows = []
+    elif isinstance(accounts, list):
+        rows = accounts
+    elif isinstance(accounts, dict):
+        rows = accounts.get("data", [])
+    else:
+        rows = []
+    return [row for row in rows if isinstance(row, dict)]
+
+
+def _truthy(value: Any) -> bool:
+    return value is True or str(value).strip().casefold() in {"1", "true", "yes"}
+
+
+def _gateway_unavailable_message(broker: str) -> str:
+    if broker == "futu":
+        return "未检测到已登录的富途本地网关，请确认 OpenD 已启动、已登录且 API 端口可访问"
+    return "未检测到已登录的 IBKR 本地网关，请确认 TWS 或 IB Gateway 已启动、已登录且 API 已开启"
 
 
 def sync_broker(

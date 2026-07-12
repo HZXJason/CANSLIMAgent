@@ -5,6 +5,7 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 import main
+import broker_sync
 import data_auditor
 import vibe_decision_flow
 
@@ -69,6 +70,42 @@ class ApplicationContextTest(unittest.TestCase):
         self.assertNotIn("77114000", payload)
         self.assertIn("283055000", payload)
         self.assertIn("governed by data_audit", payload)
+
+
+class BrokerGatewayDiscoveryTest(unittest.IsolatedAsyncioTestCase):
+    def test_gateway_status_returns_futu_account_name(self):
+        credentials = {"host": "127.0.0.1", "port": "11111"}
+        with patch.object(broker_sync, "_discover_futu_account", return_value="Futu 12345678"):
+            result = broker_sync.discover_broker_account("futu", credentials)
+
+        self.assertEqual(result["account_name"], "Futu 12345678")
+        self.assertEqual(result["credentials"], credentials)
+
+    def test_gateway_status_rejects_non_loopback_host(self):
+        with self.assertRaisesRegex(ValueError, "loopback"):
+            broker_sync.discover_broker_account("ibkr", {"host": "broker.example.com", "port": "7497"})
+
+    def test_gateway_status_accepts_literal_localhost_without_name_resolution(self):
+        credentials = {"host": "localhost", "port": "7497"}
+        with patch.object(broker_sync, "_discover_ibkr_account", return_value="IBKR DU123456"):
+            result = broker_sync.discover_broker_account("ibkr", credentials)
+
+        self.assertEqual(result["account_name"], "IBKR DU123456")
+        self.assertEqual(result["credentials"], credentials)
+
+    async def test_connection_status_endpoint_returns_discovery_result(self):
+        credentials = {"host": "127.0.0.1", "port": "11111"}
+        with patch.object(
+            main,
+            "discover_broker_account",
+            return_value={"account_name": "Futu 12345678", "credentials": credentials},
+        ) as discover:
+            result = await main.broker_connection_status(
+                main.BrokerGatewayDiscoveryRequest(broker="futu", credentials=credentials)
+            )
+
+        self.assertEqual(result["account_name"], "Futu 12345678")
+        discover.assert_called_once_with("futu", credentials)
 
 
 class DisplayTextSanitizationTest(unittest.TestCase):

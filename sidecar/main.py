@@ -27,7 +27,7 @@ from analysis_runs import (
 )
 from data_auditor import audit_data, render_data_audit
 from journal_reflection import build_journal_reflection
-from broker_sync import sync_broker
+from broker_sync import discover_broker_account, sync_broker
 from ai_runtime import (
     patched_tradingagents_graph,
     prefetch_vibe_evidence_async,
@@ -75,6 +75,11 @@ class BrokerSyncRequest(BaseModel):
     credentials: dict[str, str] = Field(default_factory=dict)
     start_at: datetime
     end_at: datetime
+
+
+class BrokerGatewayDiscoveryRequest(BaseModel):
+    broker: str = Field(..., min_length=1)
+    credentials: dict[str, str] = Field(default_factory=dict)
 
 
 ANALYST_MAP = {
@@ -1441,6 +1446,14 @@ async def reflect_journal(request: JournalReflectionRequest):
 async def sync_broker_account(request: BrokerSyncRequest):
     try:
         return await asyncio.to_thread(sync_broker, request.broker, request.credentials, request.start_at, request.end_at)
+    except (RuntimeError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.post("/broker/connection-status")
+async def broker_connection_status(request: BrokerGatewayDiscoveryRequest):
+    try:
+        return await asyncio.to_thread(discover_broker_account, request.broker, request.credentials)
     except (RuntimeError, ValueError) as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
