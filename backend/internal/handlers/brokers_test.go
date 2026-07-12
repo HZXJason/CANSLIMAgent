@@ -14,6 +14,7 @@ import (
 	"github.com/alphalens/canslimagent/backend/internal/models"
 	"github.com/alphalens/canslimagent/backend/internal/services"
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
@@ -64,12 +65,24 @@ func TestOAuthCallbackCompletesOnceAndStoresOnlyEncryptedCredentials(t *testing.
 	}
 	rawState := "valid-state"
 	digest := sha256.Sum256([]byte(rawState))
-	if err := database.Create(&models.BrokerAuthorizationSession{
+	session := models.BrokerAuthorizationSession{
 		Broker:                 models.BrokerLongPort,
 		StateHash:              digest[:],
 		PKCEVerifierCiphertext: verifierCiphertext,
 		PKCEVerifierNonce:      verifierNonce,
 		ExpiresAt:              time.Now().Add(time.Minute),
+	}
+	if err := database.Create(&session).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := database.Create(&models.BrokerConnection{
+		Broker:                        models.BrokerLongPort,
+		Label:                         brokerDisplayName(models.BrokerLongPort),
+		CredentialCiphertext:          []byte{},
+		CredentialNonce:               []byte{},
+		ConnectionMethod:              "oauth",
+		ConnectionStatus:              models.BrokerConnectionStatusPending,
+		PendingAuthorizationSessionID: &session.ID,
 	}).Error; err != nil {
 		t.Fatal(err)
 	}
@@ -107,24 +120,26 @@ func TestOAuthCallbackCompletesOnceAndStoresOnlyEncryptedCredentials(t *testing.
 
 func TestOAuthCallbackDenialClearsPendingConnectionAndRedirects(t *testing.T) {
 	router, database := setupBrokerRouter(t, &fakeOAuthAuthorizer{})
-	if err := database.Create(&models.BrokerConnection{
-		Broker:               models.BrokerTiger,
-		Label:                brokerDisplayName(models.BrokerTiger),
-		CredentialCiphertext: []byte{},
-		CredentialNonce:      []byte{},
-		ConnectionMethod:     "oauth",
-		ConnectionStatus:     models.BrokerConnectionStatusPending,
-	}).Error; err != nil {
-		t.Fatal(err)
-	}
 	rawState := "denied-state"
 	digest := sha256.Sum256([]byte(rawState))
-	if err := database.Create(&models.BrokerAuthorizationSession{
+	session := models.BrokerAuthorizationSession{
 		Broker:                 models.BrokerTiger,
 		StateHash:              digest[:],
 		PKCEVerifierCiphertext: []byte("unused"),
 		PKCEVerifierNonce:      make([]byte, 12),
 		ExpiresAt:              time.Now().Add(time.Minute),
+	}
+	if err := database.Create(&session).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := database.Create(&models.BrokerConnection{
+		Broker:                        models.BrokerTiger,
+		Label:                         brokerDisplayName(models.BrokerTiger),
+		CredentialCiphertext:          []byte{},
+		CredentialNonce:               []byte{},
+		ConnectionMethod:              "oauth",
+		ConnectionStatus:              models.BrokerConnectionStatusPending,
+		PendingAuthorizationSessionID: &session.ID,
 	}).Error; err != nil {
 		t.Fatal(err)
 	}
@@ -137,9 +152,55 @@ func TestOAuthCallbackDenialClearsPendingConnectionAndRedirects(t *testing.T) {
 	if err := database.Where("broker = ?", models.BrokerTiger).First(&connection).Error; err != nil {
 		t.Fatal(err)
 	}
-	if connection.ConnectionStatus != models.BrokerConnectionStatusUnconnected || connection.AccountName != "" || connection.ConnectionMethod != "" {
+	if connection.ConnectionStatus != models.BrokerConnectionStatusUnconnected || connection.AccountName != "" || connection.ConnectionMethod != "" || connection.PendingAuthorizationSessionID != nil {
 		t.Fatalf("pending metadata was not cleared: %#v", connection)
 	}
+}
+
+func TestOAuthCallbackFailureFromSupersededSessionLeavesCurrentSessionPending(t *testing.T) {
+	authorizer := &fakeOAuthAuthorizer{starts: []services.BrokerOAuthStart{newTestOAuthStart(t, "state-a"), newTestOAuthStart(t, "state-b")}}
+	router, database := setupBrokerRouter(t, authorizer)
+	beginOAuthSession(t, router)
+	beginOAuthSession(t, router)
+
+	current := currentBrokerConnection(t, database, models.BrokerLongPort)
+	if current.PendingAuthorizationSessionID == nil {
+		t.Fatal("second OAuth start did not bind a pending authorization session")
+	}
+	wantSessionID := *current.PendingAuthorizationSessionID
+
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/v1/brokers/oauth/longport/callback?state=state-a&error=access_denied", nil))
+	if response.Code != http.StatusFound {
+		t.Fatalf("callback status = %d: %s", response.Code, response.Body.String())
+	}
+	assertCurrentOAuthSessionPending(t, database, models.BrokerLongPort, wantSessionID)
+}
+
+func TestOAuthCallbackSuccessFromSupersededSessionLeavesCurrentSessionPending(t *testing.T) {
+	authorizer := &fakeOAuthAuthorizer{
+		starts: []services.BrokerOAuthStart{newTestOAuthStart(t, "state-a"), newTestOAuthStart(t, "state-b")},
+		identity: services.BrokerAuthorizationIdentity{
+			AccountName: "old authorization must not bind",
+			Credentials: map[string]string{"access_token": "old-session-token"},
+		},
+	}
+	router, database := setupBrokerRouter(t, authorizer)
+	beginOAuthSession(t, router)
+	beginOAuthSession(t, router)
+
+	current := currentBrokerConnection(t, database, models.BrokerLongPort)
+	if current.PendingAuthorizationSessionID == nil {
+		t.Fatal("second OAuth start did not bind a pending authorization session")
+	}
+	wantSessionID := *current.PendingAuthorizationSessionID
+
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/v1/brokers/oauth/longport/callback?state=state-a&code=old-code", nil))
+	if response.Code != http.StatusFound {
+		t.Fatalf("callback status = %d: %s", response.Code, response.Body.String())
+	}
+	assertCurrentOAuthSessionPending(t, database, models.BrokerLongPort, wantSessionID)
 }
 
 func TestConnectOAuthDisabledReturnsConfigurationConflict(t *testing.T) {
@@ -152,28 +213,81 @@ func TestConnectOAuthDisabledReturnsConfigurationConflict(t *testing.T) {
 }
 
 func TestGatewayDetectionStoresStateOnlyConnection(t *testing.T) {
-	authorizer := &fakeOAuthAuthorizer{gateway: services.BrokerGatewayIdentity{
-		AccountName: "Futu 12345678",
-		Credentials: map[string]string{"host": "127.0.0.1", "port": "11111"},
-	}}
-	router, database := setupBrokerRouter(t, authorizer)
-	connect := httptest.NewRecorder()
-	router.ServeHTTP(connect, httptest.NewRequest(http.MethodPost, "/api/v1/brokers/futu/connect", nil))
-	if connect.Code != http.StatusOK || !strings.Contains(connect.Body.String(), `"action":"gateway_detection"`) {
-		t.Fatalf("connect: %d %s", connect.Code, connect.Body.String())
-	}
+	for _, broker := range []string{models.BrokerFutu, models.BrokerIBKR} {
+		t.Run(broker, func(t *testing.T) {
+			accountName := strings.ToUpper(broker) + " 12345678"
+			authorizer := &fakeOAuthAuthorizer{gateway: services.BrokerGatewayIdentity{
+				AccountName: accountName,
+				Credentials: map[string]string{"host": "127.0.0.1", "port": "11111"},
+			}}
+			router, database := setupBrokerRouter(t, authorizer)
+			connect := httptest.NewRecorder()
+			router.ServeHTTP(connect, httptest.NewRequest(http.MethodPost, "/api/v1/brokers/"+broker+"/connect", nil))
+			if connect.Code != http.StatusOK || strings.Contains(connect.Body.String(), `"action"`) || strings.Contains(connect.Body.String(), "127.0.0.1") || !strings.Contains(connect.Body.String(), `"account_name":"`+accountName+`"`) {
+				t.Fatalf("connect: %d %s", connect.Code, connect.Body.String())
+			}
+			if authorizer.gatewayCalls != 1 {
+				t.Fatalf("connect gateway detections = %d, want 1", authorizer.gatewayCalls)
+			}
 
-	response := httptest.NewRecorder()
-	router.ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/api/v1/brokers/futu/detect", nil))
-	if response.Code != http.StatusOK || strings.Contains(response.Body.String(), "127.0.0.1") || !strings.Contains(response.Body.String(), `"account_name":"Futu 12345678"`) {
-		t.Fatalf("detect: %d %s", response.Code, response.Body.String())
+			response := httptest.NewRecorder()
+			router.ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/api/v1/brokers/"+broker+"/detect", nil))
+			if response.Code != http.StatusOK || strings.Contains(response.Body.String(), "127.0.0.1") || !strings.Contains(response.Body.String(), `"account_name":"`+accountName+`"`) {
+				t.Fatalf("detect: %d %s", response.Code, response.Body.String())
+			}
+			if authorizer.gatewayCalls != 2 {
+				t.Fatalf("detect gateway detections = %d, want 2", authorizer.gatewayCalls)
+			}
+			var connection models.BrokerConnection
+			if err := database.Where("broker = ?", broker).First(&connection).Error; err != nil {
+				t.Fatal(err)
+			}
+			if connection.ConnectionStatus != models.BrokerConnectionStatusConnected || connection.ConnectionMethod != "gateway" {
+				t.Fatalf("unexpected gateway connection: %#v", connection)
+			}
+		})
 	}
-	var connection models.BrokerConnection
-	if err := database.Where("broker = ?", models.BrokerFutu).First(&connection).Error; err != nil {
+}
+
+func beginOAuthSession(t *testing.T, router *gin.Engine) {
+	t.Helper()
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/api/v1/brokers/longport/connect", nil))
+	if response.Code != http.StatusOK {
+		t.Fatalf("OAuth connect status = %d: %s", response.Code, response.Body.String())
+	}
+}
+
+func newTestOAuthStart(t *testing.T, rawState string) services.BrokerOAuthStart {
+	t.Helper()
+	ciphertext, nonce, err := testBrokerVault(t).Encrypt(map[string]string{"pkce_verifier": "verifier-" + rawState})
+	if err != nil {
 		t.Fatal(err)
 	}
-	if connection.ConnectionStatus != models.BrokerConnectionStatusConnected || connection.ConnectionMethod != "gateway" {
-		t.Fatalf("unexpected gateway connection: %#v", connection)
+	digest := sha256.Sum256([]byte(rawState))
+	return services.BrokerOAuthStart{
+		AuthorizationURL:   "https://broker.example/authorize?state=" + rawState,
+		StateHash:          digest[:],
+		VerifierCiphertext: ciphertext,
+		VerifierNonce:      nonce,
+		ExpiresAt:          time.Now().Add(10 * time.Minute),
+	}
+}
+
+func currentBrokerConnection(t *testing.T, database *gorm.DB, broker string) models.BrokerConnection {
+	t.Helper()
+	var connection models.BrokerConnection
+	if err := database.Where("broker = ?", broker).First(&connection).Error; err != nil {
+		t.Fatal(err)
+	}
+	return connection
+}
+
+func assertCurrentOAuthSessionPending(t *testing.T, database *gorm.DB, broker string, wantSessionID uuid.UUID) {
+	t.Helper()
+	connection := currentBrokerConnection(t, database, broker)
+	if connection.ConnectionStatus != models.BrokerConnectionStatusPending || connection.ConnectionMethod != "oauth" || connection.AccountName != "" || connection.PendingAuthorizationSessionID == nil || connection.PendingAuthorizationSessionID.String() != wantSessionID.String() || len(connection.CredentialCiphertext) != 0 || len(connection.CredentialNonce) != 0 {
+		t.Fatalf("current pending connection was modified: %#v", connection)
 	}
 }
 
@@ -207,16 +321,24 @@ func testBrokerVault(t *testing.T) *services.BrokerCredentialVault {
 }
 
 type fakeOAuthAuthorizer struct {
-	start      services.BrokerOAuthStart
-	startErr   error
-	identity   services.BrokerAuthorizationIdentity
-	complete   error
-	gateway    services.BrokerGatewayIdentity
-	gatewayErr error
-	verifier   string
+	start        services.BrokerOAuthStart
+	starts       []services.BrokerOAuthStart
+	startErr     error
+	identity     services.BrokerAuthorizationIdentity
+	complete     error
+	gateway      services.BrokerGatewayIdentity
+	gatewayErr   error
+	verifier     string
+	beginCalls   int
+	gatewayCalls int
 }
 
 func (f *fakeOAuthAuthorizer) BeginOAuth(context.Context, string) (services.BrokerOAuthStart, error) {
+	if f.beginCalls < len(f.starts) {
+		start := f.starts[f.beginCalls]
+		f.beginCalls++
+		return start, f.startErr
+	}
 	return f.start, f.startErr
 }
 
@@ -226,6 +348,7 @@ func (f *fakeOAuthAuthorizer) CompleteOAuth(_ context.Context, _ string, _ strin
 }
 
 func (f *fakeOAuthAuthorizer) DetectGateway(context.Context, string) (services.BrokerGatewayIdentity, error) {
+	f.gatewayCalls++
 	return f.gateway, f.gatewayErr
 }
 

@@ -39,9 +39,8 @@ type brokerConnectionResponse struct {
 }
 
 type brokerConnectAction struct {
-	Action           string                        `json:"action"`
-	AuthorizationURL string                        `json:"authorization_url,omitempty"`
-	Status           models.BrokerConnectionStatus `json:"status,omitempty"`
+	Action           string `json:"action"`
+	AuthorizationURL string `json:"authorization_url,omitempty"`
 }
 
 type brokerSyncRequest struct {
@@ -94,7 +93,7 @@ func (h *BrokerHandler) Connect(c *gin.Context) {
 		return
 	}
 	if isGatewayBroker(broker) {
-		OK(c, brokerConnectAction{Action: "gateway_detection", Status: h.connectionStatus(c.Request.Context(), broker)})
+		h.detectGateway(c, broker)
 		return
 	}
 
@@ -113,19 +112,20 @@ func (h *BrokerHandler) Connect(c *gin.Context) {
 	}
 	now := h.now()
 	err = h.db.WithContext(c.Request.Context()).Transaction(func(tx *gorm.DB) error {
-		if err := tx.Where("broker = ? AND consumed_at IS NULL", broker).Delete(&models.BrokerAuthorizationSession{}).Error; err != nil {
-			return err
-		}
-		if err := h.setPendingOAuthConnection(tx, broker, now); err != nil {
-			return err
-		}
-		return tx.Create(&models.BrokerAuthorizationSession{
+		session := models.BrokerAuthorizationSession{
 			Broker:                 broker,
 			StateHash:              start.StateHash,
 			PKCEVerifierCiphertext: start.VerifierCiphertext,
 			PKCEVerifierNonce:      start.VerifierNonce,
 			ExpiresAt:              start.ExpiresAt,
-		}).Error
+		}
+		if err := tx.Create(&session).Error; err != nil {
+			return err
+		}
+		if err := h.setPendingOAuthConnection(tx, broker, session.ID, now); err != nil {
+			return err
+		}
+		return nil
 	})
 	if err != nil {
 		Fail(c, http.StatusInternalServerError, "broker authorization could not be saved")
@@ -146,38 +146,39 @@ func (h *BrokerHandler) OAuthCallback(c *gin.Context) {
 		return
 	}
 	if providerError := strings.TrimSpace(c.Query("error")); providerError != "" {
-		h.clearPendingOAuthConnection(c.Request.Context(), broker)
+		h.clearPendingOAuthConnection(c.Request.Context(), broker, session.ID)
 		h.redirectBrokerSettings(c, broker, providerError)
 		return
 	}
 	if strings.TrimSpace(c.Query("code")) == "" || h.authorizer == nil || h.vault == nil {
-		h.clearPendingOAuthConnection(c.Request.Context(), broker)
+		h.clearPendingOAuthConnection(c.Request.Context(), broker, session.ID)
 		h.redirectBrokerSettings(c, broker, "authorization_failed")
 		return
 	}
 	if len(session.PKCEVerifierNonce) != 12 {
-		h.clearPendingOAuthConnection(c.Request.Context(), broker)
+		h.clearPendingOAuthConnection(c.Request.Context(), broker, session.ID)
 		h.redirectBrokerSettings(c, broker, "authorization_failed")
 		return
 	}
 	verifier, err := h.vault.Decrypt(session.PKCEVerifierCiphertext, session.PKCEVerifierNonce)
 	if err != nil || strings.TrimSpace(verifier["pkce_verifier"]) == "" {
-		h.clearPendingOAuthConnection(c.Request.Context(), broker)
+		h.clearPendingOAuthConnection(c.Request.Context(), broker, session.ID)
 		h.redirectBrokerSettings(c, broker, "authorization_failed")
 		return
 	}
 	identity, err := h.authorizer.CompleteOAuth(c.Request.Context(), broker, c.Query("code"), verifier["pkce_verifier"])
 	if err != nil || !serverCredentialsPresent(identity.Credentials) {
-		h.clearPendingOAuthConnection(c.Request.Context(), broker)
+		h.clearPendingOAuthConnection(c.Request.Context(), broker, session.ID)
 		h.redirectBrokerSettings(c, broker, "authorization_failed")
 		return
 	}
 	ciphertext, nonce, err := h.vault.Encrypt(identity.Credentials)
 	if err != nil {
-		Fail(c, http.StatusInternalServerError, "broker credentials could not be encrypted")
+		h.clearPendingOAuthConnection(c.Request.Context(), broker, session.ID)
+		h.redirectBrokerSettings(c, broker, "authorization_failed")
 		return
 	}
-	if err := h.upsertConnectedConnection(c.Request.Context(), broker, "oauth", identity.AccountName, identity.ExpiresAt, ciphertext, nonce); err != nil {
+	if err := h.completeOAuthConnection(c.Request.Context(), broker, session.ID, identity.AccountName, identity.ExpiresAt, ciphertext, nonce); err != nil {
 		Fail(c, http.StatusInternalServerError, "broker connection could not be saved")
 		return
 	}
@@ -198,6 +199,10 @@ func (h *BrokerHandler) Detect(c *gin.Context) {
 		Fail(c, http.StatusServiceUnavailable, "broker authorization is not configured")
 		return
 	}
+	h.detectGateway(c, broker)
+}
+
+func (h *BrokerHandler) detectGateway(c *gin.Context, broker string) {
 	identity, err := h.authorizer.DetectGateway(c.Request.Context(), broker)
 	if err != nil {
 		var unavailable *services.BrokerGatewayUnavailableError
@@ -407,37 +412,31 @@ func newBrokerConnectionResponse(connection models.BrokerConnection, secure bool
 	}
 }
 
-func (h *BrokerHandler) connectionStatus(ctx context.Context, broker string) models.BrokerConnectionStatus {
-	var connection models.BrokerConnection
-	if err := h.db.WithContext(ctx).Select("connection_status").Where("broker = ?", broker).First(&connection).Error; err != nil || !models.ValidBrokerConnectionStatus(connection.ConnectionStatus) {
-		return models.BrokerConnectionStatusUnconnected
-	}
-	return connection.ConnectionStatus
-}
-
-func (h *BrokerHandler) setPendingOAuthConnection(tx *gorm.DB, broker string, now time.Time) error {
+func (h *BrokerHandler) setPendingOAuthConnection(tx *gorm.DB, broker string, sessionID uuid.UUID, now time.Time) error {
 	var connection models.BrokerConnection
 	err := tx.Where("broker = ?", broker).First(&connection).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return tx.Create(&models.BrokerConnection{
-			Broker:               broker,
-			Label:                brokerDisplayName(broker),
-			CredentialCiphertext: []byte{},
-			CredentialNonce:      []byte{},
-			ConnectionMethod:     "oauth",
-			ConnectionStatus:     models.BrokerConnectionStatusPending,
-			UpdatedAt:            now,
+			Broker:                        broker,
+			Label:                         brokerDisplayName(broker),
+			CredentialCiphertext:          []byte{},
+			CredentialNonce:               []byte{},
+			ConnectionMethod:              "oauth",
+			ConnectionStatus:              models.BrokerConnectionStatusPending,
+			PendingAuthorizationSessionID: &sessionID,
+			UpdatedAt:                     now,
 		}).Error
 	}
 	if err != nil {
 		return err
 	}
 	return tx.Model(&connection).Updates(map[string]any{
-		"account_name":             "",
-		"connection_method":        "oauth",
-		"connection_status":        models.BrokerConnectionStatusPending,
-		"authorization_expires_at": nil,
-		"updated_at":               now,
+		"account_name":                     "",
+		"connection_method":                "oauth",
+		"connection_status":                models.BrokerConnectionStatusPending,
+		"pending_authorization_session_id": sessionID,
+		"authorization_expires_at":         nil,
+		"updated_at":                       now,
 	}).Error
 }
 
@@ -466,17 +465,40 @@ func (h *BrokerHandler) consumeOAuthSession(ctx context.Context, broker, rawStat
 	return session, err == nil
 }
 
-func (h *BrokerHandler) clearPendingOAuthConnection(ctx context.Context, broker string) {
+func (h *BrokerHandler) clearPendingOAuthConnection(ctx context.Context, broker string, sessionID uuid.UUID) {
 	now := h.now()
 	_ = h.db.WithContext(ctx).Model(&models.BrokerConnection{}).
-		Where("broker = ? AND connection_status = ?", broker, models.BrokerConnectionStatusPending).
+		Where("broker = ? AND connection_status = ? AND pending_authorization_session_id = ?", broker, models.BrokerConnectionStatusPending, sessionID).
 		Updates(map[string]any{
-			"account_name":             "",
-			"connection_method":        "",
-			"connection_status":        models.BrokerConnectionStatusUnconnected,
-			"authorization_expires_at": nil,
-			"updated_at":               now,
+			"account_name":                     "",
+			"connection_method":                "",
+			"connection_status":                models.BrokerConnectionStatusUnconnected,
+			"pending_authorization_session_id": nil,
+			"authorization_expires_at":         nil,
+			"updated_at":                       now,
 		}).Error
+}
+
+// completeOAuthConnection stores credentials only when this callback still
+// owns the pending connection. A later Connect call binds a newer session ID,
+// turning older callbacks into no-ops rather than allowing them to overwrite
+// that newer authorization attempt.
+func (h *BrokerHandler) completeOAuthConnection(ctx context.Context, broker string, sessionID uuid.UUID, accountName string, expiresAt *time.Time, ciphertext, nonce []byte) error {
+	now := h.now()
+	return h.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		return tx.Model(&models.BrokerConnection{}).
+			Where("broker = ? AND connection_status = ? AND pending_authorization_session_id = ?", broker, models.BrokerConnectionStatusPending, sessionID).
+			Updates(map[string]any{
+				"credential_ciphertext":            ciphertext,
+				"credential_nonce":                 nonce,
+				"account_name":                     strings.TrimSpace(accountName),
+				"connection_method":                "oauth",
+				"connection_status":                models.BrokerConnectionStatusConnected,
+				"pending_authorization_session_id": nil,
+				"authorization_expires_at":         expiresAt,
+				"updated_at":                       now,
+			}).Error
+	})
 }
 
 func (h *BrokerHandler) upsertConnectedConnection(ctx context.Context, broker, method, accountName string, expiresAt *time.Time, ciphertext, nonce []byte) error {

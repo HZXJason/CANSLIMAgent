@@ -27,18 +27,21 @@ const (
 // BrokerConnection stores only metadata in plaintext. The credential columns
 // contain AES-GCM encrypted data and must never be included in an API response.
 type BrokerConnection struct {
-	ID                     uuid.UUID `gorm:"type:uuid;primaryKey"`
-	CreatedAt              time.Time
-	UpdatedAt              time.Time
-	Broker                 string                 `gorm:"type:text;not null;uniqueIndex"`
-	Label                  string                 `gorm:"type:text;not null;default:''"`
-	CredentialCiphertext   []byte                 `gorm:"type:bytea;not null"`
-	CredentialNonce        []byte                 `gorm:"type:bytea;not null"`
-	AccountName            string                 `gorm:"type:text;not null;default:''"`
-	ConnectionMethod       string                 `gorm:"type:text;not null;default:''"`
-	ConnectionStatus       BrokerConnectionStatus `gorm:"type:text;not null;default:'unconnected';index"`
-	AuthorizationExpiresAt *time.Time             `gorm:"index"`
-	LastSyncedAt           *time.Time             `gorm:"index"`
+	ID                   uuid.UUID `gorm:"type:uuid;primaryKey"`
+	CreatedAt            time.Time
+	UpdatedAt            time.Time
+	Broker               string                 `gorm:"type:text;not null;uniqueIndex"`
+	Label                string                 `gorm:"type:text;not null;default:''"`
+	CredentialCiphertext []byte                 `gorm:"type:bytea;not null"`
+	CredentialNonce      []byte                 `gorm:"type:bytea;not null"`
+	AccountName          string                 `gorm:"type:text;not null;default:''"`
+	ConnectionMethod     string                 `gorm:"type:text;not null;default:''"`
+	ConnectionStatus     BrokerConnectionStatus `gorm:"type:text;not null;default:'unconnected';index"`
+	// PendingAuthorizationSessionID binds the pending connection state to the
+	// exact OAuth attempt that created it. It is metadata, never a secret.
+	PendingAuthorizationSessionID *uuid.UUID `gorm:"type:uuid;index"`
+	AuthorizationExpiresAt        *time.Time `gorm:"index"`
+	LastSyncedAt                  *time.Time `gorm:"index"`
 }
 
 // BrokerAuthorizationSession tracks a one-time OAuth authorization attempt.

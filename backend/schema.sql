@@ -90,11 +90,13 @@ CREATE TABLE IF NOT EXISTS broker_connections (
   account_name          TEXT NOT NULL DEFAULT '',
   connection_method     TEXT NOT NULL DEFAULT '',
   connection_status     TEXT NOT NULL DEFAULT 'unconnected',
+  pending_authorization_session_id UUID,
   authorization_expires_at TIMESTAMPTZ,
   last_synced_at        TIMESTAMPTZ
 );
 
 CREATE INDEX IF NOT EXISTS idx_broker_connections_connection_status ON broker_connections (connection_status);
+CREATE INDEX IF NOT EXISTS idx_broker_connections_pending_authorization_session_id ON broker_connections (pending_authorization_session_id);
 CREATE INDEX IF NOT EXISTS idx_broker_connections_authorization_expires_at ON broker_connections (authorization_expires_at);
 
 -- OAuth state is stored only as a SHA-256 digest; the raw browser value is
