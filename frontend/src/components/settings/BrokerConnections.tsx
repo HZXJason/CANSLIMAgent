@@ -4,7 +4,7 @@ import { Button } from '../ui/button';
 import { Card } from '../ui/card';
 import { Input } from '../ui/input';
 import { Label } from '../ui/label';
-import { connectBroker, deleteBrokerConnection, fetchBrokerConnections, importBrokerExecutions, syncBrokerConnection } from '../../lib/api';
+import { deleteBrokerConnection, fetchBrokerConnections, importBrokerExecutions, startBrokerConnection, syncBrokerConnection } from '../../lib/api';
 import type { BrokerConnection, BrokerExecution, BrokerID, BrokerSyncResult } from '../../types/broker';
 
 type Field = { key: string; label: string; placeholder: string; secret?: boolean; defaultValue?: string };
@@ -65,7 +65,7 @@ export default function BrokerConnections() {
   const save = async () => {
     setBusy('connect'); setError(null); setMessage(null);
     try {
-      await connectBroker(definition.id, { label: label.trim(), credentials });
+      await startBrokerConnection(definition.id);
       await refresh();
       setCredentials(defaultValues(definition));
       setLabel('');
