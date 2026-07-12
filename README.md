@@ -135,7 +135,7 @@ openssl rand -base64 32
    BROKER_TIGER_SCOPES=
    ```
 
-   `SCOPES` 以逗号分隔，且只能申请明确的只读权限；不要填入下单、交易或写入权限。
+   `SCOPES` 以逗号分隔，必须至少包含一项明确的只读权限；不要留空，也不要填入下单、交易或写入权限。它在 OAuth 启动时单独接受只读范围校验。
 4. 使用富途前，在本机启动并登录 OpenD；使用 IBKR 前，在本机启动并登录 TWS 或 IB Gateway。默认本机网关配置为：
 
    ```dotenv
@@ -149,7 +149,9 @@ openssl rand -base64 32
    后端只允许 loopback 网关地址；不要将其改成远程主机。
 5. 浏览器只接收服务端生成的授权跳转，并在回调完成后刷新连接状态。客户端密钥、OAuth access token、私钥、OpenD/TWS 网关地址或账户密码都绝不能放进浏览器、`frontend/.env` 或前端表单。
 
-未注册 OAuth 开发者应用或未完整配置相应 `BROKER_LONGPORT_*` / `BROKER_TIGER_*` 变量时，该 OAuth 连接会保持禁用/未配置状态；服务端会拒绝开始授权（`OAuth 开发者应用尚未配置`），而不会退回为让用户在浏览器粘贴令牌或私钥。富途和 IBKR 则只检查已经登录的本机 loopback 网关。
+长桥和老虎的 OAuth 卡片始终会显示，且不会因为服务端 OAuth 应用尚未配置而预先禁用。点击“连接账户”后，若缺少 `CLIENT_ID`、`CLIENT_SECRET` 或任一 OAuth 端点/回调 URL 配置，服务端会返回 HTTP 409 和 `OAuth 开发者应用尚未配置`，前端会显示该配置错误；不会退回为让用户在浏览器粘贴令牌或私钥。
+
+`*_SCOPES` 不参与上述开发者应用是否已配置的判定：即使客户端与端点配置齐全，空的或不符合只读规则的 scope 仍会在 OAuth 启动时被拒绝，并不保证返回该 409 配置错误。请改为至少一项显式只读 scope 后再重试。富途和 IBKR 则只检查已经登录的本机 loopback 网关。
 
 关键 sidecar 配置：
 
