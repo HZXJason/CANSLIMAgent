@@ -262,3 +262,31 @@ func TestBeginOAuthRejectsWriteScopeBeforeCreatingAuthorizationURL(t *testing.T)
 		t.Fatalf("expected rejected write scope error, got %v", err)
 	}
 }
+
+func TestBeginOAuthRejectsOrderPlacementScopeBeforeCreatingAuthorizationURL(t *testing.T) {
+	authorizer := newTestAuthorizerWithConfig(t, config.BrokerOAuthConfig{
+		ClientID: "client-id", ClientSecret: "client-secret",
+		AuthorizeURL: "://invalid", TokenURL: "https://oauth.example/token",
+		AccountURL: "https://oauth.example/account", RedirectURL: "http://127.0.0.1:5173/settings",
+		Scopes: []string{"account.read", "order-placement"},
+	})
+
+	_, err := authorizer.BeginOAuth(context.Background(), models.BrokerLongPort)
+	if err == nil || !strings.Contains(err.Error(), "order-placement") {
+		t.Fatalf("expected rejected order-placement scope error, got %v", err)
+	}
+}
+
+func TestBeginOAuthRejectsEmptyScopesBeforeCreatingAuthorizationURL(t *testing.T) {
+	authorizer := newTestAuthorizerWithConfig(t, config.BrokerOAuthConfig{
+		ClientID: "client-id", ClientSecret: "client-secret",
+		AuthorizeURL: "://invalid", TokenURL: "https://oauth.example/token",
+		AccountURL: "https://oauth.example/account", RedirectURL: "http://127.0.0.1:5173/settings",
+		Scopes: []string{},
+	})
+
+	_, err := authorizer.BeginOAuth(context.Background(), models.BrokerLongPort)
+	if err == nil || !strings.Contains(err.Error(), "at least one") {
+		t.Fatalf("expected empty scopes error, got %v", err)
+	}
+}

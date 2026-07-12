@@ -281,24 +281,37 @@ func readOnlyScopes(scopes []string) []string {
 }
 
 func validateOAuthScopes(scopes []string) error {
+	if len(scopes) == 0 {
+		return errors.New("configured OAuth scopes must include at least one read-only scope")
+	}
 	for _, scope := range scopes {
 		normalized := normalizeOAuthScope(scope)
 		for _, forbidden := range []string{
-			"write", "execute", "place_order", "order.write", "trade.write",
-			"withdraw", "transfer", "cancel", "modify",
+			"write", "execute", "execution", "place_order", "order-placement",
+			"order_placement", "order.write", "trade.write", "trading", "withdraw",
+			"transfer", "cancel", "modify", "modification",
 		} {
 			if strings.Contains(normalized, forbidden) {
 				return fmt.Errorf("configured OAuth scope %q grants a prohibited capability", scope)
 			}
+		}
+		if !hasOAuthReadCapability(normalized) {
+			return fmt.Errorf("configured OAuth scope %q must grant an explicit read capability", scope)
 		}
 	}
 	return nil
 }
 
 func normalizeOAuthScope(scope string) string {
-	scope = strings.ToLower(strings.TrimSpace(scope))
-	scope = strings.ReplaceAll(scope, "-", "_")
-	return strings.ReplaceAll(scope, ":", "_")
+	return strings.ToLower(strings.TrimSpace(scope))
+}
+
+func hasOAuthReadCapability(scope string) bool {
+	return scope == "read" ||
+		strings.Contains(scope, ".read") ||
+		strings.Contains(scope, ":read") ||
+		strings.Contains(scope, "_read") ||
+		strings.Contains(scope, "-read")
 }
 
 // BrokerGatewayUnavailableError marks a local broker-sidecar failure so the
