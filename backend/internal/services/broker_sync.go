@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"net"
 	"net/http"
 	"net/url"
 	"strings"
@@ -104,8 +103,7 @@ func validateLoopbackBrokerUpstream(rawURL string) error {
 	if err != nil || parsed.Scheme != "http" {
 		return fmt.Errorf("broker sync upstream must be a local HTTP sidecar")
 	}
-	host := net.ParseIP(parsed.Hostname())
-	if host == nil || !host.IsLoopback() {
+	if !isLoopbackBrokerHost(parsed.Hostname()) {
 		return fmt.Errorf("broker credentials may only be sent to a loopback sidecar")
 	}
 	return nil
