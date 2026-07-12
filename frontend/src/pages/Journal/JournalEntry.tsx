@@ -1,11 +1,11 @@
 import { useEffect, useMemo, useState, type TextareaHTMLAttributes } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { ArrowLeft, LockKeyhole, Save } from 'lucide-react';
+import { ArrowLeft, LockKeyhole, Save, Trash2 } from 'lucide-react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { Button } from '../../components/ui/button';
 import { Card } from '../../components/ui/card';
 import { Input } from '../../components/ui/input';
-import { createJournalEntry, fetchJournalEntry, updateJournalReflection } from '../../lib/api';
+import { createJournalEntry, deleteJournalEntry, fetchJournalEntry, updateJournalReflection } from '../../lib/api';
 import { cn } from '../../lib/utils';
 import type {
   JournalEntry as JournalEntryType,
@@ -174,6 +174,7 @@ function NewEntryView() {
 }
 
 function DetailView({ entry }: { entry: JournalEntryType }) {
+  const navigate = useNavigate();
   const queryClient = useQueryClient();
   const [reflection, setReflection] = useState(entry.reflection ?? '');
   const mutation = useMutation({
@@ -183,8 +184,21 @@ function DetailView({ entry }: { entry: JournalEntryType }) {
       await queryClient.invalidateQueries({ queryKey: ['journal-entries'] });
     }
   });
+  const deleteMutation = useMutation({
+    mutationFn: () => deleteJournalEntry(entry.id),
+    onSuccess: async () => {
+      queryClient.removeQueries({ queryKey: ['journal-entry', entry.id] });
+      await queryClient.invalidateQueries({ queryKey: ['journal-entries'] });
+      navigate('/journal', { replace: true });
+    }
+  });
   useEffect(() => setReflection(entry.reflection ?? ''), [entry.id, entry.reflection]);
   const number = (value: number) => value.toLocaleString('en-US', { maximumFractionDigits: 8 });
+  const deleteEntry = () => {
+    if (window.confirm(`确定删除 ${entry.symbol} 的这条成交记录吗？此操作无法恢复。`)) {
+      deleteMutation.mutate();
+    }
+  };
   return (
     <div className="space-y-6">
       <Card>
@@ -200,6 +214,8 @@ function DetailView({ entry }: { entry: JournalEntryType }) {
           <ReadOnlyValue label="来源" value={entry.source} />
         </div>
         <div className="mt-4"><ReadOnlyValue label="备注" value={entry.notes ?? '-'} /></div>
+        {deleteMutation.isError ? <p className="mt-4 text-sm text-red-300">{deleteMutation.error instanceof Error ? deleteMutation.error.message : '删除失败'}</p> : null}
+        <div className="mt-5 flex justify-end"><Button variant="danger" onClick={deleteEntry} disabled={deleteMutation.isPending}><Trash2 className="h-4 w-4" />{deleteMutation.isPending ? '删除中' : '删除成交记录'}</Button></div>
       </Card>
       <Card>
         <p className="text-sm font-semibold text-cyan-300/80">Reflection</p><h2 className="mt-1 text-xl font-bold text-white">成交复盘</h2>

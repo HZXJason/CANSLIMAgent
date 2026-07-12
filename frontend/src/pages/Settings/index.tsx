@@ -15,6 +15,7 @@ import {
   writeStoredAIAnalysisConfig
 } from '../../lib/aiAnalysisConfig';
 import type { AIAnalysisConfigResponse, AnalysisConfig } from '../../types/analysis';
+import BrokerConnections from '../../components/settings/BrokerConnections';
 
 export default function SettingsPage() {
   const [options, setOptions] = useState<AIAnalysisConfigResponse>(FALLBACK_AI_ANALYSIS_OPTIONS);
@@ -274,6 +275,7 @@ export default function SettingsPage() {
           </label>
         </div>
       </Card>
+      <BrokerConnections />
     </section>
   );
 }

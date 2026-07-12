@@ -7,7 +7,7 @@ import re
 import traceback
 import uuid
 from queue import Empty, Queue
-from datetime import date
+from datetime import date, datetime
 from pathlib import Path
 from typing import Any, AsyncIterator, Iterable
 
@@ -27,6 +27,7 @@ from analysis_runs import (
 )
 from data_auditor import audit_data, render_data_audit
 from journal_reflection import build_journal_reflection
+from broker_sync import sync_broker
 from ai_runtime import (
     patched_tradingagents_graph,
     prefetch_vibe_evidence_async,
@@ -67,6 +68,13 @@ class AnalysisRequest(BaseModel):
 class JournalReflectionRequest(BaseModel):
     schema_version: str = "vibe.trade_record.v1"
     records: list[dict[str, Any]] = Field(default_factory=list)
+
+
+class BrokerSyncRequest(BaseModel):
+    broker: str = Field(..., min_length=1)
+    credentials: dict[str, str] = Field(default_factory=dict)
+    start_at: datetime
+    end_at: datetime
 
 
 ANALYST_MAP = {
@@ -1427,6 +1435,14 @@ async def reflect_journal(request: JournalReflectionRequest):
     if request.schema_version != "vibe.trade_record.v1":
         raise HTTPException(status_code=400, detail="schema_version must be vibe.trade_record.v1")
     return await asyncio.to_thread(build_journal_reflection, request.records)
+
+
+@app.post("/broker/sync")
+async def sync_broker_account(request: BrokerSyncRequest):
+    try:
+        return await asyncio.to_thread(sync_broker, request.broker, request.credentials, request.start_at, request.end_at)
+    except (RuntimeError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 if __name__ == "__main__":

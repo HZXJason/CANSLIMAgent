@@ -15,3 +15,7 @@ rich>=14.0.0
 stockstats>=0.6.5
 yfinance>=1.4.1
 python-dotenv>=1.0.0
+# Read-only broker adapters. They are imported only when a matching broker is synced.
+futu-api>=9.0.0
+tigeropen>=3.5.0
+ib-insync>=0.9.86

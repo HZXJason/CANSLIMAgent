@@ -78,6 +78,18 @@ CREATE INDEX IF NOT EXISTS idx_trade_journal_created_at ON trade_journal_entries
 CREATE INDEX IF NOT EXISTS idx_trade_journal_executed_at ON trade_journal_entries (executed_at DESC);
 CREATE INDEX IF NOT EXISTS idx_trade_journal_symbol ON trade_journal_entries (symbol);
 
+-- Broker credentials are encrypted by the backend before being written here.
+CREATE TABLE IF NOT EXISTS broker_connections (
+  id                    UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  created_at            TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at            TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  broker                TEXT NOT NULL UNIQUE,
+  label                 TEXT NOT NULL DEFAULT '',
+  credential_ciphertext BYTEA NOT NULL,
+  credential_nonce      BYTEA NOT NULL,
+  last_synced_at        TIMESTAMPTZ
+);
+
 -- Vibe-Trading 交易画像与行为反思运行记录
 CREATE TABLE IF NOT EXISTS trade_journal_reflections (
   id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),

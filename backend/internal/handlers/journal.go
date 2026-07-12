@@ -283,6 +283,22 @@ func (h *JournalHandler) Patch(c *gin.Context) {
 	OK(c, newJournalEntryResponse(entry))
 }
 
+// Delete removes an execution fill. Executions are immutable once recorded,
+// but an invalid or accidental entry must not keep breaking downstream
+// analysis forever.
+func (h *JournalHandler) Delete(c *gin.Context) {
+	entry, ok := h.findEntry(c)
+	if !ok {
+		return
+	}
+
+	if err := h.db.WithContext(c.Request.Context()).Delete(&entry).Error; err != nil {
+		Fail(c, http.StatusInternalServerError, "journal entry could not be deleted")
+		return
+	}
+	OK(c, gin.H{"deleted": true})
+}
+
 func (h *JournalHandler) findEntry(c *gin.Context) (models.TradeJournalEntry, bool) {
 	var entry models.TradeJournalEntry
 	err := h.db.WithContext(c.Request.Context()).First(&entry, "id = ?", c.Param("id")).Error

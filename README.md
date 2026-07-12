@@ -13,6 +13,7 @@ CANSLIMAgent 是一个面向美股研究的本地优先工作台：从 CANSLIM �
 - 使用确定性的 `DataAuditor` 按来源、申报类型、报告期间和 accession 审计冲突数据；可验证事实进入分析上下文，期间不明或冲突的数值会被阻止引用并明确显示为未知。
 - 在投资组合经理初步结论后执行 Vibe 历史执行验证。完成但统计证据不足的验证可将 BUY/SELL 拦截为 HOLD；无法执行时会如实标记为“未验证”，不会伪造成功结果。
 - 记录交易日志、生成 `vibe.trade_record.v1` 兼容导出，并给出确定性的交易行为复盘。
+- 可在设置中连接长桥、老虎、富途 OpenD 或 IBKR 本地 API，会先预览只读成交，再标准化导入交易日志；不提供自动下单。
 - 通过 SSE 实时显示进度和报告，支持暂停/续传，并可将完整 AI 报告另存为 Markdown。
 
 ## 架构
@@ -93,6 +94,16 @@ make dev
 | `sidecar/.env` | LLM 凭据、Vibe 运行时位置与 AI 开关 |
 | `frontend/.env` | 浏览器 API 基地址 |
 
+启用券商绑定前，在 `backend/.env` 生成并保存一把只属于本机的加密主密钥：
+
+```bash
+openssl rand -base64 32
+```
+
+将结果写入 `BROKER_CREDENTIALS_ENCRYPTION_KEY`。没有这把 32 字节密钥，后端会拒绝保存任何券商凭据。凭据从不发送给浏览器、不会被 API 回显，且仅在一次同步期间通过本机 Go → sidecar 调用使用。长桥使用 OAuth access token；富途和 IBKR 连接用户已经登录的本地 OpenD / TWS 或 IB Gateway；老虎使用其开放平台凭据。
+
+券商 sidecar 固定为 `BROKER_SYNC_UPSTREAM_URL=http://127.0.0.1:8765`，后端会拒绝向非 loopback 地址发送凭据。
+
 关键 sidecar 配置：
 
 ```dotenv
@@ -146,6 +157,11 @@ GET   /api/v1/journal/export
 POST  /api/v1/journal/reflections
 GET   /api/v1/trade-plans
 POST  /api/v1/trade-plans
+GET   /api/v1/brokers
+POST  /api/v1/brokers/connect/:broker
+POST  /api/v1/brokers/:id/sync
+POST  /api/v1/brokers/:id/import
+DELETE /api/v1/brokers/:id
 ```
 
 AI 分析会转发 `progress`、`result`、`report_start`、`report_delta`、`decision`、`done` 和 `error` 等 SSE 事件。

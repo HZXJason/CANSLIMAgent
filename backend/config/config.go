@@ -27,6 +27,8 @@ type Config struct {
 	AIStreamURL             string
 	AIAnalysisUpstreamURL   string
 	AIAnalysisTimeout       time.Duration
+	BrokerSyncUpstreamURL   string
+	BrokerCredentialsKey    string
 	AllowedOrigins          []string
 	RequestTimeout          time.Duration
 	ScanDelay               time.Duration
@@ -53,6 +55,8 @@ func Load() Config {
 		AIStreamURL:             os.Getenv("AI_STREAM_URL"),
 		AIAnalysisUpstreamURL:   getFirstEnv([]string{"AI_ANALYSIS_UPSTREAM_URL", "AI_ANALYSIS_SIDECAR_URL"}, "http://127.0.0.1:8765"),
 		AIAnalysisTimeout:       time.Duration(getEnvInt("AI_ANALYSIS_TIMEOUT_SECONDS", 1200)) * time.Second,
+		BrokerSyncUpstreamURL:   getEnv("BROKER_SYNC_UPSTREAM_URL", "http://127.0.0.1:8765"),
+		BrokerCredentialsKey:    strings.TrimSpace(os.Getenv("BROKER_CREDENTIALS_ENCRYPTION_KEY")),
 		AllowedOrigins:          splitOrigins(getEnv("ALLOWED_ORIGINS", "http://localhost:5173,http://127.0.0.1:5173")),
 		RequestTimeout:          time.Duration(getEnvInt("REQUEST_TIMEOUT_SECONDS", 20)) * time.Second,
 		ScanDelay:               time.Duration(getEnvInt("SCAN_DELAY_MS", 80)) * time.Millisecond,

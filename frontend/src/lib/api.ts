@@ -17,6 +17,7 @@ import type {
 } from '../types/analysis';
 import type { JournalEntry, JournalReflectionInput, NewJournalEntryInput, StoredJournalReflection } from '../types/journal';
 import type { ExecuteTradePlanInput, ExecuteTradePlanResponse, NewTradePlanInput, TradePlan, TradePlanFilters, TradePlanUpdateInput } from '../types/tradePlan';
+import type { BrokerConnection, BrokerExecution, BrokerSyncResult } from '../types/broker';
 import { AI_ANALYSIS_CONFIG_PATH, AI_ANALYSIS_MODELS_PATH } from './aiAnalysisContract';
 
 export const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:8080/api/v1';
@@ -161,12 +162,45 @@ export function updateJournalReflection(id: string, input: JournalReflectionInpu
   });
 }
 
+export function deleteJournalEntry(id: string) {
+  return request<{ deleted: true }>('/journal/' + encodeURIComponent(id), { method: 'DELETE' });
+}
+
 export function generateJournalReflection() {
   return request<StoredJournalReflection>('/journal/reflections', { method: 'POST' });
 }
 
 export function fetchLatestJournalReflection() {
   return request<StoredJournalReflection | null>('/journal/reflections/latest');
+}
+
+export function fetchBrokerConnections() {
+  return request<BrokerConnection[]>('/brokers');
+}
+
+export function connectBroker(broker: string, input: { label?: string; credentials: Record<string, string> }) {
+  return request<BrokerConnection>('/brokers/connect/' + encodeURIComponent(broker), {
+    method: 'POST',
+    body: JSON.stringify(input)
+  });
+}
+
+export function deleteBrokerConnection(id: string) {
+  return request<{ deleted: true }>('/brokers/' + encodeURIComponent(id), { method: 'DELETE' });
+}
+
+export function syncBrokerConnection(id: string, input: { start_at?: string; end_at?: string } = {}) {
+  return request<BrokerSyncResult>('/brokers/' + encodeURIComponent(id) + '/sync', {
+    method: 'POST',
+    body: JSON.stringify(input)
+  });
+}
+
+export function importBrokerExecutions(id: string, executions: BrokerExecution[]) {
+  return request<{ created: number; skipped: number; warnings: string[] }>('/brokers/' + encodeURIComponent(id) + '/import', {
+    method: 'POST',
+    body: JSON.stringify({ executions })
+  });
 }
 
 export function fetchTradePlans(filters: TradePlanFilters = {}) {

@@ -69,6 +69,12 @@ func main() {
 	journalReflectionUpstream := services.NewHTTPJournalReflectionUpstream(cfg.AIAnalysisUpstreamURL, 2*time.Minute)
 	journalHandler := handlers.NewJournalHandlerWithReflection(database, journalReflectionUpstream)
 	tradePlanHandler := handlers.NewTradePlanHandler(database)
+	brokerVault, brokerVaultErr := services.NewBrokerCredentialVault(cfg.BrokerCredentialsKey)
+	if brokerVaultErr != nil {
+		log.Printf("券商凭据存储未启用：%v", brokerVaultErr)
+	}
+	brokerSyncUpstream := services.NewHTTPBrokerSyncUpstream(cfg.BrokerSyncUpstreamURL, 45*time.Second)
+	brokerHandler := handlers.NewBrokerHandler(database, brokerVault, brokerSyncUpstream)
 
 	router := gin.Default()
 	router.Use(cors.New(cors.Config{
@@ -124,6 +130,12 @@ func main() {
 		api.GET("/journal/reflections/latest", journalHandler.LatestReflection)
 		api.GET("/journal/:id", journalHandler.Get)
 		api.PATCH("/journal/:id", journalHandler.Patch)
+		api.DELETE("/journal/:id", journalHandler.Delete)
+		api.GET("/brokers", brokerHandler.List)
+		api.POST("/brokers/connect/:broker", brokerHandler.Connect)
+		api.DELETE("/brokers/:id", brokerHandler.Delete)
+		api.POST("/brokers/:id/sync", brokerHandler.Sync)
+		api.POST("/brokers/:id/import", brokerHandler.Import)
 		api.GET("/trade-plans", tradePlanHandler.List)
 		api.POST("/trade-plans", tradePlanHandler.Create)
 		api.GET("/trade-plans/:id", tradePlanHandler.Get)
