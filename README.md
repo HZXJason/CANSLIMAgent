@@ -104,6 +104,53 @@ openssl rand -base64 32
 
 券商 sidecar 固定为 `BROKER_SYNC_UPSTREAM_URL=http://127.0.0.1:8765`，后端会拒绝向非 loopback 地址发送凭据。
 
+### 券商授权接入前检查清单
+
+1. 在 `backend/.env` 生成并设置 `BROKER_CREDENTIALS_ENCRYPTION_KEY`；没有它，系统不会保存任何连接凭据。
+2. 分别在长桥或老虎开放平台注册**服务器端 OAuth 开发者应用**。默认本地 API 的回调地址必须逐字登记为：
+
+   ```text
+   http://127.0.0.1:8080/api/v1/brokers/oauth/longport/callback
+   http://127.0.0.1:8080/api/v1/brokers/oauth/tiger/callback
+   ```
+
+   若修改 API 的 `PORT` 或部署地址，请同时将 `BROKER_*_REDIRECT_URL` 和开发者平台中登记的回调地址改成同一个 HTTPS/HTTP URL。
+3. 仅在 `backend/.env` 中填入 OAuth 服务器配置。长桥和老虎都需要各自的 `CLIENT_ID`、`CLIENT_SECRET`、`AUTHORIZE_URL`、`TOKEN_URL`、`ACCOUNT_URL`、`REDIRECT_URL` 与 `SCOPES`：
+
+   ```dotenv
+   BROKER_LONGPORT_CLIENT_ID=
+   BROKER_LONGPORT_CLIENT_SECRET=
+   BROKER_LONGPORT_AUTHORIZE_URL=
+   BROKER_LONGPORT_TOKEN_URL=
+   BROKER_LONGPORT_ACCOUNT_URL=
+   BROKER_LONGPORT_REDIRECT_URL=
+   BROKER_LONGPORT_SCOPES=
+
+   BROKER_TIGER_CLIENT_ID=
+   BROKER_TIGER_CLIENT_SECRET=
+   BROKER_TIGER_AUTHORIZE_URL=
+   BROKER_TIGER_TOKEN_URL=
+   BROKER_TIGER_ACCOUNT_URL=
+   BROKER_TIGER_REDIRECT_URL=
+   BROKER_TIGER_SCOPES=
+   ```
+
+   `SCOPES` 以逗号分隔，且只能申请明确的只读权限；不要填入下单、交易或写入权限。
+4. 使用富途前，在本机启动并登录 OpenD；使用 IBKR 前，在本机启动并登录 TWS 或 IB Gateway。默认本机网关配置为：
+
+   ```dotenv
+   BROKER_FUTU_HOST=127.0.0.1
+   BROKER_FUTU_PORT=11111
+   BROKER_IBKR_HOST=127.0.0.1
+   BROKER_IBKR_PORT=7497
+   BROKER_IBKR_CLIENT_ID=9901
+   ```
+
+   后端只允许 loopback 网关地址；不要将其改成远程主机。
+5. 浏览器只接收服务端生成的授权跳转，并在回调完成后刷新连接状态。客户端密钥、OAuth access token、私钥、OpenD/TWS 网关地址或账户密码都绝不能放进浏览器、`frontend/.env` 或前端表单。
+
+未注册 OAuth 开发者应用或未完整配置相应 `BROKER_LONGPORT_*` / `BROKER_TIGER_*` 变量时，该 OAuth 连接会保持禁用/未配置状态；服务端会拒绝开始授权（`OAuth 开发者应用尚未配置`），而不会退回为让用户在浏览器粘贴令牌或私钥。富途和 IBKR 则只检查已经登录的本机 loopback 网关。
+
 关键 sidecar 配置：
 
 ```dotenv
