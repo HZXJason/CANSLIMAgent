@@ -24,7 +24,16 @@ class SecurityBoundaryTest(unittest.TestCase):
             main.AnalysisRequest(ticker="NVDA", api_keys={"openai": "secret"})
 
     def test_backend_url_requires_server_allowlist(self):
-        with patch.dict(main.os.environ, {"AI_ALLOWED_BACKEND_HOSTS": "gateway.example.com"}, clear=False):
+        public_dns = [(main.socket.AF_INET, main.socket.SOCK_STREAM, 6, "", ("8.8.8.8", 443))]
+        with patch.dict(
+            main.os.environ,
+            {
+                "APP_ENV": "production",
+                "AI_ALLOWED_BACKEND_HOSTS": "gateway.example.com",
+                "AI_REQUIRE_BACKEND_ALLOWLIST": "true",
+            },
+            clear=False,
+        ), patch.object(main.socket, "getaddrinfo", return_value=public_dns):
             self.assertEqual(
                 main.validate_backend_url("https://gateway.example.com/v1"),
                 "https://gateway.example.com/v1",
@@ -37,6 +46,73 @@ class SecurityBoundaryTest(unittest.TestCase):
             ):
                 with self.assertRaises(ValueError, msg=malicious):
                     main.validate_backend_url(malicious)
+
+    def test_development_accepts_unlisted_public_https_backend(self):
+        public_dns = [(main.socket.AF_INET, main.socket.SOCK_STREAM, 6, "", ("8.8.8.8", 443))]
+        with patch.dict(
+            main.os.environ,
+            {
+                "APP_ENV": "development",
+                "AI_ALLOWED_BACKEND_HOSTS": "ai-gateway.vercel.sh",
+                "AI_REQUIRE_BACKEND_ALLOWLIST": "false",
+                "AI_ALLOW_PRIVATE_BACKENDS": "false",
+            },
+            clear=False,
+        ), patch.object(main.socket, "getaddrinfo", return_value=public_dns):
+            self.assertEqual(
+                main.validate_backend_url("https://gateway.example.com/v1"),
+                "https://gateway.example.com/v1",
+            )
+
+    def test_development_rejects_hostname_resolving_to_private_address(self):
+        private_dns = [(main.socket.AF_INET, main.socket.SOCK_STREAM, 6, "", ("127.0.0.1", 443))]
+        with patch.dict(
+            main.os.environ,
+            {
+                "APP_ENV": "development",
+                "AI_REQUIRE_BACKEND_ALLOWLIST": "false",
+                "AI_ALLOW_PRIVATE_BACKENDS": "false",
+            },
+            clear=False,
+        ), patch.object(main.socket, "getaddrinfo", return_value=private_dns):
+            with self.assertRaisesRegex(ValueError, "private backend_url"):
+                main.validate_backend_url("https://gateway.example.com/v1")
+
+    def test_model_discovery_uses_server_key_and_filters_non_chat_models(self):
+        response = SimpleNamespace(
+            status_code=200,
+            headers={},
+            iter_content=lambda chunk_size: [
+                b'{"data":[{"id":"gpt-5.4"},{"id":"text-embedding-3-small"},{"id":"gpt-5.4"}]}'
+            ],
+            close=lambda: None,
+        )
+        with patch.dict(main.os.environ, {"OPENAI_API_KEY": "server-only-key"}, clear=False), patch.object(
+            main.requests, "get", return_value=response
+        ) as get:
+            result = main.discover_available_models(main.ModelDiscoveryRequest(provider="openai"))
+
+        self.assertEqual(result["models"], ["gpt-5.4"])
+        self.assertEqual(get.call_args.kwargs["headers"]["Authorization"], "Bearer server-only-key")
+        self.assertFalse(get.call_args.kwargs["allow_redirects"])
+
+    def test_custom_model_discovery_keeps_backend_allowlist(self):
+        public_dns = [(main.socket.AF_INET, main.socket.SOCK_STREAM, 6, "", ("8.8.8.8", 443))]
+        with patch.dict(
+            main.os.environ,
+            {
+                "APP_ENV": "production",
+                "AI_ALLOWED_BACKEND_HOSTS": "gateway.example.com",
+                "AI_REQUIRE_BACKEND_ALLOWLIST": "true",
+            },
+            clear=False,
+        ), patch.object(main.socket, "getaddrinfo", return_value=public_dns):
+            self.assertEqual(
+                main.resolve_model_endpoint("openai_compatible", "https://gateway.example.com/v1/chat/completions"),
+                "https://gateway.example.com/v1/models",
+            )
+            with self.assertRaises(ValueError):
+                main.resolve_model_endpoint("openai_compatible", "https://untrusted.example/v1")
 
 
 class SidecarMiddlewareTest(unittest.IsolatedAsyncioTestCase):
@@ -52,6 +128,42 @@ class SidecarMiddlewareTest(unittest.IsolatedAsyncioTestCase):
                     json={},
                 )
             self.assertEqual(response.status_code, 422)
+
+    async def test_models_route_accepts_only_server_or_trusted_go_credentials(self):
+        response = SimpleNamespace(
+            status_code=200,
+            headers={},
+            iter_content=lambda chunk_size: [b'{"data":[{"id":"gpt-5.4"}]}'],
+            close=lambda: None,
+        )
+        with patch.dict(
+            main.os.environ,
+            {"SIDECAR_SHARED_SECRET": "s" * 32, "OPENAI_API_KEY": "server-only-key"},
+            clear=False,
+        ), patch.object(main.requests, "get", return_value=response) as get:
+            transport = httpx.ASGITransport(app=main.app)
+            async with httpx.AsyncClient(transport=transport, base_url="http://sidecar.test") as client:
+                discovered = await client.post(
+                    "/models",
+                    headers={main.SIDECAR_TOKEN_HEADER: "s" * 32},
+                    json={"provider": "openai"},
+                )
+                rejected = await client.post(
+                    "/models",
+                    headers={main.SIDECAR_TOKEN_HEADER: "s" * 32},
+                    json={"provider": "openai", "api_key": "browser-key"},
+                )
+                unauthorized = await client.post(
+                    "/models",
+                    json={"provider": "openai", "api_key": "untrusted-key"},
+                )
+
+        self.assertEqual(discovered.status_code, 200)
+        self.assertEqual(discovered.json()["models"], ["gpt-5.4"])
+        self.assertEqual(get.call_args_list[0].kwargs["headers"]["Authorization"], "Bearer server-only-key")
+        self.assertEqual(rejected.status_code, 200)
+        self.assertEqual(get.call_args_list[1].kwargs["headers"]["Authorization"], "Bearer browser-key")
+        self.assertEqual(unauthorized.status_code, 401)
 
 
 class ApplicationContextTest(unittest.TestCase):

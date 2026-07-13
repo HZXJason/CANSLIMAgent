@@ -155,7 +155,7 @@ openssl rand -base64 32
 
 `*_SCOPES` 不参与上述开发者应用是否已配置的判定：即使客户端与端点配置齐全，空的或不符合只读规则的 scope 仍会在 OAuth 启动时被拒绝，并不保证返回该 409 配置错误。请改为至少一项显式只读 scope 后再重试。富途和 IBKR 则只检查已经登录的本机 loopback 网关。若本机发现多个账户，请在服务器环境变量中设置对应的 `BROKER_FUTU_ACCOUNT` 或 `BROKER_IBKR_ACCOUNT`；这些配置只会传给本机 sidecar，不会发送到浏览器。
 
-关键 sidecar 配置：
+LLM Key 可以直接在设置页填写。Go 后端会使用 AES-GCM 加密后存入 PostgreSQL，前端只能读取“已配置/未配置”状态，不能取回原始 Key。下面的 sidecar 环境变量仍可作为无人值守部署的后备配置：
 
 ```dotenv
 # 只填写实际使用的模型供应商
@@ -201,6 +201,10 @@ GET   /api/v1/stocks/:symbol/eps/quarterly
 GET   /api/v1/stocks/:symbol/revenue/annual
 POST  /api/v1/analysis/:symbol/ai
 GET   /api/v1/analysis/ai/config
+POST  /api/v1/analysis/ai/models
+GET   /api/v1/llm/credentials/:provider
+PUT   /api/v1/llm/credentials/:provider
+DELETE /api/v1/llm/credentials/:provider
 GET   /api/v1/journal
 POST  /api/v1/journal
 GET   /api/v1/journal/export
@@ -214,7 +218,9 @@ POST  /api/v1/brokers/:id/import
 DELETE /api/v1/brokers/:id
 ```
 
-AI 分析会转发 `progress`、`result`、`report_start`、`report_delta`、`decision`、`done` 和 `error` 等 SSE 事件。
+AI 分析会转发 `progress`、`result`、`report_start`、`report_delta`、`decision`、`done` 和 `error` 等 SSE 事件。设置页会通过 Go → sidecar 自动读取当前供应商可用模型；用户填写的 LLM Key 由 Go 加密保存，按提供商及自定义网关主机隔离，并只在一次固定 Go → sidecar 请求期间解密使用。
+
+本地开发允许设置页连接经过校验的公网 HTTPS 自定义网关；仍会拒绝内网、loopback、凭据型 URL 和重定向。生产环境始终强制 `AI_ALLOWED_BACKEND_HOSTS` 精确白名单；开发环境也可设置 `AI_REQUIRE_BACKEND_ALLOWLIST=true` 使用同一策略。
 
 ## 验证
 
@@ -236,10 +242,11 @@ cp .env.production.example .env.production
 openssl rand -hex 32   # API_AUTH_TOKEN
 openssl rand -hex 32   # SIDECAR_SHARED_SECRET
 openssl rand -base64 32 # BROKER_CREDENTIALS_ENCRYPTION_KEY
+openssl rand -base64 32 # LLM_CREDENTIALS_ENCRYPTION_KEY
 docker compose --env-file .env.production -f docker-compose.prod.yml up --build -d
 ```
 
-容器入口仅绑定到宿主机 `127.0.0.1:${APP_PORT:-8088}`。发布到公网前，必须在其前方配置 HTTPS 和身份感知反向代理；代理应覆盖而不是转发客户端提供的 `X-Internal-API-Token`，并实施用户级限流。LLM Key 只允许出现在 sidecar 的服务端环境中，自定义模型网关必须加入 `AI_ALLOWED_BACKEND_HOSTS` 精确白名单。
+容器入口仅绑定到宿主机 `127.0.0.1:${APP_PORT:-8088}`。发布到公网前，必须在其前方配置 HTTPS 和身份感知反向代理；代理应覆盖而不是转发客户端提供的 `X-Internal-API-Token`，并实施用户级限流。LLM Key 只允许以加密形式保存在后端数据库或作为 sidecar 服务端环境变量存在；自定义模型网关必须加入 `AI_ALLOWED_BACKEND_HOSTS` 精确白名单。
 
 上线、回滚、备份、密钥轮换和事件响应要求见 [`docs/production-operations.md`](docs/production-operations.md)；漏洞报告流程见 [`SECURITY.md`](SECURITY.md)。
 

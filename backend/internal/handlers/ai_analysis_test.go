@@ -9,8 +9,12 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/alphalens/canslimagent/backend/internal/models"
 	"github.com/alphalens/canslimagent/backend/internal/services"
 	"github.com/gin-gonic/gin"
+	"gorm.io/driver/sqlite"
+	"gorm.io/gorm"
+	"gorm.io/gorm/logger"
 )
 
 func setupAIAnalysisRouter(sidecarURL string) *gin.Engine {
@@ -18,8 +22,93 @@ func setupAIAnalysisRouter(sidecarURL string) *gin.Engine {
 	router := gin.New()
 	handler := NewAIAnalysisHandlerWithSidecarURL(sidecarURL)
 	router.GET("/api/v1/analysis/ai/config", handler.Config)
+	router.POST("/api/v1/analysis/ai/models", handler.DiscoverModels)
 	router.POST("/api/v1/analysis/:symbol/ai", handler.Stream)
 	return router
+}
+
+func TestAIAnalysisModelsProxyUsesFixedSidecarEndpoint(t *testing.T) {
+	var received services.AIModelDiscoveryRequest
+	sidecar := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/models" {
+			t.Fatalf("unexpected sidecar path: %s", r.URL.Path)
+		}
+		if err := json.NewDecoder(r.Body).Decode(&received); err != nil {
+			t.Fatalf("decode request body: %v", err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"models":["model-a","model-b"],"source":"gateway.example.com"}`))
+	}))
+	defer sidecar.Close()
+
+	router := setupAIAnalysisRouter(sidecar.URL)
+	request := httptest.NewRequest(
+		http.MethodPost,
+		"/api/v1/analysis/ai/models",
+		strings.NewReader(`{"provider":"openai_compatible","backend_url":"https://gateway.example.com/v1","api_key":"must-not-pass"}`),
+	)
+	request.Header.Set("Content-Type", "application/json")
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", recorder.Code, recorder.Body.String())
+	}
+	if received.Provider != "openai_compatible" || received.BackendURL != "https://gateway.example.com/v1" {
+		t.Fatalf("unexpected discovery payload: %+v", received)
+	}
+	if strings.Contains(recorder.Body.String(), "must-not-pass") {
+		t.Fatalf("browser credential leaked through discovery response: %s", recorder.Body.String())
+	}
+	if !strings.Contains(recorder.Body.String(), "model-a") {
+		t.Fatalf("missing discovered models: %s", recorder.Body.String())
+	}
+}
+
+func TestAIAnalysisModelsUsesStoredCredentialInsteadOfBrowserKey(t *testing.T) {
+	var received struct {
+		Provider   string `json:"provider"`
+		BackendURL string `json:"backend_url"`
+		APIKey     string `json:"api_key"`
+	}
+	sidecar := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := json.NewDecoder(r.Body).Decode(&received); err != nil {
+			t.Fatal(err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"models":["model-a"],"source":"gateway.example.com"}`))
+	}))
+	defer sidecar.Close()
+
+	database, err := gorm.Open(sqlite.Open("file:"+strings.ReplaceAll(t.Name(), "/", "_")+"?mode=memory&cache=shared"), &gorm.Config{Logger: logger.Default.LogMode(logger.Silent)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := database.AutoMigrate(&models.LLMCredential{}); err != nil {
+		t.Fatal(err)
+	}
+	store := services.NewLLMCredentialStore(database, testBrokerVault(t))
+	if _, err := store.Save(context.Background(), "openai_compatible", "https://gateway.example.com/v1", "sk-stored-key"); err != nil {
+		t.Fatal(err)
+	}
+	handler := NewAIAnalysisHandlerWithSidecarURL(sidecar.URL).WithCredentialStore(store)
+	router := gin.New()
+	router.POST("/api/v1/analysis/ai/models", handler.DiscoverModels)
+	request := httptest.NewRequest(
+		http.MethodPost,
+		"/api/v1/analysis/ai/models",
+		strings.NewReader(`{"provider":"openai_compatible","backend_url":"https://gateway.example.com/v1","api_key":"sk-browser-key"}`),
+	)
+	request.Header.Set("Content-Type", "application/json")
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", recorder.Code, recorder.Body.String())
+	}
+	if received.APIKey != "sk-stored-key" || received.APIKey == "sk-browser-key" {
+		t.Fatalf("unexpected sidecar credential: %q", received.APIKey)
+	}
 }
 
 func TestAIAnalysisStreamProxiesSSE(t *testing.T) {
@@ -151,6 +240,9 @@ func TestAIAnalysisConfigExposesStableContract(t *testing.T) {
 	}
 	if !strings.Contains(recorder.Body.String(), "/api/v1/analysis/{symbol}/ai") {
 		t.Fatalf("expected stream endpoint contract, got %s", recorder.Body.String())
+	}
+	if !strings.Contains(recorder.Body.String(), "/api/v1/analysis/ai/models") {
+		t.Fatalf("expected models endpoint contract, got %s", recorder.Body.String())
 	}
 }
 

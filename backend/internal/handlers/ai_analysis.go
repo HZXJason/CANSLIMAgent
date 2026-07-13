@@ -21,6 +21,12 @@ type AIAnalysisHandler struct {
 	upstream         services.AIAnalysisUpstream
 	timeout          time.Duration
 	loadTradeJournal func(context.Context, string) ([]pythonTradeRecord, error)
+	credentials      *services.LLMCredentialStore
+}
+
+func (h *AIAnalysisHandler) WithCredentialStore(store *services.LLMCredentialStore) *AIAnalysisHandler {
+	h.credentials = store
+	return h
 }
 
 func NewAIAnalysisHandlerWithUpstreamAndJournal(upstream services.AIAnalysisUpstream, timeout time.Duration, database *gorm.DB) *AIAnalysisHandler {
@@ -85,6 +91,10 @@ func (h *AIAnalysisHandler) Stream(c *gin.Context) {
 	}
 	payload.Ticker = symbol
 	h.enrichTradeJournal(c.Request.Context(), &payload, symbol)
+	if err := h.attachStoredAPIKey(c.Request.Context(), payload.LLMProvider, payload.BackendURL, &payload.APIKey); err != nil {
+		Fail(c, http.StatusInternalServerError, "后端保存的 LLM 密钥无法读取")
+		return
+	}
 
 	ctx, cancel := context.WithTimeout(c.Request.Context(), h.timeout)
 	defer cancel()
@@ -159,6 +169,49 @@ func (h *AIAnalysisHandler) Config(c *gin.Context) {
 		return
 	}
 	OK(c, config)
+}
+
+func (h *AIAnalysisHandler) DiscoverModels(c *gin.Context) {
+	var payload services.AIModelDiscoveryRequest
+	if err := c.ShouldBindJSON(&payload); err != nil {
+		Fail(c, http.StatusBadRequest, "模型发现请求格式错误")
+		return
+	}
+	payload.Provider = strings.ToLower(strings.TrimSpace(payload.Provider))
+	payload.BackendURL = strings.TrimSpace(payload.BackendURL)
+	if payload.Provider == "" {
+		Fail(c, http.StatusBadRequest, "缺少 LLM 提供商")
+		return
+	}
+	if payload.Provider == "openai_compatible" && payload.BackendURL == "" {
+		Fail(c, http.StatusBadRequest, "OpenAI 兼容网关需要填写 API 地址")
+		return
+	}
+	if err := h.attachStoredAPIKey(c.Request.Context(), payload.Provider, payload.BackendURL, &payload.APIKey); err != nil {
+		Fail(c, http.StatusInternalServerError, "后端保存的 LLM 密钥无法读取")
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(c.Request.Context(), 20*time.Second)
+	defer cancel()
+	result, err := h.upstream.Models(ctx, payload)
+	if err != nil {
+		Fail(c, http.StatusBadGateway, "获取模型列表失败："+err.Error())
+		return
+	}
+	OK(c, result)
+}
+
+func (h *AIAnalysisHandler) attachStoredAPIKey(ctx context.Context, provider, backendURL string, target *string) error {
+	if h.credentials == nil || strings.TrimSpace(provider) == "" || target == nil {
+		return nil
+	}
+	apiKey, err := h.credentials.Resolve(ctx, provider, backendURL)
+	if err != nil {
+		return err
+	}
+	*target = apiKey
+	return nil
 }
 
 func decodeOptionalJSON(body io.Reader, target interface{}) error {

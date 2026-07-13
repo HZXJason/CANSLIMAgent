@@ -6,6 +6,7 @@ import ipaddress
 import json
 import os
 import re
+import socket
 import time
 import traceback
 import uuid
@@ -16,6 +17,7 @@ from typing import Any, AsyncIterator, Iterable
 from urllib.parse import urlparse
 
 import uvicorn
+import requests
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse, StreamingResponse
@@ -53,6 +55,7 @@ app = FastAPI(title="AlphaLens TradingAgents Sidecar")
 # This is a protocol header name, not a password.
 SIDECAR_TOKEN_HEADER = "X-Sidecar-Token"  # nosec B105
 MAX_REQUEST_BODY_BYTES = int(os.getenv("SIDECAR_MAX_REQUEST_BODY_BYTES", str(4 * 1024 * 1024)))
+MAX_MODEL_DISCOVERY_RESPONSE_BYTES = 2 * 1024 * 1024
 MAX_CONCURRENT_REQUESTS = max(1, int(os.getenv("SIDECAR_MAX_CONCURRENT_REQUESTS", "16")))
 _active_requests = 0
 _active_requests_lock = asyncio.Lock()
@@ -78,16 +81,34 @@ def validate_backend_url(value: str | None) -> str | None:
         for item in os.getenv("AI_ALLOWED_BACKEND_HOSTS", "ai-gateway.vercel.sh").split(",")
         if item.strip()
     }
-    if host not in allowed_hosts:
+    require_allowlist = (
+        os.getenv("APP_ENV", "development").strip().lower() == "production"
+        or _env_enabled("AI_REQUIRE_BACKEND_ALLOWLIST")
+    )
+    if require_allowlist and host not in allowed_hosts:
         raise ValueError("backend_url host is not in AI_ALLOWED_BACKEND_HOSTS")
-    try:
-        address = ipaddress.ip_address(host)
-    except ValueError:
-        address = None
-    if address and (address.is_private or address.is_loopback or address.is_link_local) and not _env_enabled(
-        "AI_ALLOW_PRIVATE_BACKENDS"
-    ):
-        raise ValueError("private backend_url addresses are disabled")
+    if not _env_enabled("AI_ALLOW_PRIVATE_BACKENDS"):
+        try:
+            literal_address = ipaddress.ip_address(host)
+            addresses = [literal_address]
+        except ValueError:
+            try:
+                addresses = {
+                    ipaddress.ip_address(item[4][0])
+                    for item in socket.getaddrinfo(host, None, type=socket.SOCK_STREAM)
+                }
+            except (socket.gaierror, ValueError) as exc:
+                raise ValueError("backend_url host could not be resolved") from exc
+        if any(
+            address.is_private
+            or address.is_loopback
+            or address.is_link_local
+            or address.is_reserved
+            or address.is_unspecified
+            or address.is_multicast
+            for address in addresses
+        ):
+            raise ValueError("private backend_url addresses are disabled")
     return raw.rstrip("/")
 
 
@@ -146,6 +167,7 @@ class AnalysisRequest(StrictRequestModel):
     run_id: str | None = Field(default=None, min_length=8, max_length=128)
     resume: bool = False
     last_event_id: int = Field(default=0, ge=0)
+    api_key: str | None = Field(default=None, min_length=1, max_length=8192, repr=False)
 
     @field_validator("analysts")
     @classmethod
@@ -161,6 +183,12 @@ class AnalysisRequest(StrictRequestModel):
         if len(encoded) > 1024 * 1024:
             raise ValueError("analysis_context exceeds 1 MiB")
         return value
+
+
+class ModelDiscoveryRequest(StrictRequestModel):
+    provider: str = Field(..., min_length=1, max_length=64)
+    backend_url: str | None = Field(default=None, max_length=2048)
+    api_key: str | None = Field(default=None, min_length=1, max_length=8192, repr=False)
 
 
 class JournalReflectionRequest(StrictRequestModel):
@@ -792,6 +820,8 @@ def configured_graph(
     config["deep_think_llm"] = request.deep_think_llm
     config["quick_think_llm"] = request.quick_think_llm
     config["backend_url"] = validate_backend_url(request.backend_url)
+    if request.api_key:
+        config["api_key"] = request.api_key
     config["max_debate_rounds"] = request.max_debate_rounds
     config["max_risk_discuss_rounds"] = request.max_risk_rounds
     config["max_risk_rounds"] = request.max_risk_rounds
@@ -799,13 +829,19 @@ def configured_graph(
     config["output_language"] = OUTPUT_LANGUAGE_INSTRUCTION
     configure_analysis_checkpoint(config, request)
 
-    with patched_tradingagents_graph():
-        graph = TradingAgentsGraph(
-            selected_analysts=analysts,
-            debug=False,
-            config=config,
-            callbacks=callbacks,
-        )
+    try:
+        with patched_tradingagents_graph():
+            graph = TradingAgentsGraph(
+                selected_analysts=analysts,
+                debug=False,
+                config=config,
+                callbacks=callbacks,
+            )
+    finally:
+        # The LLM clients have already copied the key into their SDK-specific
+        # secret fields. Remove it from TradingAgents' shared config so data
+        # tools, checkpoints, and later runs cannot observe it.
+        config.pop("api_key", None)
     attach_application_context(graph, request)
     return graph
 
@@ -1023,6 +1059,8 @@ def create_role_llm(request: AnalysisRequest, callbacks: list[Any] | None = None
     kwargs: dict[str, Any] = {}
     if callbacks:
         kwargs["callbacks"] = callbacks
+    if request.api_key:
+        kwargs["api_key"] = request.api_key
     model = request.deep_think_llm or request.quick_think_llm
     client = create_llm_client(
         provider=request.llm_provider,
@@ -1238,7 +1276,7 @@ def user_error_message(exc: Exception) -> str:
     return message or "AI 分析中断，请检查模型和网关配置后重试。"
 
 
-def redact_sensitive_text(value: str) -> str:
+def redact_sensitive_text(value: str, extra_secrets: Iterable[str] = ()) -> str:
     text = str(value or "")
     for name in (
         "ANTHROPIC_API_KEY",
@@ -1251,7 +1289,146 @@ def redact_sensitive_text(value: str) -> str:
         secret = os.getenv(name, "").strip()
         if secret:
             text = text.replace(secret, "[REDACTED]")
+    for secret in extra_secrets:
+        if secret:
+            text = text.replace(secret, "[REDACTED]")
     return re.sub(r"\bsk-[A-Za-z0-9_-]{12,}\b", "[REDACTED]", text)
+
+
+def resolve_model_endpoint(provider: str, backend_url: str | None) -> str:
+    normalized = provider.strip().lower()
+    defaults = {
+        "openai": "https://api.openai.com/v1/models",
+        "anthropic": "https://api.anthropic.com/v1/models",
+        "google": "https://generativelanguage.googleapis.com/v1beta/models",
+    }
+    if normalized in defaults:
+        return defaults[normalized]
+    if normalized != "openai_compatible":
+        raise ValueError("unsupported LLM provider")
+
+    base_url = validate_backend_url(backend_url)
+    if not base_url:
+        raise ValueError("backend_url is required for an OpenAI-compatible provider")
+    parsed = urlparse(base_url)
+    path = parsed.path.rstrip("/")
+    for suffix in ("/chat/completions", "/responses", "/models"):
+        if path.endswith(suffix):
+            path = path[: -len(suffix)]
+            break
+    if not path:
+        path = "/v1"
+    return parsed._replace(path=path + "/models", query="", fragment="").geturl()
+
+
+def model_discovery_api_key(provider: str, provided_key: str | None = None) -> str:
+    if provided_key and provided_key.strip():
+        return provided_key.strip()
+    normalized = provider.strip().lower()
+    if normalized == "openai_compatible":
+        return (
+            os.getenv("OPENAI_COMPATIBLE_API_KEY", "").strip()
+            or os.getenv("AI_GATEWAY_API_KEY", "").strip()
+        )
+    env_names = {
+        "openai": "OPENAI_API_KEY",
+        "anthropic": "ANTHROPIC_API_KEY",
+        "google": "GOOGLE_API_KEY",
+    }
+    return os.getenv(env_names.get(normalized, ""), "").strip()
+
+
+def extract_model_ids(payload: Any, provider: str) -> list[str]:
+    candidates: list[Any] = []
+    if isinstance(payload, list):
+        candidates = payload
+    elif isinstance(payload, dict):
+        for key in ("data", "models", "result"):
+            value = payload.get(key)
+            if isinstance(value, list):
+                candidates = value
+                break
+
+    normalized = provider.strip().lower()
+    excluded_fragments = (
+        "embedding",
+        "moderation",
+        "whisper",
+        "dall-e",
+        "tts",
+        "transcribe",
+        "realtime",
+        "image",
+        "audio",
+    )
+    models: set[str] = set()
+    for candidate in candidates:
+        model_id = ""
+        if isinstance(candidate, str):
+            model_id = candidate
+        elif isinstance(candidate, dict):
+            if normalized == "google":
+                methods = candidate.get("supportedGenerationMethods")
+                if isinstance(methods, list) and "generateContent" not in methods:
+                    continue
+            for key in ("id", "name", "model"):
+                value = candidate.get(key)
+                if isinstance(value, str) and value.strip():
+                    model_id = value
+                    break
+        model_id = model_id.strip()
+        if normalized == "google":
+            model_id = model_id.removeprefix("models/")
+        if not model_id or any(fragment in model_id.lower() for fragment in excluded_fragments):
+            continue
+        models.add(model_id)
+    return sorted(models)[:500]
+
+
+def discover_available_models(request: ModelDiscoveryRequest) -> dict[str, Any]:
+    provider = request.provider.strip().lower()
+    endpoint = resolve_model_endpoint(provider, request.backend_url)
+    api_key = model_discovery_api_key(provider, request.api_key)
+    headers = {
+        "Accept": "application/json",
+        "User-Agent": "CANSLIMAgent/1.0 model-discovery",
+    }
+    if provider == "anthropic":
+        if api_key:
+            headers["x-api-key"] = api_key
+        headers["anthropic-version"] = "2023-06-01"
+    elif provider == "google":
+        if api_key:
+            headers["x-goog-api-key"] = api_key
+    elif api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
+
+    try:
+        response = requests.get(endpoint, headers=headers, timeout=15, allow_redirects=False, stream=True)
+    except requests.RequestException as exc:
+        raise RuntimeError("模型服务连接失败") from exc
+    try:
+        if not 200 <= response.status_code < 300:
+            hint = "，请检查 sidecar 服务端 API Key" if response.status_code in {401, 403} else ""
+            raise RuntimeError(f"模型服务返回 HTTP {response.status_code}{hint}")
+        content_length = response.headers.get("content-length", "")
+        if content_length.isdigit() and int(content_length) > MAX_MODEL_DISCOVERY_RESPONSE_BYTES:
+            raise RuntimeError("模型服务响应过大")
+        body = bytearray()
+        for chunk in response.iter_content(chunk_size=64 * 1024):
+            body.extend(chunk)
+            if len(body) > MAX_MODEL_DISCOVERY_RESPONSE_BYTES:
+                raise RuntimeError("模型服务响应过大")
+        try:
+            payload = json.loads(body)
+        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise RuntimeError("模型服务返回了无效 JSON") from exc
+    finally:
+        response.close()
+    models = extract_model_ids(payload, provider)
+    if not models:
+        raise RuntimeError("模型服务没有返回可用于分析的模型")
+    return {"models": models, "source": urlparse(endpoint).hostname or "model endpoint"}
 
 
 async def analysis_events(request: AnalysisRequest):
@@ -1499,7 +1676,11 @@ async def analysis_events(request: AnalysisRequest):
         yield sse("done", {})
     except Exception as exc:
         if _env_enabled("SIDECAR_DEBUG_TRACEBACK") and os.getenv("APP_ENV", "development").lower() != "production":
-            print("AI analysis stream failed:\n" + redact_sensitive_text(traceback.format_exc()), flush=True)
+            print(
+                "AI analysis stream failed:\n"
+                + redact_sensitive_text(traceback.format_exc(), [request.api_key or ""]),
+                flush=True,
+            )
         else:
             print(
                 json.dumps(
@@ -1512,7 +1693,10 @@ async def analysis_events(request: AnalysisRequest):
                 ),
                 flush=True,
             )
-        yield sse("error", {"message": user_error_message(exc)})
+        message = user_error_message(exc)
+        if request.api_key:
+            message = message.replace(request.api_key, "[REDACTED]")
+        yield sse("error", {"message": message})
 
 
 @app.get("/health")
@@ -1527,6 +1711,16 @@ def health():
             "vibe_tools_enabled": status.get("vibe_tools_enabled"),
         },
     }
+
+
+@app.post("/models")
+async def models(request: ModelDiscoveryRequest):
+    try:
+        return await asyncio.to_thread(discover_available_models, request)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
 
 
 @app.post("/analyze")
