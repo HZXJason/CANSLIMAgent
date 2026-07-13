@@ -92,8 +92,14 @@ func main() {
 	presetHandler := handlers.NewPresetHandler(database)
 	chartsHandler := handlers.NewChartsHandler(analysisService, scanner)
 	analysisHandler := handlers.NewAnalysisHandler(analysisService, cfg.AIStreamURL, cfg.RequestTimeout)
+	llmVault, llmVaultErr := services.NewCredentialVault(cfg.LLMCredentialsKey)
+	if llmVaultErr != nil {
+		log.Printf("LLM 密钥存储未启用：%v", llmVaultErr)
+	}
+	llmCredentialStore := services.NewLLMCredentialStore(database, llmVault)
+	llmCredentialHandler := handlers.NewLLMCredentialHandler(llmCredentialStore)
 	aiAnalysisUpstream := services.NewHTTPAIAnalysisUpstream(cfg.AIAnalysisUpstreamURL, cfg.AIAnalysisTimeout, cfg.SidecarSharedSecret)
-	aiAnalysisHandler := handlers.NewAIAnalysisHandlerWithUpstreamAndJournal(aiAnalysisUpstream, cfg.AIAnalysisTimeout, database)
+	aiAnalysisHandler := handlers.NewAIAnalysisHandlerWithUpstreamAndJournal(aiAnalysisUpstream, cfg.AIAnalysisTimeout, database).WithCredentialStore(llmCredentialStore)
 	journalReflectionUpstream := services.NewHTTPJournalReflectionUpstream(cfg.AIAnalysisUpstreamURL, 2*time.Minute, cfg.SidecarSharedSecret)
 	journalHandler := handlers.NewJournalHandlerWithReflection(database, journalReflectionUpstream)
 	tradePlanHandler := handlers.NewTradePlanHandler(database)
@@ -118,7 +124,7 @@ func main() {
 	router.Use(cors.New(cors.Config{
 		AllowOrigins:        cfg.AllowedOrigins,
 		AllowOriginFunc:     configuredOriginAllowed(cfg.AllowedOrigins),
-		AllowMethods:        []string{http.MethodGet, http.MethodPost, http.MethodPatch, http.MethodDelete, http.MethodOptions},
+		AllowMethods:        apiAllowedMethods(),
 		AllowHeaders:        []string{"Origin", "Content-Type", "Accept", "Authorization", "Cache-Control", "Pragma", "X-Requested-With", requestIDHeader},
 		ExposeHeaders:       []string{"Content-Length", "X-Analysis-Run-ID", requestIDHeader},
 		AllowCredentials:    false,
@@ -162,7 +168,11 @@ func main() {
 			}
 			c.Status(http.StatusNotFound)
 		})
+		api.POST("/analysis/ai/models", aiAnalysisHandler.DiscoverModels)
 		api.POST("/analysis/:symbol/ai", aiAnalysisHandler.Stream)
+		api.GET("/llm/credentials/:provider", llmCredentialHandler.Status)
+		api.PUT("/llm/credentials/:provider", llmCredentialHandler.Save)
+		api.DELETE("/llm/credentials/:provider", llmCredentialHandler.Delete)
 		api.GET("/presets", presetHandler.List)
 		api.POST("/presets", presetHandler.Create)
 		api.DELETE("/presets/:id", presetHandler.Delete)
@@ -217,6 +227,10 @@ func main() {
 		log.Printf("服务关闭异常：%v", err)
 	}
 	log.Println("服务已安全关闭")
+}
+
+func apiAllowedMethods() []string {
+	return []string{http.MethodGet, http.MethodPost, http.MethodPut, http.MethodPatch, http.MethodDelete, http.MethodOptions}
 }
 
 func configuredOriginAllowed(allowedOrigins []string) func(string) bool {

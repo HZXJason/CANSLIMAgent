@@ -2,6 +2,9 @@ import type { APIResponse, Market, RefreshJob, RefreshJobResponse, StockWithMetr
 import type {
 	AIAnalysisMarkResponse,
 	AIAnalysisConfigResponse,
+  AIModelDiscoveryInput,
+  AIModelDiscoveryResponse,
+  LLMCredentialStatus,
   CompanyProfile,
   EPSData,
   GrossMarginData,
@@ -16,7 +19,7 @@ import type {
 import type { JournalEntry, JournalReflectionInput, NewJournalEntryInput, StoredJournalReflection } from '../types/journal';
 import type { ExecuteTradePlanInput, ExecuteTradePlanResponse, NewTradePlanInput, TradePlan, TradePlanFilters, TradePlanUpdateInput } from '../types/tradePlan';
 import type { BrokerConnection, BrokerConnectionStart, BrokerExecution, BrokerID, BrokerSyncResult } from '../types/broker';
-import { AI_ANALYSIS_CONFIG_PATH } from './aiAnalysisContract';
+import { AI_ANALYSIS_CONFIG_PATH, AI_ANALYSIS_MODELS_PATH } from './aiAnalysisContract';
 
 export const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? '/api/v1';
 
@@ -116,6 +119,35 @@ export function fetchSecondLayerData(symbol: string) {
 
 export function fetchAIAnalysisConfig() {
   return request<AIAnalysisConfigResponse>(AI_ANALYSIS_CONFIG_PATH);
+}
+
+export function discoverAIModels(input: AIModelDiscoveryInput) {
+  return request<AIModelDiscoveryResponse>(AI_ANALYSIS_MODELS_PATH, {
+    method: 'POST',
+    body: JSON.stringify(input)
+  });
+}
+
+function llmCredentialPath(provider: string, backendURL = '') {
+  const params = new URLSearchParams();
+  if (backendURL.trim()) params.set('backend_url', backendURL.trim());
+  const query = params.toString();
+  return '/llm/credentials/' + encodeURIComponent(provider) + (query ? '?' + query : '');
+}
+
+export function fetchLLMCredentialStatus(provider: string, backendURL = '') {
+  return request<LLMCredentialStatus>(llmCredentialPath(provider, backendURL));
+}
+
+export function saveLLMCredential(provider: string, apiKey: string, backendURL = '') {
+  return request<LLMCredentialStatus>(llmCredentialPath(provider), {
+    method: 'PUT',
+    body: JSON.stringify({ api_key: apiKey, backend_url: backendURL.trim() })
+  });
+}
+
+export function deleteLLMCredential(provider: string, backendURL = '') {
+  return request<{ deleted: true }>(llmCredentialPath(provider, backendURL), { method: 'DELETE' });
 }
 
 export function updateNLabel(symbol: string, nLabel: boolean, analysisSummary: string) {

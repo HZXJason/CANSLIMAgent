@@ -42,6 +42,16 @@ func TestConfiguredOriginMatcherRejectsLookalikeDevelopmentOrigin(t *testing.T) 
 	}
 }
 
+func TestAPIAllowedMethodsIncludesCredentialUpdate(t *testing.T) {
+	methods := apiAllowedMethods()
+	for _, method := range methods {
+		if method == http.MethodPut {
+			return
+		}
+	}
+	t.Fatalf("PUT is missing from API CORS methods: %#v", methods)
+}
+
 func TestInternalAPIAuth(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	router := gin.New()

@@ -99,6 +99,19 @@ CREATE INDEX IF NOT EXISTS idx_broker_connections_connection_status ON broker_co
 CREATE INDEX IF NOT EXISTS idx_broker_connections_pending_authorization_session_id ON broker_connections (pending_authorization_session_id);
 CREATE INDEX IF NOT EXISTS idx_broker_connections_authorization_expires_at ON broker_connections (authorization_expires_at);
 
+-- LLM API keys are encrypted by the backend and scoped by provider plus the
+-- normalized custom gateway host. The plaintext key is never stored here.
+CREATE TABLE IF NOT EXISTS llm_credentials (
+  id                    UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  created_at            TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at            TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  provider              TEXT NOT NULL,
+  backend_host          TEXT NOT NULL DEFAULT '',
+  credential_ciphertext BYTEA NOT NULL,
+  credential_nonce      BYTEA NOT NULL,
+  UNIQUE (provider, backend_host)
+);
+
 -- OAuth state is stored only as a SHA-256 digest; the raw browser value is
 -- never written to the database.
 CREATE TABLE IF NOT EXISTS broker_authorization_sessions (

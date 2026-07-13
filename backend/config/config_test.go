@@ -31,6 +31,18 @@ func TestProductionDisablesInProcessMigrationsByDefault(t *testing.T) {
 	}
 }
 
+func TestLLMCredentialKeyUsesDedicatedKeyOrBrokerFallback(t *testing.T) {
+	t.Setenv("BROKER_CREDENTIALS_ENCRYPTION_KEY", "broker-key")
+	t.Setenv("LLM_CREDENTIALS_ENCRYPTION_KEY", "")
+	if got := Load().LLMCredentialsKey; got != "broker-key" {
+		t.Fatalf("LLM key fallback = %q", got)
+	}
+	t.Setenv("LLM_CREDENTIALS_ENCRYPTION_KEY", "dedicated-llm-key")
+	if got := Load().LLMCredentialsKey; got != "dedicated-llm-key" {
+		t.Fatalf("dedicated LLM key = %q", got)
+	}
+}
+
 func TestLoadLongPortOAuthUsesPublicPKCEDefaults(t *testing.T) {
 	t.Setenv("BROKER_LONGPORT_CLIENT_ID", "public-client-id")
 	t.Setenv("BROKER_LONGPORT_CLIENT_SECRET", "")

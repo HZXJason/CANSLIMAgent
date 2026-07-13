@@ -36,6 +36,7 @@ type Config struct {
 	AIAnalysisTimeout       time.Duration
 	BrokerSyncUpstreamURL   string
 	BrokerCredentialsKey    string
+	LLMCredentialsKey       string
 	BrokerLongPortOAuth     BrokerOAuthConfig
 	BrokerTigerOAuth        BrokerOAuthConfig
 	BrokerFutuGateway       BrokerGatewayConfig
@@ -80,6 +81,11 @@ func Load() Config {
 	futuGateway := loadBrokerGateway("BROKER_FUTU", "11111")
 	ibkrGateway := loadBrokerGateway("BROKER_IBKR", "7497")
 	ibkrGateway.ClientID = getEnv("BROKER_IBKR_CLIENT_ID", "9901")
+	brokerCredentialsKey := strings.TrimSpace(os.Getenv("BROKER_CREDENTIALS_ENCRYPTION_KEY"))
+	llmCredentialsKey := strings.TrimSpace(os.Getenv("LLM_CREDENTIALS_ENCRYPTION_KEY"))
+	if llmCredentialsKey == "" {
+		llmCredentialsKey = brokerCredentialsKey
+	}
 
 	return Config{
 		Host:                    getEnv("HOST", "127.0.0.1"),
@@ -106,7 +112,8 @@ func Load() Config {
 		AIAnalysisUpstreamURL:   getFirstEnv([]string{"AI_ANALYSIS_UPSTREAM_URL", "AI_ANALYSIS_SIDECAR_URL"}, "http://127.0.0.1:8765"),
 		AIAnalysisTimeout:       time.Duration(getEnvInt("AI_ANALYSIS_TIMEOUT_SECONDS", 1200)) * time.Second,
 		BrokerSyncUpstreamURL:   getEnv("BROKER_SYNC_UPSTREAM_URL", "http://127.0.0.1:8765"),
-		BrokerCredentialsKey:    strings.TrimSpace(os.Getenv("BROKER_CREDENTIALS_ENCRYPTION_KEY")),
+		BrokerCredentialsKey:    brokerCredentialsKey,
+		LLMCredentialsKey:       llmCredentialsKey,
 		BrokerLongPortOAuth:     loadLongPortOAuthConfig(),
 		BrokerTigerOAuth:        loadBrokerOAuthConfig("BROKER_TIGER"),
 		BrokerFutuGateway:       futuGateway,

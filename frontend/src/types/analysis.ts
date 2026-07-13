@@ -91,6 +91,24 @@ export interface AIAnalysisContract {
   events: AIAnalysisStreamEventName[];
 }
 
+export interface AIModelDiscoveryInput {
+  provider: string;
+  backend_url?: string;
+}
+
+export interface AIModelDiscoveryResponse {
+  models: string[];
+  source: string;
+}
+
+export interface LLMCredentialStatus {
+  provider: string;
+  backend_host: string;
+  configured: boolean;
+  storage_ready: boolean;
+  updated_at?: string;
+}
+
 export interface AIAnalysisConfigResponse {
   contract?: AIAnalysisContract;
   providers: AIProviderConfig[];

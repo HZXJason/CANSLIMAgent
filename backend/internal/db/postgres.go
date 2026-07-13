@@ -52,7 +52,7 @@ func Migrate(database *gorm.DB) error {
 		)`).Error; err != nil {
 			return err
 		}
-		if err := tx.AutoMigrate(&models.Stock{}, &models.StockMetric{}, &models.ThresholdPreset{}, &models.TradeJournalEntry{}, &models.TradeJournalReflection{}, &models.TradePlan{}, &models.BrokerConnection{}, &models.BrokerAuthorizationSession{}); err != nil {
+		if err := tx.AutoMigrate(&models.Stock{}, &models.StockMetric{}, &models.ThresholdPreset{}, &models.TradeJournalEntry{}, &models.TradeJournalReflection{}, &models.TradePlan{}, &models.BrokerConnection{}, &models.BrokerAuthorizationSession{}, &models.LLMCredential{}); err != nil {
 			return err
 		}
 		if err := migrateTradeJournalSchema(tx); err != nil {

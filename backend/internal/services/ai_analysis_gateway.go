@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"strings"
@@ -31,6 +32,7 @@ type AIAnalysisRequest struct {
 	RunID           string         `json:"run_id,omitempty"`
 	Resume          bool           `json:"resume,omitempty"`
 	LastEventID     int            `json:"last_event_id,omitempty"`
+	APIKey          string         `json:"-"`
 }
 
 type AIAnalysisProviderConfig struct {
@@ -56,9 +58,21 @@ type AIAnalysisAnalystConfig struct {
 type AIAnalysisContract struct {
 	Version        string   `json:"version"`
 	ConfigEndpoint string   `json:"config_endpoint"`
+	ModelsEndpoint string   `json:"models_endpoint"`
 	StreamEndpoint string   `json:"stream_endpoint"`
 	UpstreamMode   string   `json:"upstream_mode"`
 	Events         []string `json:"events"`
+}
+
+type AIModelDiscoveryRequest struct {
+	Provider   string `json:"provider"`
+	BackendURL string `json:"backend_url,omitempty"`
+	APIKey     string `json:"-"`
+}
+
+type AIModelDiscoveryResponse struct {
+	Models []string `json:"models"`
+	Source string   `json:"source"`
 }
 
 type AIAnalysisConfigResponse struct {
@@ -77,6 +91,7 @@ type AIAnalysisStream struct {
 
 type AIAnalysisUpstream interface {
 	Config(ctx context.Context) (AIAnalysisConfigResponse, error)
+	Models(ctx context.Context, request AIModelDiscoveryRequest) (AIModelDiscoveryResponse, error)
 	Start(ctx context.Context, request AIAnalysisRequest) (*AIAnalysisStream, error)
 }
 
@@ -104,8 +119,52 @@ func (u *HTTPAIAnalysisUpstream) Config(_ context.Context) (AIAnalysisConfigResp
 	return DefaultAIAnalysisConfig(), nil
 }
 
+func (u *HTTPAIAnalysisUpstream) Models(ctx context.Context, payload AIModelDiscoveryRequest) (AIModelDiscoveryResponse, error) {
+	var result AIModelDiscoveryResponse
+	wirePayload := struct {
+		AIModelDiscoveryRequest
+		APIKey string `json:"api_key,omitempty"`
+	}{AIModelDiscoveryRequest: payload, APIKey: payload.APIKey}
+	body, err := json.Marshal(wirePayload)
+	if err != nil {
+		return result, err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, resolveAIAnalysisBaseURL(u.analyzeURL)+"/models", bytes.NewReader(body))
+	if err != nil {
+		return result, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json")
+	if u.secret != "" {
+		req.Header.Set("X-Sidecar-Token", u.secret)
+	}
+	resp, err := u.client.Do(req)
+	if err != nil {
+		return result, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
+		var failure struct {
+			Detail string `json:"detail"`
+		}
+		_ = json.NewDecoder(io.LimitReader(resp.Body, 4096)).Decode(&failure)
+		if strings.TrimSpace(failure.Detail) == "" {
+			failure.Detail = fmt.Sprintf("sidecar returned HTTP %d", resp.StatusCode)
+		}
+		return result, fmt.Errorf("%s", failure.Detail)
+	}
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 2<<20)).Decode(&result); err != nil {
+		return result, fmt.Errorf("decode model discovery response: %w", err)
+	}
+	return result, nil
+}
+
 func (u *HTTPAIAnalysisUpstream) Start(ctx context.Context, payload AIAnalysisRequest) (*AIAnalysisStream, error) {
-	body, err := json.Marshal(payload)
+	wirePayload := struct {
+		AIAnalysisRequest
+		APIKey string `json:"api_key,omitempty"`
+	}{AIAnalysisRequest: payload, APIKey: payload.APIKey}
+	body, err := json.Marshal(wirePayload)
 	if err != nil {
 		return nil, err
 	}
@@ -138,6 +197,7 @@ func DefaultAIAnalysisConfig() AIAnalysisConfigResponse {
 		Contract: AIAnalysisContract{
 			Version:        AIAnalysisContractVersion,
 			ConfigEndpoint: "/api/v1/analysis/ai/config",
+			ModelsEndpoint: "/api/v1/analysis/ai/models",
 			StreamEndpoint: "/api/v1/analysis/{symbol}/ai",
 			UpstreamMode:   "sse",
 			Events: []string{
@@ -216,4 +276,8 @@ func resolveAIAnalysisURL(upstreamURL string) string {
 		return trimmed
 	}
 	return trimmed + "/analyze"
+}
+
+func resolveAIAnalysisBaseURL(upstreamURL string) string {
+	return strings.TrimSuffix(resolveAIAnalysisURL(upstreamURL), "/analyze")
 }
