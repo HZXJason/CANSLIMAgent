@@ -2,6 +2,35 @@ package config
 
 import "testing"
 
+func TestLoadUsesLoopbackAndNoBrowserTrustByDefault(t *testing.T) {
+	t.Setenv("HOST", "")
+	t.Setenv("APP_ENV", "")
+	t.Setenv("API_AUTH_TOKEN", "")
+	t.Setenv("SIDECAR_SHARED_SECRET", "")
+
+	cfg := Load()
+	if cfg.Host != "127.0.0.1" {
+		t.Fatalf("Host = %q, want loopback", cfg.Host)
+	}
+	if cfg.AppEnv != "development" {
+		t.Fatalf("AppEnv = %q, want development", cfg.AppEnv)
+	}
+}
+
+func TestProductionDisablesInProcessMigrationsByDefault(t *testing.T) {
+	t.Setenv("APP_ENV", "production")
+	t.Setenv("RUN_DATABASE_MIGRATIONS", "")
+	t.Setenv("MIGRATE_ONLY", "")
+
+	cfg := Load()
+	if cfg.RunDatabaseMigrations {
+		t.Fatal("production API process enabled schema migrations by default")
+	}
+	if cfg.MigrateOnly {
+		t.Fatal("production API process unexpectedly entered migration-only mode")
+	}
+}
+
 func TestLoadLongPortOAuthUsesPublicPKCEDefaults(t *testing.T) {
 	t.Setenv("BROKER_LONGPORT_CLIENT_ID", "public-client-id")
 	t.Setenv("BROKER_LONGPORT_CLIENT_SECRET", "")

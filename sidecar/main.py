@@ -1,25 +1,30 @@
 import asyncio
 import ast
 import copy
+import hmac
+import ipaddress
 import json
 import os
 import re
+import time
 import traceback
 import uuid
 from queue import Empty, Queue
 from datetime import date, datetime
 from pathlib import Path
 from typing import Any, AsyncIterator, Iterable
+from urllib.parse import urlparse
 
 import uvicorn
 from dotenv import load_dotenv
-from fastapi import FastAPI, HTTPException
-from fastapi.responses import StreamingResponse
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import JSONResponse, StreamingResponse
 from langchain_core.callbacks import BaseCallbackHandler
 from langchain_core.messages import HumanMessage, SystemMessage
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from analysis_runs import (
+    RunCapacityError,
     RunConflictError,
     analysis_run_registry,
     request_fingerprint,
@@ -45,40 +50,133 @@ load_dotenv()
 
 app = FastAPI(title="AlphaLens TradingAgents Sidecar")
 
+# This is a protocol header name, not a password.
+SIDECAR_TOKEN_HEADER = "X-Sidecar-Token"  # nosec B105
+MAX_REQUEST_BODY_BYTES = int(os.getenv("SIDECAR_MAX_REQUEST_BODY_BYTES", str(4 * 1024 * 1024)))
+MAX_CONCURRENT_REQUESTS = max(1, int(os.getenv("SIDECAR_MAX_CONCURRENT_REQUESTS", "16")))
+_active_requests = 0
+_active_requests_lock = asyncio.Lock()
 
-class AnalysisRequest(BaseModel):
-    ticker: str = Field(..., min_length=1)
-    llm_provider: str = "anthropic"
-    deep_think_llm: str = "claude-sonnet-4-6"
-    quick_think_llm: str = "claude-haiku-4-5-20251001"
-    backend_url: str | None = None
+
+def _env_enabled(name: str) -> bool:
+    return os.getenv(name, "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def validate_backend_url(value: str | None) -> str | None:
+    raw = (value or "").strip()
+    if not raw:
+        return None
+    parsed = urlparse(raw)
+    if parsed.scheme != "https" or not parsed.hostname or parsed.username or parsed.password:
+        raise ValueError("backend_url must be an HTTPS URL without embedded credentials")
+    if parsed.query or parsed.fragment:
+        raise ValueError("backend_url must not include query parameters or fragments")
+
+    host = parsed.hostname.rstrip(".").lower()
+    allowed_hosts = {
+        item.strip().rstrip(".").lower()
+        for item in os.getenv("AI_ALLOWED_BACKEND_HOSTS", "ai-gateway.vercel.sh").split(",")
+        if item.strip()
+    }
+    if host not in allowed_hosts:
+        raise ValueError("backend_url host is not in AI_ALLOWED_BACKEND_HOSTS")
+    try:
+        address = ipaddress.ip_address(host)
+    except ValueError:
+        address = None
+    if address and (address.is_private or address.is_loopback or address.is_link_local) and not _env_enabled(
+        "AI_ALLOW_PRIVATE_BACKENDS"
+    ):
+        raise ValueError("private backend_url addresses are disabled")
+    return raw.rstrip("/")
+
+
+@app.middleware("http")
+async def protect_sidecar(request: Request, call_next):
+    global _active_requests
+    if request.url.path != "/health":
+        expected = os.getenv("SIDECAR_SHARED_SECRET", "").strip()
+        if os.getenv("APP_ENV", "development").strip().lower() == "production" and len(expected) < 32:
+            return JSONResponse(status_code=503, content={"detail": "sidecar security is not configured"})
+        if expected and not hmac.compare_digest(request.headers.get(SIDECAR_TOKEN_HEADER, ""), expected):
+            return JSONResponse(status_code=401, content={"detail": "unauthorized"})
+
+    content_length = request.headers.get("content-length")
+    if content_length:
+        try:
+            if int(content_length) > MAX_REQUEST_BODY_BYTES:
+                return JSONResponse(status_code=413, content={"detail": "request body too large"})
+        except ValueError:
+            return JSONResponse(status_code=400, content={"detail": "invalid content-length"})
+    body = await request.body()
+    if len(body) > MAX_REQUEST_BODY_BYTES:
+        return JSONResponse(status_code=413, content={"detail": "request body too large"})
+    if request.url.path == "/health":
+        return await call_next(request)
+    async with _active_requests_lock:
+        if _active_requests >= MAX_CONCURRENT_REQUESTS:
+            return JSONResponse(status_code=503, content={"detail": "sidecar is busy"})
+        _active_requests += 1
+    try:
+        return await call_next(request)
+    finally:
+        async with _active_requests_lock:
+            _active_requests -= 1
+
+
+class StrictRequestModel(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+
+class AnalysisRequest(StrictRequestModel):
+    ticker: str = Field(..., min_length=1, max_length=32, pattern=r"^[A-Za-z0-9][A-Za-z0-9.^=_-]{0,31}$")
+    llm_provider: str = Field(default="anthropic", min_length=1, max_length=64)
+    deep_think_llm: str = Field(default="claude-sonnet-4-6", min_length=1, max_length=256)
+    quick_think_llm: str = Field(default="claude-haiku-4-5-20251001", min_length=1, max_length=256)
+    backend_url: str | None = Field(default=None, max_length=2048)
     max_debate_rounds: int = Field(default=1, ge=1, le=5)
     max_risk_rounds: int = Field(default=1, ge=1, le=5)
     online_tools: bool = True
     analysts: list[str] = Field(
-        default_factory=lambda: ["fundamental", "sentiment", "news", "technical"]
+        default_factory=lambda: ["fundamental", "sentiment", "news", "technical"],
+        min_length=1,
+        max_length=8,
     )
-    api_keys: dict[str, str] = Field(default_factory=dict)
     analysis_context: dict[str, Any] = Field(default_factory=dict)
     run_id: str | None = Field(default=None, min_length=8, max_length=128)
     resume: bool = False
     last_event_id: int = Field(default=0, ge=0)
 
+    @field_validator("analysts")
+    @classmethod
+    def validate_analysts(cls, values: list[str]) -> list[str]:
+        if any(not value.strip() or len(value) > 64 for value in values):
+            raise ValueError("analyst IDs must be 1-64 characters")
+        return values
 
-class JournalReflectionRequest(BaseModel):
+    @field_validator("analysis_context")
+    @classmethod
+    def validate_analysis_context_size(cls, value: dict[str, Any]) -> dict[str, Any]:
+        encoded = json.dumps(value, ensure_ascii=False, default=str).encode("utf-8")
+        if len(encoded) > 1024 * 1024:
+            raise ValueError("analysis_context exceeds 1 MiB")
+        return value
+
+
+class JournalReflectionRequest(StrictRequestModel):
     schema_version: str = "vibe.trade_record.v1"
-    records: list[dict[str, Any]] = Field(default_factory=list)
+    records: list[dict[str, Any]] = Field(default_factory=list, max_length=5000)
 
 
-class BrokerSyncRequest(BaseModel):
-    broker: str = Field(..., min_length=1)
+class BrokerSyncRequest(StrictRequestModel):
+    broker: str = Field(..., min_length=1, max_length=32)
     credentials: dict[str, str] = Field(default_factory=dict)
     start_at: datetime
     end_at: datetime
 
 
-class BrokerGatewayDiscoveryRequest(BaseModel):
-    broker: str = Field(..., min_length=1)
+class BrokerGatewayDiscoveryRequest(StrictRequestModel):
+    broker: str = Field(..., min_length=1, max_length=32)
     credentials: dict[str, str] = Field(default_factory=dict)
 
 
@@ -180,14 +278,6 @@ CANSLIM_SECOND_LAYER_SYSTEM_PROMPT = """你是一名严格的 CANSLIM 成长股�
 REPORT_DELTA_CHARS = int(os.getenv("AI_REPORT_DELTA_CHARS", "120"))
 REPORT_DELTA_DELAY = float(os.getenv("AI_REPORT_DELTA_DELAY", "0.006"))
 NARRATION_INTERVAL_SECONDS = float(os.getenv("AI_NARRATION_INTERVAL_SECONDS", "2.5"))
-
-LLM_API_ENV = {
-    "anthropic": "ANTHROPIC_API_KEY",
-    "openai": "OPENAI_API_KEY",
-    "openai_compatible": "OPENAI_COMPATIBLE_API_KEY",
-    "ai_gateway": "OPENAI_COMPATIBLE_API_KEY",
-    "google": "GOOGLE_API_KEY",
-}
 
 OUTPUT_LANGUAGE_INSTRUCTION = (
     "Simplified Chinese. Do not output English section titles, internal reasoning, "
@@ -689,29 +779,11 @@ def selected_custom_analysts(request: AnalysisRequest) -> tuple[str, ...]:
     return tuple(selected)
 
 
-def apply_request_api_keys(request: AnalysisRequest) -> None:
-    for provider, env_name in LLM_API_ENV.items():
-        key = (
-            request.api_keys.get(provider)
-            or request.api_keys.get(env_name)
-            or request.api_keys.get(env_name.lower())
-        )
-        if key and key.strip():
-            os.environ[env_name] = key.strip()
-            if provider in {"openai_compatible", "ai_gateway"}:
-                os.environ["AI_GATEWAY_API_KEY"] = key.strip()
-    gateway_key = os.environ.get("AI_GATEWAY_API_KEY")
-    if gateway_key and not os.environ.get("OPENAI_COMPATIBLE_API_KEY"):
-        os.environ["OPENAI_COMPATIBLE_API_KEY"] = gateway_key
-
-
 def configured_graph(
     request: AnalysisRequest,
     analysts: tuple[str, ...],
     callbacks: list[Any] | None = None,
 ):
-    apply_request_api_keys(request)
-
     from tradingagents.default_config import DEFAULT_CONFIG
     from tradingagents.graph.trading_graph import TradingAgentsGraph
 
@@ -719,7 +791,7 @@ def configured_graph(
     config["llm_provider"] = request.llm_provider
     config["deep_think_llm"] = request.deep_think_llm
     config["quick_think_llm"] = request.quick_think_llm
-    config["backend_url"] = request.backend_url.strip() if request.backend_url else None
+    config["backend_url"] = validate_backend_url(request.backend_url)
     config["max_debate_rounds"] = request.max_debate_rounds
     config["max_risk_discuss_rounds"] = request.max_risk_rounds
     config["max_risk_rounds"] = request.max_risk_rounds
@@ -744,7 +816,36 @@ def configure_analysis_checkpoint(config: dict[str, Any], request: AnalysisReque
     checkpoint_root = Path(
         os.getenv("AI_ANALYSIS_CHECKPOINT_DIR", str(Path(__file__).resolve().parent / "data" / "ai-runs"))
     ).expanduser()
+    prune_checkpoint_directories(checkpoint_root, keep_run_id=run_id)
     config["data_cache_dir"] = str((checkpoint_root / run_id).resolve())
+
+
+def prune_checkpoint_directories(checkpoint_root: Path, *, keep_run_id: str) -> None:
+    try:
+        retention_hours = max(1, int(os.getenv("AI_CHECKPOINT_RETENTION_HOURS", "24")))
+    except ValueError:
+        retention_hours = 24
+    cutoff = time.time() - retention_hours * 60 * 60
+    try:
+        children = list(checkpoint_root.iterdir())
+    except FileNotFoundError:
+        return
+    except OSError:
+        return
+    for child in children:
+        if child.is_symlink() or not child.is_dir() or child.name == keep_run_id:
+            continue
+        try:
+            if child.stat().st_mtime >= cutoff:
+                continue
+            for nested in sorted(child.rglob("*"), reverse=True):
+                if nested.is_file() or nested.is_symlink():
+                    nested.unlink(missing_ok=True)
+                elif nested.is_dir():
+                    nested.rmdir()
+            child.rmdir()
+        except OSError:
+            continue
 
 
 def attach_application_context(graph: Any, request: AnalysisRequest) -> None:
@@ -917,8 +1018,6 @@ def compact_context_json(request: AnalysisRequest) -> str:
 
 
 def create_role_llm(request: AnalysisRequest, callbacks: list[Any] | None = None):
-    apply_request_api_keys(request)
-
     from tradingagents.llm_clients.factory import create_llm_client
 
     kwargs: dict[str, Any] = {}
@@ -928,7 +1027,7 @@ def create_role_llm(request: AnalysisRequest, callbacks: list[Any] | None = None
     client = create_llm_client(
         provider=request.llm_provider,
         model=model,
-        base_url=request.backend_url.strip() if request.backend_url else None,
+        base_url=validate_backend_url(request.backend_url),
         **kwargs,
     )
     return client.get_llm()
@@ -1114,10 +1213,10 @@ def raw_error_message(exc: Exception) -> str:
 
 
 def user_error_message(exc: Exception) -> str:
-    message = raw_error_message(exc)
+    message = redact_sensitive_text(raw_error_message(exc))
     payload = parse_error_payload(getattr(exc, "body", None)) or parse_error_payload(message)
     payload_code = str((payload or {}).get("code") or (payload or {}).get("type") or "")
-    payload_message = str((payload or {}).get("message") or message)
+    payload_message = redact_sensitive_text(str((payload or {}).get("message") or message))
 
     if (
         "NoneType" in payload_message
@@ -1137,6 +1236,22 @@ def user_error_message(exc: Exception) -> str:
             "请把模型改为 anthropic/claude-haiku-4.5，或在 Vercel AI Gateway 充值后再使用 Sonnet/Opus/GPT 高阶模型。"
         )
     return message or "AI 分析中断，请检查模型和网关配置后重试。"
+
+
+def redact_sensitive_text(value: str) -> str:
+    text = str(value or "")
+    for name in (
+        "ANTHROPIC_API_KEY",
+        "OPENAI_API_KEY",
+        "OPENAI_COMPATIBLE_API_KEY",
+        "AI_GATEWAY_API_KEY",
+        "GOOGLE_API_KEY",
+        "FINNHUB_API_KEY",
+    ):
+        secret = os.getenv(name, "").strip()
+        if secret:
+            text = text.replace(secret, "[REDACTED]")
+    return re.sub(r"\bsk-[A-Za-z0-9_-]{12,}\b", "[REDACTED]", text)
 
 
 async def analysis_events(request: AnalysisRequest):
@@ -1383,17 +1498,43 @@ async def analysis_events(request: AnalysisRequest):
         )
         yield sse("done", {})
     except Exception as exc:
-        print("AI analysis stream failed:\n" + traceback.format_exc(), flush=True)
+        if _env_enabled("SIDECAR_DEBUG_TRACEBACK") and os.getenv("APP_ENV", "development").lower() != "production":
+            print("AI analysis stream failed:\n" + redact_sensitive_text(traceback.format_exc()), flush=True)
+        else:
+            print(
+                json.dumps(
+                    {
+                        "event": "analysis_failed",
+                        "error_type": type(exc).__name__,
+                        "run_id": request.run_id,
+                    },
+                    ensure_ascii=False,
+                ),
+                flush=True,
+            )
         yield sse("error", {"message": user_error_message(exc)})
 
 
 @app.get("/health")
 def health():
-    return {"status": "ok", "runtime": runtime_status()}
+    status = runtime_status()
+    return {
+        "status": "ok",
+        "runtime": {
+            "mode": status.get("mode"),
+            "vendor_available": status.get("vendor_available"),
+            "vibe_root_available": status.get("vibe_root_available"),
+            "vibe_tools_enabled": status.get("vibe_tools_enabled"),
+        },
+    }
 
 
 @app.post("/analyze")
 async def analyze(request: AnalysisRequest):
+    try:
+        request.backend_url = validate_backend_url(request.backend_url)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     run_id = request.run_id or f"run-{uuid.uuid4()}"
     try:
         request.run_id = validate_run_id(run_id)
@@ -1422,6 +1563,8 @@ async def analyze(request: AnalysisRequest):
         )
     except RunConflictError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except RunCapacityError as exc:
+        raise HTTPException(status_code=429, detail=str(exc)) from exc
     headers = {
         "Cache-Control": "no-cache",
         "Connection": "keep-alive",

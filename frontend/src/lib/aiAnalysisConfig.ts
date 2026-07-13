@@ -3,13 +3,6 @@ import { AI_ANALYSIS_CONTRACT } from './aiAnalysisContract';
 
 export const AI_ANALYSIS_CONFIG_STORAGE_KEY = 'alphalens.aiAnalysisConfig.v1';
 
-export const DEFAULT_AI_API_KEYS: Record<string, string> = {
-  anthropic: '',
-  openai: '',
-  openai_compatible: '',
-  google: ''
-};
-
 export const FALLBACK_AI_ANALYSIS_OPTIONS: AIAnalysisConfigResponse = {
   contract: AI_ANALYSIS_CONTRACT,
   providers: [
@@ -74,8 +67,7 @@ export function createDefaultAIAnalysisConfig(options: AIAnalysisConfigResponse)
     max_debate_rounds: 1,
     max_risk_rounds: 1,
     online_tools: true,
-    analysts: options.analysts.filter((analyst) => analyst.default_enabled !== false).map((analyst) => analyst.id),
-    api_keys: { ...DEFAULT_AI_API_KEYS }
+    analysts: options.analysts.filter((analyst) => analyst.default_enabled !== false).map((analyst) => analyst.id)
   };
 }
 
@@ -92,7 +84,10 @@ export function readStoredAIAnalysisConfig() {
 
 export function writeStoredAIAnalysisConfig(config: AnalysisConfig) {
   if (typeof window === 'undefined') return;
-  window.localStorage.setItem(AI_ANALYSIS_CONFIG_STORAGE_KEY, JSON.stringify(config));
+  const { api_keys: _legacyAPIKeys, ...safeConfig } = config as AnalysisConfig & {
+    api_keys?: Record<string, string>;
+  };
+  window.localStorage.setItem(AI_ANALYSIS_CONFIG_STORAGE_KEY, JSON.stringify(safeConfig));
 }
 
 export function getAIAnalysisProvider(options: AIAnalysisConfigResponse, providerId: string): AIProviderConfig {
@@ -128,7 +123,6 @@ export function normalizeAIAnalysisConfig(
     max_debate_rounds: config.max_debate_rounds === 2 ? 2 : 1,
     max_risk_rounds: config.max_risk_rounds === 2 ? 2 : 1,
     online_tools: config.online_tools ?? true,
-    analysts: selectedAnalysts.length > 0 ? selectedAnalysts : fallback.analysts,
-    api_keys: { ...DEFAULT_AI_API_KEYS, ...(config.api_keys ?? {}) }
+    analysts: selectedAnalysts.length > 0 ? selectedAnalysts : fallback.analysts
   };
 }

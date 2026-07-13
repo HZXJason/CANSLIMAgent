@@ -15,6 +15,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 type BrokerHandler struct {
@@ -165,7 +166,7 @@ func (h *BrokerHandler) OAuthCallback(c *gin.Context) {
 		h.redirectBrokerSettings(c, broker, "authorization_failed")
 		return
 	}
-	verifier, err := h.vault.Decrypt(session.PKCEVerifierCiphertext, session.PKCEVerifierNonce)
+	verifier, err := h.vault.DecryptScoped("oauth-pkce:"+broker, session.PKCEVerifierCiphertext, session.PKCEVerifierNonce)
 	if err != nil || strings.TrimSpace(verifier["pkce_verifier"]) == "" {
 		h.clearPendingOAuthConnection(c.Request.Context(), broker, session.ID)
 		h.redirectBrokerSettings(c, broker, "authorization_failed")
@@ -177,13 +178,17 @@ func (h *BrokerHandler) OAuthCallback(c *gin.Context) {
 		h.redirectBrokerSettings(c, broker, "authorization_failed")
 		return
 	}
-	ciphertext, nonce, err := h.vault.Encrypt(identity.Credentials)
+	ciphertext, nonce, err := h.vault.EncryptScoped("broker:"+broker, identity.Credentials)
 	if err != nil {
 		h.clearPendingOAuthConnection(c.Request.Context(), broker, session.ID)
 		h.redirectBrokerSettings(c, broker, "authorization_failed")
 		return
 	}
 	if err := h.completeOAuthConnection(c.Request.Context(), broker, session.ID, identity.AccountName, identity.ExpiresAt, ciphertext, nonce); err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			h.redirectBrokerSettings(c, broker, "authorization_state_expired")
+			return
+		}
 		Fail(c, http.StatusInternalServerError, "broker connection could not be saved")
 		return
 	}
@@ -227,7 +232,7 @@ func (h *BrokerHandler) detectGateway(c *gin.Context, broker string) {
 		Fail(c, http.StatusBadGateway, "broker gateway returned invalid account metadata")
 		return
 	}
-	ciphertext, nonce, err := h.vault.Encrypt(identity.Credentials)
+	ciphertext, nonce, err := h.vault.EncryptScoped("broker:"+broker, identity.Credentials)
 	if err != nil {
 		Fail(c, http.StatusInternalServerError, "broker credentials could not be encrypted")
 		return
@@ -328,33 +333,28 @@ func (h *BrokerHandler) Import(c *gin.Context) {
 	}
 	created, skipped := 0, 0
 	source := "broker:" + connection.Broker
+	now := h.now()
 	err := h.db.WithContext(c.Request.Context()).Transaction(func(tx *gorm.DB) error {
 		for _, execution := range executions {
-			var existing models.TradeJournalEntry
-			err := tx.Where("source = ? AND order_id = ?", source, execution.ExternalID).First(&existing).Error
-			if err == nil {
-				skipped++
-				continue
-			}
-			if !errors.Is(err, gorm.ErrRecordNotFound) {
-				return err
-			}
 			executedAt, _ := parseBrokerTime(execution.ExecutedAt)
 			externalID := execution.ExternalID
 			entry := models.TradeJournalEntry{ExecutedAt: executedAt, Symbol: execution.Symbol, Name: execution.Name, Side: execution.Side, Quantity: execution.Quantity, Price: execution.Price, Amount: execution.Quantity * execution.Price, Fee: execution.Fee, Market: execution.Market, Currency: execution.Currency, OrderID: &externalID, Source: source}
-			if err := tx.Create(&entry).Error; err != nil {
-				return err
+			result := tx.Clauses(clause.OnConflict{DoNothing: true}).Create(&entry)
+			if result.Error != nil {
+				return result.Error
 			}
-			created++
+			if result.RowsAffected == 0 {
+				skipped++
+			} else {
+				created++
+			}
 		}
-		return nil
+		return tx.Model(&connection).Updates(map[string]any{"last_synced_at": now, "updated_at": now}).Error
 	})
 	if err != nil {
 		Fail(c, http.StatusInternalServerError, "broker executions could not be imported")
 		return
 	}
-	now := h.now()
-	_ = h.db.WithContext(c.Request.Context()).Model(&connection).Updates(map[string]any{"last_synced_at": now, "updated_at": now}).Error
 	OK(c, gin.H{"created": created, "skipped": skipped, "warnings": warnings})
 }
 
@@ -390,7 +390,7 @@ func (h *BrokerHandler) readConnectionCredentials(c *gin.Context) (models.Broker
 		Fail(c, http.StatusConflict, "broker connection is not authorized")
 		return models.BrokerConnection{}, nil, false
 	}
-	credentials, err := h.vault.Decrypt(connection.CredentialCiphertext, connection.CredentialNonce)
+	credentials, err := h.vault.DecryptScoped("broker:"+connection.Broker, connection.CredentialCiphertext, connection.CredentialNonce)
 	if err != nil {
 		Fail(c, http.StatusInternalServerError, "broker credentials could not be read")
 		return models.BrokerConnection{}, nil, false
@@ -495,7 +495,7 @@ func (h *BrokerHandler) clearPendingOAuthConnection(ctx context.Context, broker 
 func (h *BrokerHandler) completeOAuthConnection(ctx context.Context, broker string, sessionID uuid.UUID, accountName string, expiresAt *time.Time, ciphertext, nonce []byte) error {
 	now := h.now()
 	return h.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		return tx.Model(&models.BrokerConnection{}).
+		result := tx.Model(&models.BrokerConnection{}).
 			Where("broker = ? AND connection_status = ? AND pending_authorization_session_id = ?", broker, models.BrokerConnectionStatusPending, sessionID).
 			Updates(map[string]any{
 				"credential_ciphertext":            ciphertext,
@@ -506,7 +506,14 @@ func (h *BrokerHandler) completeOAuthConnection(ctx context.Context, broker stri
 				"pending_authorization_session_id": nil,
 				"authorization_expires_at":         expiresAt,
 				"updated_at":                       now,
-			}).Error
+			})
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected != 1 {
+			return gorm.ErrRecordNotFound
+		}
+		return nil
 	})
 }
 

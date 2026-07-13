@@ -19,7 +19,7 @@ func NewPresetHandler(database *gorm.DB) *PresetHandler {
 
 func (h *PresetHandler) List(c *gin.Context) {
 	var presets []models.ThresholdPreset
-	if err := h.db.WithContext(c.Request.Context()).Order("is_default desc, created_at asc").Find(&presets).Error; err != nil {
+	if err := h.db.WithContext(c.Request.Context()).Order("is_default desc, created_at asc").Limit(200).Find(&presets).Error; err != nil {
 		Fail(c, http.StatusInternalServerError, "阈值方案读取失败")
 		return
 	}

@@ -37,16 +37,21 @@ type JournalReflectionUpstream interface {
 type HTTPJournalReflectionUpstream struct {
 	url    string
 	client *http.Client
+	secret string
 }
 
-func NewHTTPJournalReflectionUpstream(upstreamURL string, timeout time.Duration) *HTTPJournalReflectionUpstream {
+func NewHTTPJournalReflectionUpstream(upstreamURL string, timeout time.Duration, sharedSecret ...string) *HTTPJournalReflectionUpstream {
 	if timeout <= 0 {
 		timeout = 2 * time.Minute
 	}
-	return &HTTPJournalReflectionUpstream{
+	upstream := &HTTPJournalReflectionUpstream{
 		url:    resolveJournalReflectionURL(upstreamURL),
 		client: &http.Client{Timeout: timeout},
 	}
+	if len(sharedSecret) > 0 {
+		upstream.secret = strings.TrimSpace(sharedSecret[0])
+	}
+	return upstream
 }
 
 func (u *HTTPJournalReflectionUpstream) Reflect(ctx context.Context, payload JournalReflectionRequest) (JournalReflectionResult, error) {
@@ -59,6 +64,9 @@ func (u *HTTPJournalReflectionUpstream) Reflect(ctx context.Context, payload Jou
 		return nil, err
 	}
 	req.Header.Set("Content-Type", "application/json")
+	if u.secret != "" {
+		req.Header.Set("X-Sidecar-Token", u.secret)
+	}
 	resp, err := u.client.Do(req)
 	if err != nil {
 		return nil, err
@@ -69,7 +77,7 @@ func (u *HTTPJournalReflectionUpstream) Reflect(ctx context.Context, payload Jou
 		return nil, fmt.Errorf("journal reflection upstream returned HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(detail)))
 	}
 	var result JournalReflectionResult
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 8<<20)).Decode(&result); err != nil {
 		return nil, err
 	}
 	return result, nil

@@ -8,7 +8,7 @@ services:
       POSTGRES_PASSWORD: alphalens
       POSTGRES_DB: alphalens
     ports:
-      - "5432:5432"
+      - "127.0.0.1:5432:5432"
     volumes:
       - alphalens_pg_data:/var/lib/postgresql/data
     healthcheck:
@@ -24,6 +24,8 @@ services:
     env_file:
       - ./sidecar/.env
     restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8765/health"]
       interval: 30s

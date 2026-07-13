@@ -274,7 +274,9 @@ func (c *FreeUniverseClient) get(ctx context.Context, endpoint string, accept st
 		return nil, err
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		resp.Body.Close()
+		if closeErr := resp.Body.Close(); closeErr != nil {
+			return nil, fmt.Errorf("免费股票池响应关闭失败：%w", closeErr)
+		}
 		return nil, fmt.Errorf("免费股票池请求失败：HTTP %d", resp.StatusCode)
 	}
 	return resp, nil

@@ -85,12 +85,15 @@ func (c *TranslationClient) translateLibre(ctx context.Context, text string) (st
 			TranslatedText string `json:"translatedText"`
 		}
 		decodeErr := json.NewDecoder(resp.Body).Decode(&body)
-		resp.Body.Close()
+		closeErr := resp.Body.Close()
 		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 			return "", fmt.Errorf("LibreTranslate 请求失败：HTTP %d", resp.StatusCode)
 		}
 		if decodeErr != nil {
 			return "", decodeErr
+		}
+		if closeErr != nil {
+			return "", closeErr
 		}
 		translated := cleanDescription(body.TranslatedText)
 		if translated == "" || !containsCJK(translated) {

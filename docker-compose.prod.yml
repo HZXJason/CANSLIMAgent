@@ -1,0 +1,116 @@
+services:
+  postgres:
+    image: postgres:15-bookworm
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: alphalens
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+      POSTGRES_DB: alphalens
+    volumes:
+      - alphalens_prod_pg_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U alphalens -d alphalens"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    security_opt:
+      - no-new-privileges:true
+
+  sidecar:
+    build: ./sidecar
+    restart: unless-stopped
+    environment:
+      APP_ENV: production
+      SIDECAR_HOST: 0.0.0.0
+      SIDECAR_SHARED_SECRET: ${SIDECAR_SHARED_SECRET:?SIDECAR_SHARED_SECRET is required}
+      AI_ALLOWED_BACKEND_HOSTS: ${AI_ALLOWED_BACKEND_HOSTS:-ai-gateway.vercel.sh}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      GOOGLE_API_KEY: ${GOOGLE_API_KEY:-}
+      OPENAI_COMPATIBLE_API_KEY: ${OPENAI_COMPATIBLE_API_KEY:-}
+    volumes:
+      - alphalens_prod_ai_runs:/app/data
+    tmpfs:
+      - /tmp
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8765/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+
+  migrate:
+    build: ./backend
+    restart: "no"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      APP_ENV: production
+      HOST: 127.0.0.1
+      DATABASE_URL: ${DATABASE_URL:-postgres://alphalens:${POSTGRES_PASSWORD}@postgres:5432/alphalens?sslmode=disable}
+      API_AUTH_TOKEN: ${API_AUTH_TOKEN:?API_AUTH_TOKEN is required}
+      SIDECAR_SHARED_SECRET: ${SIDECAR_SHARED_SECRET:?SIDECAR_SHARED_SECRET is required}
+      RUN_DATABASE_MIGRATIONS: "true"
+      MIGRATE_ONLY: "true"
+    cap_drop:
+      - ALL
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+
+  backend:
+    build: ./backend
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+      sidecar:
+        condition: service_healthy
+    environment:
+      APP_ENV: production
+      HOST: 0.0.0.0
+      PORT: 8080
+      DATABASE_URL: ${DATABASE_URL:-postgres://alphalens:${POSTGRES_PASSWORD}@postgres:5432/alphalens?sslmode=disable}
+      API_AUTH_TOKEN: ${API_AUTH_TOKEN:?API_AUTH_TOKEN is required}
+      SIDECAR_SHARED_SECRET: ${SIDECAR_SHARED_SECRET:?SIDECAR_SHARED_SECRET is required}
+      AI_ANALYSIS_UPSTREAM_URL: http://sidecar:8765
+      BROKER_SYNC_UPSTREAM_URL: http://sidecar:8765
+      BROKER_CREDENTIALS_ENCRYPTION_KEY: ${BROKER_CREDENTIALS_ENCRYPTION_KEY:?BROKER_CREDENTIALS_ENCRYPTION_KEY is required}
+      ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:?ALLOWED_ORIGINS is required}
+      FRONTEND_URL: ${FRONTEND_URL:?FRONTEND_URL is required}
+      ENABLE_YFINANCE_FALLBACK: "false"
+      RUN_DATABASE_MIGRATIONS: "false"
+    cap_drop:
+      - ALL
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+
+  frontend:
+    build: ./frontend
+    restart: unless-stopped
+    depends_on:
+      - backend
+    environment:
+      API_AUTH_TOKEN: ${API_AUTH_TOKEN:?API_AUTH_TOKEN is required}
+    ports:
+      - "127.0.0.1:${APP_PORT:-8088}:8080"
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+
+volumes:
+  alphalens_prod_pg_data:
+  alphalens_prod_ai_runs:

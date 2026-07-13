@@ -11,7 +11,13 @@ import (
 )
 
 type Config struct {
+	Host                    string
 	Port                    string
+	AppEnv                  string
+	APIAuthToken            string
+	SidecarSharedSecret     string
+	RunDatabaseMigrations   bool
+	MigrateOnly             bool
 	DatabaseURL             string
 	AlphaVantageAPIKey      string
 	FMPAPIKey               string
@@ -38,6 +44,7 @@ type Config struct {
 	AllowedOrigins          []string
 	RequestTimeout          time.Duration
 	ScanDelay               time.Duration
+	MaxConcurrentRequests   int
 }
 
 // BrokerOAuthConfig is server-only configuration for an OAuth broker app.
@@ -69,12 +76,19 @@ type BrokerGatewayConfig struct {
 
 func Load() Config {
 	_ = godotenv.Load(".env", "backend/.env")
+	appEnv := strings.ToLower(getEnv("APP_ENV", "development"))
 	futuGateway := loadBrokerGateway("BROKER_FUTU", "11111")
 	ibkrGateway := loadBrokerGateway("BROKER_IBKR", "7497")
 	ibkrGateway.ClientID = getEnv("BROKER_IBKR_CLIENT_ID", "9901")
 
 	return Config{
+		Host:                    getEnv("HOST", "127.0.0.1"),
 		Port:                    getEnv("PORT", "8080"),
+		AppEnv:                  appEnv,
+		APIAuthToken:            strings.TrimSpace(os.Getenv("API_AUTH_TOKEN")),
+		SidecarSharedSecret:     strings.TrimSpace(os.Getenv("SIDECAR_SHARED_SECRET")),
+		RunDatabaseMigrations:   getEnvBool("RUN_DATABASE_MIGRATIONS", appEnv != "production"),
+		MigrateOnly:             getEnvBool("MIGRATE_ONLY", false),
 		DatabaseURL:             os.Getenv("DATABASE_URL"),
 		AlphaVantageAPIKey:      os.Getenv("ALPHA_VANTAGE_API_KEY"),
 		FMPAPIKey:               os.Getenv("FMP_API_KEY"),
@@ -101,6 +115,7 @@ func Load() Config {
 		AllowedOrigins:          splitOrigins(getEnv("ALLOWED_ORIGINS", "http://localhost:5173,http://127.0.0.1:5173")),
 		RequestTimeout:          time.Duration(getEnvInt("REQUEST_TIMEOUT_SECONDS", 20)) * time.Second,
 		ScanDelay:               time.Duration(getEnvInt("SCAN_DELAY_MS", 80)) * time.Millisecond,
+		MaxConcurrentRequests:   getEnvInt("MAX_CONCURRENT_REQUESTS", 64),
 	}
 }
 

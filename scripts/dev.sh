@@ -86,7 +86,7 @@ trap on_signal INT TERM
 require_cmd docker
 require_cmd curl
 require_cmd go
-require_cmd npm
+require_cmd corepack
 
 log "Starting Docker postgres"
 docker compose up -d postgres
@@ -117,9 +117,9 @@ else
   (
     cd frontend
     if [ ! -d node_modules ]; then
-      npm install
+      corepack pnpm install --frozen-lockfile
     fi
-    npm run dev -- --host 127.0.0.1
+    corepack pnpm run dev -- --host 127.0.0.1
   ) &
   STARTED_PIDS+=("$!")
   wait_url "Frontend" "$FRONTEND_URL" 60

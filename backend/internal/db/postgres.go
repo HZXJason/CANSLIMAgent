@@ -11,6 +11,17 @@ import (
 )
 
 func OpenPostgres(databaseURL string) (*gorm.DB, error) {
+	database, err := ConnectPostgres(databaseURL)
+	if err != nil {
+		return nil, err
+	}
+	if err := Migrate(database); err != nil {
+		return nil, err
+	}
+	return database, nil
+}
+
+func ConnectPostgres(databaseURL string) (*gorm.DB, error) {
 	if databaseURL == "" {
 		return nil, errors.New("DATABASE_URL 未配置")
 	}
@@ -25,19 +36,57 @@ func OpenPostgres(databaseURL string) (*gorm.DB, error) {
 	sqlDB.SetMaxOpenConns(25)
 	sqlDB.SetMaxIdleConns(5)
 	sqlDB.SetConnMaxLifetime(5 * time.Minute)
-	if err := database.AutoMigrate(&models.Stock{}, &models.StockMetric{}, &models.ThresholdPreset{}, &models.TradeJournalEntry{}, &models.TradeJournalReflection{}, &models.TradePlan{}, &models.BrokerConnection{}, &models.BrokerAuthorizationSession{}); err != nil {
-		return nil, err
-	}
-	if err := migrateTradeJournalSchema(database); err != nil {
-		return nil, err
-	}
-	if err := normalizeStockMetricSufficiency(database); err != nil {
-		return nil, err
-	}
-	if err := seedDefaultPreset(database); err != nil {
-		return nil, err
-	}
 	return database, nil
+}
+
+func Migrate(database *gorm.DB) error {
+	return database.Transaction(func(tx *gorm.DB) error {
+		// Serialize startup schema work across replicas. The transaction-scoped
+		// advisory lock is released automatically on commit or rollback.
+		if err := tx.Exec("SELECT pg_advisory_xact_lock(?)", int64(0x43414e534c494d)).Error; err != nil {
+			return err
+		}
+		if err := tx.Exec(`CREATE TABLE IF NOT EXISTS app_schema_migrations (
+			version text PRIMARY KEY,
+			applied_at timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP
+		)`).Error; err != nil {
+			return err
+		}
+		if err := tx.AutoMigrate(&models.Stock{}, &models.StockMetric{}, &models.ThresholdPreset{}, &models.TradeJournalEntry{}, &models.TradeJournalReflection{}, &models.TradePlan{}, &models.BrokerConnection{}, &models.BrokerAuthorizationSession{}); err != nil {
+			return err
+		}
+		if err := migrateTradeJournalSchema(tx); err != nil {
+			return err
+		}
+		if err := enforceBrokerExecutionUniqueness(tx); err != nil {
+			return err
+		}
+		if err := normalizeStockMetricSufficiency(tx); err != nil {
+			return err
+		}
+		if err := seedDefaultPreset(tx); err != nil {
+			return err
+		}
+		return tx.Exec(`INSERT INTO app_schema_migrations (version)
+			VALUES ('2026-07-13-enterprise-baseline')
+			ON CONFLICT (version) DO NOTHING`).Error
+	})
+}
+
+func enforceBrokerExecutionUniqueness(database *gorm.DB) error {
+	return database.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Exec(`DELETE FROM trade_journal_entries duplicate
+			USING trade_journal_entries canonical
+			WHERE duplicate.source = canonical.source
+			  AND duplicate.order_id = canonical.order_id
+			  AND duplicate.order_id IS NOT NULL
+			  AND duplicate.id > canonical.id`).Error; err != nil {
+			return err
+		}
+		return tx.Exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_trade_journal_broker_execution
+			ON trade_journal_entries (source, order_id)
+			WHERE order_id IS NOT NULL`).Error
+	})
 }
 
 func migrateTradeJournalSchema(database *gorm.DB) error {

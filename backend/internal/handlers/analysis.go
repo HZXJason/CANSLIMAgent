@@ -32,6 +32,10 @@ func NewAnalysisHandler(analysis *services.AnalysisService, streamURL string, pr
 
 func (h *AnalysisHandler) Stream(c *gin.Context) {
 	symbol := normalizeSymbolParam(c.Param("symbol"))
+	if symbol == "" {
+		Fail(c, http.StatusBadRequest, "股票代码格式无效")
+		return
+	}
 	c.Header("Content-Type", "text/event-stream")
 	c.Header("Cache-Control", "no-cache")
 	c.Header("Connection", "keep-alive")

@@ -23,7 +23,7 @@ import (
 
 const (
 	brokerOAuthSessionTTL     = 10 * time.Minute
-	pkceVerifierCredentialKey = "pkce_verifier"
+	pkceVerifierCredentialKey = "pkce_verifier" // #nosec G101 -- JSON field name, not a credential
 )
 
 // BrokerAuthorizer starts and completes server-managed OAuth, or discovers a
@@ -80,9 +80,14 @@ func NewHTTPBrokerAuthorizer(oauthByBroker map[string]config.BrokerOAuthConfig, 
 	return &HTTPBrokerAuthorizer{
 		oauthByBroker: configs,
 		vault:         vault,
-		client:        &http.Client{Timeout: timeout},
-		gateway:       gateway,
-		now:           time.Now,
+		client: &http.Client{
+			Timeout: timeout,
+			CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
+				return http.ErrUseLastResponse
+			},
+		},
+		gateway: gateway,
+		now:     time.Now,
 	}
 }
 
@@ -97,6 +102,9 @@ func (a *HTTPBrokerAuthorizer) BeginOAuth(_ context.Context, broker string) (Bro
 	if err := validateOAuthScopes(oauth.Scopes); err != nil {
 		return BrokerOAuthStart{}, err
 	}
+	if err := validateOAuthConfigEndpoints(oauth); err != nil {
+		return BrokerOAuthStart{}, err
+	}
 
 	state, err := randomOAuthValue()
 	if err != nil {
@@ -106,7 +114,7 @@ func (a *HTTPBrokerAuthorizer) BeginOAuth(_ context.Context, broker string) (Bro
 	if err != nil {
 		return BrokerOAuthStart{}, fmt.Errorf("generate PKCE verifier: %w", err)
 	}
-	verifierCiphertext, verifierNonce, err := a.vault.Encrypt(map[string]string{pkceVerifierCredentialKey: verifier})
+	verifierCiphertext, verifierNonce, err := a.vault.EncryptScoped("oauth-pkce:"+broker, map[string]string{pkceVerifierCredentialKey: verifier})
 	if err != nil {
 		return BrokerOAuthStart{}, fmt.Errorf("encrypt PKCE verifier: %w", err)
 	}
@@ -131,6 +139,9 @@ func (a *HTTPBrokerAuthorizer) CompleteOAuth(ctx context.Context, broker, code, 
 	}
 	oauth, err := a.oauthConfig(broker)
 	if err != nil {
+		return BrokerAuthorizationIdentity{}, err
+	}
+	if err := validateOAuthConfigEndpoints(oauth); err != nil {
 		return BrokerAuthorizationIdentity{}, err
 	}
 
@@ -163,6 +174,38 @@ func (a *HTTPBrokerAuthorizer) oauthConfig(broker string) (config.BrokerOAuthCon
 	return oauth, nil
 }
 
+func validateOAuthConfigEndpoints(oauth config.BrokerOAuthConfig) error {
+	for name, endpoint := range map[string]string{
+		"authorization": oauth.AuthorizeURL,
+		"token":         oauth.TokenURL,
+		"redirect":      oauth.RedirectURL,
+	} {
+		if err := validateOAuthEndpoint(endpoint); err != nil {
+			return fmt.Errorf("OAuth %s endpoint is invalid: %w", name, err)
+		}
+	}
+	if strings.TrimSpace(oauth.AccountURL) != "" {
+		if err := validateOAuthEndpoint(oauth.AccountURL); err != nil {
+			return fmt.Errorf("OAuth account endpoint is invalid: %w", err)
+		}
+	}
+	return nil
+}
+
+func validateOAuthEndpoint(rawURL string) error {
+	parsed, err := url.Parse(strings.TrimSpace(rawURL))
+	if err != nil || parsed.Hostname() == "" || parsed.User != nil {
+		return errors.New("URL is malformed or contains credentials")
+	}
+	if parsed.Scheme == "https" {
+		return nil
+	}
+	if parsed.Scheme == "http" && isLoopbackBrokerHost(parsed.Hostname()) {
+		return nil
+	}
+	return errors.New("HTTPS is required except for loopback development endpoints")
+}
+
 func (a *HTTPBrokerAuthorizer) exchangeOAuthCode(ctx context.Context, oauth config.BrokerOAuthConfig, code, verifier string) (map[string]string, *time.Time, error) {
 	form := url.Values{
 		"grant_type":    {"authorization_code"},
@@ -193,7 +236,7 @@ func (a *HTTPBrokerAuthorizer) exchangeOAuthCode(ctx context.Context, oauth conf
 		RefreshToken string `json:"refresh_token"`
 		ExpiresIn    int64  `json:"expires_in"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&token); err != nil {
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&token); err != nil {
 		return nil, nil, fmt.Errorf("decode OAuth token response: %w", err)
 	}
 	if strings.TrimSpace(token.AccessToken) == "" {
@@ -239,7 +282,7 @@ func (a *HTTPBrokerAuthorizer) fetchOAuthAccountName(ctx context.Context, broker
 			AccountName string `json:"account_name"`
 		} `json:"data"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&account); err != nil {
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&account); err != nil {
 		return "", fmt.Errorf("decode OAuth account response: %w", err)
 	}
 	for _, candidate := range []string{account.AccountName, account.Account, account.Data.AccountName} {
@@ -349,6 +392,12 @@ type HTTPBrokerGatewayClient struct {
 	url              string
 	client           *http.Client
 	gatewaysByBroker map[string]config.BrokerGatewayConfig
+	secret           string
+}
+
+func (c *HTTPBrokerGatewayClient) WithSharedSecret(secret string) *HTTPBrokerGatewayClient {
+	c.secret = strings.TrimSpace(secret)
+	return c
 }
 
 func NewHTTPBrokerGatewayClient(sidecarURL string, gatewayConfigs ...map[string]config.BrokerGatewayConfig) *HTTPBrokerGatewayClient {
@@ -371,7 +420,7 @@ func NewHTTPBrokerGatewayClient(sidecarURL string, gatewayConfigs ...map[string]
 }
 
 func (c *HTTPBrokerGatewayClient) DetectGateway(ctx context.Context, broker string) (BrokerGatewayIdentity, error) {
-	if err := validateLoopbackBrokerUpstream(c.url); err != nil {
+	if err := validateTrustedBrokerUpstream(c.url, c.secret); err != nil {
 		return BrokerGatewayIdentity{}, &BrokerGatewayUnavailableError{Broker: broker, Err: err}
 	}
 	settings, err := c.gatewaySettings(broker)
@@ -390,6 +439,9 @@ func (c *HTTPBrokerGatewayClient) DetectGateway(ctx context.Context, broker stri
 		return BrokerGatewayIdentity{}, &BrokerGatewayUnavailableError{Broker: broker, Err: fmt.Errorf("create gateway status request: %w", err)}
 	}
 	req.Header.Set("Content-Type", "application/json")
+	if c.secret != "" {
+		req.Header.Set("X-Sidecar-Token", c.secret)
+	}
 	resp, err := c.client.Do(req)
 	if err != nil {
 		return BrokerGatewayIdentity{}, &BrokerGatewayUnavailableError{Broker: broker, Err: err}
@@ -401,7 +453,7 @@ func (c *HTTPBrokerGatewayClient) DetectGateway(ctx context.Context, broker stri
 	var response struct {
 		AccountName string `json:"account_name"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&response); err != nil {
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&response); err != nil {
 		return BrokerGatewayIdentity{}, &BrokerGatewayUnavailableError{Broker: broker, Err: fmt.Errorf("decode gateway status response: %w", err)}
 	}
 	if strings.TrimSpace(response.AccountName) == "" {

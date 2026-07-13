@@ -79,7 +79,7 @@ func NewJournalHandlerWithReflection(database *gorm.DB, upstream services.Journa
 }
 
 func (h *JournalHandler) List(c *gin.Context) {
-	entries, err := h.listEntries(c, 0)
+	entries, err := h.listEntries(c, 1000)
 	if err != nil {
 		Fail(c, http.StatusInternalServerError, "journal entries could not be loaded")
 		return
@@ -93,7 +93,7 @@ func (h *JournalHandler) List(c *gin.Context) {
 }
 
 func (h *JournalHandler) Export(c *gin.Context) {
-	entries, err := h.listEntries(c, 0)
+	entries, err := h.listEntries(c, 10000)
 	if err != nil {
 		Fail(c, http.StatusInternalServerError, "journal entries could not be exported")
 		return
@@ -118,7 +118,7 @@ func (h *JournalHandler) Reflect(c *gin.Context) {
 		Fail(c, http.StatusServiceUnavailable, "journal reflection service is not configured")
 		return
 	}
-	entries, err := h.listEntries(c, 0)
+	entries, err := h.listEntries(c, 2000)
 	if err != nil {
 		Fail(c, http.StatusInternalServerError, "journal entries could not be loaded for reflection")
 		return

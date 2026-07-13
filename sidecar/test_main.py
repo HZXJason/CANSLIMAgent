@@ -1,5 +1,6 @@
 import unittest
 import tempfile
+import httpx
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -8,6 +9,49 @@ import main
 import broker_sync
 import data_auditor
 import vibe_decision_flow
+from pydantic import ValidationError
+
+
+class SecurityBoundaryTest(unittest.TestCase):
+    def test_error_messages_redact_server_api_keys(self):
+        with patch.dict(main.os.environ, {"OPENAI_API_KEY": "sk-super-secret-value-12345"}, clear=False):
+            message = main.user_error_message(RuntimeError("failed with sk-super-secret-value-12345"))
+        self.assertNotIn("sk-super-secret-value-12345", message)
+        self.assertIn("[REDACTED]", message)
+
+    def test_analysis_request_rejects_browser_api_keys(self):
+        with self.assertRaises(ValidationError):
+            main.AnalysisRequest(ticker="NVDA", api_keys={"openai": "secret"})
+
+    def test_backend_url_requires_server_allowlist(self):
+        with patch.dict(main.os.environ, {"AI_ALLOWED_BACKEND_HOSTS": "gateway.example.com"}, clear=False):
+            self.assertEqual(
+                main.validate_backend_url("https://gateway.example.com/v1"),
+                "https://gateway.example.com/v1",
+            )
+            for malicious in (
+                "http://gateway.example.com/v1",
+                "https://127.0.0.1/v1",
+                "https://metadata.google.internal/computeMetadata/v1",
+                "https://gateway.example.com/v1?target=http://127.0.0.1",
+            ):
+                with self.assertRaises(ValueError, msg=malicious):
+                    main.validate_backend_url(malicious)
+
+
+class SidecarMiddlewareTest(unittest.IsolatedAsyncioTestCase):
+    async def test_sidecar_shared_secret_protects_internal_routes(self):
+        with patch.dict(main.os.environ, {"SIDECAR_SHARED_SECRET": "s" * 32}, clear=False):
+            transport = httpx.ASGITransport(app=main.app)
+            async with httpx.AsyncClient(transport=transport, base_url="http://sidecar.test") as client:
+                self.assertEqual((await client.get("/health")).status_code, 200)
+                self.assertEqual((await client.post("/broker/connection-status", json={})).status_code, 401)
+                response = await client.post(
+                    "/broker/connection-status",
+                    headers={main.SIDECAR_TOKEN_HEADER: "s" * 32},
+                    json={},
+                )
+            self.assertEqual(response.status_code, 422)
 
 
 class ApplicationContextTest(unittest.TestCase):

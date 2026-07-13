@@ -29,6 +29,8 @@ var lockedTradePlanFields = map[string]struct{}{
 	"executed_journal_id": {},
 }
 
+var errTradePlanAlreadyClosed = errors.New("trade plan was already closed")
+
 type TradePlanHandler struct {
 	db *gorm.DB
 }
@@ -105,7 +107,7 @@ func (h *TradePlanHandler) List(c *gin.Context) {
 	}
 
 	var plans []models.TradePlan
-	if err := query.Find(&plans).Error; err != nil {
+	if err := query.Limit(1000).Find(&plans).Error; err != nil {
 		Fail(c, http.StatusInternalServerError, "trade plans could not be loaded")
 		return
 	}
@@ -269,18 +271,29 @@ func (h *TradePlanHandler) Execute(c *gin.Context) {
 	}
 
 	now := time.Now().UTC()
+	entry.ID = uuid.New()
 	err := h.db.WithContext(c.Request.Context()).Transaction(func(tx *gorm.DB) error {
-		if err := tx.Create(&entry).Error; err != nil {
-			return err
+		claim := tx.Model(&models.TradePlan{}).
+			Where("id = ? AND status IN ?", plan.ID, []string{models.TradePlanStatusDraft, models.TradePlanStatusWaiting}).
+			Updates(map[string]interface{}{
+				"status":              models.TradePlanStatusExecuted,
+				"executed_journal_id": entry.ID,
+				"executed_at":         now,
+				"updated_at":          now,
+			})
+		if claim.Error != nil {
+			return claim.Error
 		}
-		return tx.Model(&plan).Updates(map[string]interface{}{
-			"status":              models.TradePlanStatusExecuted,
-			"executed_journal_id": entry.ID,
-			"executed_at":         now,
-			"updated_at":          now,
-		}).Error
+		if claim.RowsAffected != 1 {
+			return errTradePlanAlreadyClosed
+		}
+		return tx.Create(&entry).Error
 	})
 	if err != nil {
+		if errors.Is(err, errTradePlanAlreadyClosed) {
+			Fail(c, http.StatusConflict, "trade plan was already executed or closed")
+			return
+		}
 		Fail(c, http.StatusInternalServerError, "trade plan could not be executed")
 		return
 	}

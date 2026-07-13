@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
@@ -26,10 +27,36 @@ func NewYFinanceClient(enabled bool, python string, timeout time.Duration) *YFin
 	_, currentFile, _, _ := runtime.Caller(0)
 	return &YFinanceClient{
 		enabled:    enabled,
-		python:     python,
+		python:     resolvePythonExecutable(python),
 		scriptPath: filepath.Join(filepath.Dir(currentFile), "yfinance_helper.py"),
 		timeout:    timeout,
 	}
+}
+
+func resolvePythonExecutable(configured string) string {
+	resolved, err := exec.LookPath(strings.TrimSpace(configured))
+	if err != nil {
+		return ""
+	}
+	resolved, err = filepath.Abs(resolved)
+	if err != nil {
+		return ""
+	}
+	if evaluated, evalErr := filepath.EvalSymlinks(resolved); evalErr == nil {
+		resolved = evaluated
+	}
+	info, err := os.Stat(resolved)
+	if err != nil || !info.Mode().IsRegular() {
+		return ""
+	}
+	base := strings.ToLower(filepath.Base(resolved))
+	if !strings.HasPrefix(base, "python") {
+		return ""
+	}
+	if relative, err := filepath.Rel(os.TempDir(), resolved); err == nil && relative != ".." && !strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
+		return ""
+	}
+	return resolved
 }
 
 func (c *YFinanceClient) Configured() bool {
@@ -285,6 +312,7 @@ func (c *YFinanceClient) runJSON(ctx context.Context, target interface{}, args .
 	}
 
 	allArgs := append([]string{c.scriptPath}, args...)
+	// #nosec G204 -- c.python is resolved to a regular Python executable at construction; the helper path is repo-owned.
 	cmd := exec.CommandContext(ctx, c.python, allArgs...)
 	output, err := cmd.Output()
 	if err != nil {

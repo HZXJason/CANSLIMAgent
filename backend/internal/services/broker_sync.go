@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"strings"
@@ -54,17 +55,22 @@ type BrokerSyncUpstream interface {
 type HTTPBrokerSyncUpstream struct {
 	url    string
 	client *http.Client
+	secret string
 }
 
-func NewHTTPBrokerSyncUpstream(sidecarURL string, timeout time.Duration) *HTTPBrokerSyncUpstream {
-	return &HTTPBrokerSyncUpstream{
+func NewHTTPBrokerSyncUpstream(sidecarURL string, timeout time.Duration, sharedSecret ...string) *HTTPBrokerSyncUpstream {
+	upstream := &HTTPBrokerSyncUpstream{
 		url:    strings.TrimRight(strings.TrimSpace(sidecarURL), "/") + "/broker/sync",
 		client: &http.Client{Timeout: timeout},
 	}
+	if len(sharedSecret) > 0 {
+		upstream.secret = strings.TrimSpace(sharedSecret[0])
+	}
+	return upstream
 }
 
 func (u *HTTPBrokerSyncUpstream) Sync(ctx context.Context, payload BrokerSyncRequest) (BrokerSyncResult, error) {
-	if err := validateLoopbackBrokerUpstream(u.url); err != nil {
+	if err := validateTrustedBrokerUpstream(u.url, u.secret); err != nil {
 		return BrokerSyncResult{}, err
 	}
 	body, err := json.Marshal(payload)
@@ -76,6 +82,9 @@ func (u *HTTPBrokerSyncUpstream) Sync(ctx context.Context, payload BrokerSyncReq
 		return BrokerSyncResult{}, fmt.Errorf("create broker sync request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
+	if u.secret != "" {
+		req.Header.Set("X-Sidecar-Token", u.secret)
+	}
 	resp, err := u.client.Do(req)
 	if err != nil {
 		return BrokerSyncResult{}, fmt.Errorf("broker sync upstream unavailable: %w", err)
@@ -85,25 +94,30 @@ func (u *HTTPBrokerSyncUpstream) Sync(ctx context.Context, payload BrokerSyncReq
 		var detail struct {
 			Detail string `json:"detail"`
 		}
-		_ = json.NewDecoder(resp.Body).Decode(&detail)
+		_ = json.NewDecoder(io.LimitReader(resp.Body, 64<<10)).Decode(&detail)
 		if detail.Detail == "" {
 			detail.Detail = resp.Status
 		}
 		return BrokerSyncResult{}, fmt.Errorf("broker sync failed: %s", detail.Detail)
 	}
 	var result BrokerSyncResult
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 8<<20)).Decode(&result); err != nil {
 		return BrokerSyncResult{}, fmt.Errorf("decode broker sync response: %w", err)
 	}
 	return result, nil
 }
 
 func validateLoopbackBrokerUpstream(rawURL string) error {
+	return validateTrustedBrokerUpstream(rawURL, "")
+}
+
+func validateTrustedBrokerUpstream(rawURL, sharedSecret string) error {
 	parsed, err := url.Parse(rawURL)
 	if err != nil || parsed.Scheme != "http" {
 		return fmt.Errorf("broker sync upstream must be a local HTTP sidecar")
 	}
-	if !isLoopbackBrokerHost(parsed.Hostname()) {
+	trustedContainerSidecar := parsed.Hostname() == "sidecar" && len(strings.TrimSpace(sharedSecret)) >= 32
+	if !isLoopbackBrokerHost(parsed.Hostname()) && !trustedContainerSidecar {
 		return fmt.Errorf("broker credentials may only be sent to a loopback sidecar")
 	}
 	return nil
