@@ -44,7 +44,9 @@ _PREFETCH_MAX_STRING_CHARS = 2_000
 
 _SIDECAR_ROOT = Path(__file__).resolve().parent
 _VENDOR_ROOT = _SIDECAR_ROOT / "vendor"
-_LEGACY_VIBE_ROOT = Path(__file__).resolve().parents[2] / "TradingAgent2.0" / "Vibe-Trading"
+_SIDECAR_PARENTS = list(_SIDECAR_ROOT.parents)
+_LEGACY_BASE = _SIDECAR_PARENTS[1] if len(_SIDECAR_PARENTS) > 1 else _SIDECAR_PARENTS[0]
+_LEGACY_VIBE_ROOT = _LEGACY_BASE / "TradingAgent2.0" / "Vibe-Trading"
 
 if str(_VENDOR_ROOT) not in sys.path:
     sys.path.insert(0, str(_VENDOR_ROOT))

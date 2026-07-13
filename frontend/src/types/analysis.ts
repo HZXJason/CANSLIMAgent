@@ -26,7 +26,6 @@ export interface AnalysisConfig {
   max_risk_rounds: number;
   online_tools: boolean;
   analysts: string[];
-  api_keys: Record<string, string>;
 }
 
 export interface AIKLineContext {
@@ -90,17 +89,6 @@ export interface AIAnalysisContract {
   stream_endpoint: string;
   upstream_mode: 'sse' | string;
   events: AIAnalysisStreamEventName[];
-}
-
-export interface AIModelDiscoveryInput {
-  provider: string;
-  backend_url: string;
-  api_key: string;
-}
-
-export interface AIModelDiscoveryResponse {
-  models: string[];
-  source: string;
 }
 
 export interface AIAnalysisConfigResponse {

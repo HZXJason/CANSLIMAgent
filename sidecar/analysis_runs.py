@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import os
 import re
 import threading
 import time
@@ -16,9 +17,16 @@ from typing import Any
 RUN_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{7,127}$")
 RUN_RETENTION_SECONDS = 2 * 60 * 60
 MAX_BUFFERED_RUNS = 32
+MAX_ACTIVE_RUNS = int(os.getenv("AI_MAX_ACTIVE_RUNS", "4"))
+MAX_EVENTS_PER_RUN = int(os.getenv("AI_MAX_EVENTS_PER_RUN", "10000"))
+MAX_BUFFERED_BYTES_PER_RUN = int(os.getenv("AI_MAX_BUFFERED_BYTES_PER_RUN", str(16 * 1024 * 1024)))
 
 
 class RunConflictError(ValueError):
+    pass
+
+
+class RunCapacityError(RuntimeError):
     pass
 
 
@@ -58,6 +66,9 @@ class BufferedAnalysisRun:
     updated_at: float = field(default_factory=time.monotonic)
     condition: asyncio.Condition = field(default_factory=asyncio.Condition)
     task: asyncio.Task[None] | None = None
+    max_events: int = MAX_EVENTS_PER_RUN
+    max_buffered_bytes: int = MAX_BUFFERED_BYTES_PER_RUN
+    buffered_bytes: int = 0
 
     def start(self, source: AsyncIterator[str]) -> None:
         self.task = asyncio.create_task(self._pump(source), name=f"ai-analysis-{self.run_id}")
@@ -68,7 +79,21 @@ class BufferedAnalysisRun:
                 async with self.condition:
                     event_id = self.next_event_id
                     self.next_event_id += 1
-                    self.events.append((event_id, _event_with_id(raw_event, event_id)))
+                    encoded = _event_with_id(raw_event, event_id)
+                    encoded_bytes = len(encoded.encode("utf-8"))
+                    if len(self.events) >= self.max_events or self.buffered_bytes + encoded_bytes > self.max_buffered_bytes:
+                        overflow = _event_with_id(
+                            'event: error\ndata: {"message":"analysis event buffer limit exceeded"}\n\n',
+                            event_id,
+                        )
+                        self.events.append((event_id, overflow))
+                        self.buffered_bytes += len(overflow.encode("utf-8"))
+                        self.terminal_event = "error"
+                        self.updated_at = time.monotonic()
+                        self.condition.notify_all()
+                        break
+                    self.events.append((event_id, encoded))
+                    self.buffered_bytes += encoded_bytes
                     self.terminal_event = _terminal_event(raw_event) or self.terminal_event
                     self.updated_at = time.monotonic()
                     self.condition.notify_all()
@@ -108,9 +133,18 @@ class BufferedAnalysisRun:
 
 
 class AnalysisRunRegistry:
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        *,
+        max_active_runs: int = MAX_ACTIVE_RUNS,
+        max_events_per_run: int = MAX_EVENTS_PER_RUN,
+        max_buffered_bytes_per_run: int = MAX_BUFFERED_BYTES_PER_RUN,
+    ) -> None:
         self._runs: dict[str, BufferedAnalysisRun] = {}
         self._lock = threading.Lock()
+        self._max_active_runs = max(1, max_active_runs)
+        self._max_events_per_run = max(2, max_events_per_run)
+        self._max_buffered_bytes_per_run = max(1024, max_buffered_bytes_per_run)
 
     def clear(self) -> None:
         with self._lock:
@@ -149,10 +183,16 @@ class AnalysisRunRegistry:
                     raise RunConflictError("run_id is already bound to another analysis request")
                 return existing, False
 
+            active_count = sum(1 for item in self._runs.values() if not item.finished)
+            if active_count >= self._max_active_runs:
+                raise RunCapacityError("too many active analysis runs")
+
             run = BufferedAnalysisRun(
                 run_id=run_id,
                 fingerprint=fingerprint,
                 next_event_id=(max(0, int(last_event_id)) + 1) if resume else 1,
+                max_events=self._max_events_per_run,
+                max_buffered_bytes=self._max_buffered_bytes_per_run,
             )
             self._runs[run_id] = run
             run.start(source_factory())

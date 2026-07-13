@@ -2,8 +2,6 @@ import type { APIResponse, Market, RefreshJob, RefreshJobResponse, StockWithMetr
 import type {
 	AIAnalysisMarkResponse,
 	AIAnalysisConfigResponse,
-  AIModelDiscoveryInput,
-  AIModelDiscoveryResponse,
   CompanyProfile,
   EPSData,
   GrossMarginData,
@@ -18,9 +16,9 @@ import type {
 import type { JournalEntry, JournalReflectionInput, NewJournalEntryInput, StoredJournalReflection } from '../types/journal';
 import type { ExecuteTradePlanInput, ExecuteTradePlanResponse, NewTradePlanInput, TradePlan, TradePlanFilters, TradePlanUpdateInput } from '../types/tradePlan';
 import type { BrokerConnection, BrokerConnectionStart, BrokerExecution, BrokerID, BrokerSyncResult } from '../types/broker';
-import { AI_ANALYSIS_CONFIG_PATH, AI_ANALYSIS_MODELS_PATH } from './aiAnalysisContract';
+import { AI_ANALYSIS_CONFIG_PATH } from './aiAnalysisContract';
 
-export const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:8080/api/v1';
+export const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? '/api/v1';
 
 const DEFAULT_REQUEST_TIMEOUT_MS = 30_000;
 
@@ -118,13 +116,6 @@ export function fetchSecondLayerData(symbol: string) {
 
 export function fetchAIAnalysisConfig() {
   return request<AIAnalysisConfigResponse>(AI_ANALYSIS_CONFIG_PATH);
-}
-
-export function discoverAIModels(input: AIModelDiscoveryInput) {
-  return request<AIModelDiscoveryResponse>(AI_ANALYSIS_MODELS_PATH, {
-    method: 'POST',
-    body: JSON.stringify(input)
-  });
 }
 
 export function updateNLabel(symbol: string, nLabel: boolean, analysisSummary: string) {

@@ -64,9 +64,9 @@ DataAuditor 不是第二个会“猜测赢家”的 LLM。例如，一条没有 
 ## 技术栈与要求
 
 - 前端：React、TypeScript、Vite、Zustand、TanStack Query、Tailwind CSS。
-- 后端：Go 1.22+、Gin、PostgreSQL 15。
+- 后端：Go 1.25+（发布构建固定 toolchain 1.26.5）、Gin、PostgreSQL 15。
 - AI sidecar：Python 3.12+、FastAPI、LangGraph、TradingAgents；推荐用 `uv` 管理 Python 环境。
-- 运行环境：macOS 或 Linux、Node.js 20+、Docker Desktop。
+- 运行环境：macOS 或 Linux、Node.js 22+、Docker Desktop。
 - AI 分析：至少配置一种受支持的 LLM API Key。
 
 ## 快速启动
@@ -92,7 +92,7 @@ make dev
 |---|---|
 | `backend/.env` | 数据库、免费/可选行情源与 AI 上游地址 |
 | `sidecar/.env` | LLM 凭据、Vibe 运行时位置与 AI 开关 |
-| `frontend/.env` | 浏览器 API 基地址 |
+| `frontend/.env` | 可选的浏览器 API 基地址；默认使用同源 `/api/v1` |
 
 启用券商绑定前，在 `backend/.env` 生成并保存一把只属于本机的加密主密钥：
 
@@ -102,7 +102,7 @@ openssl rand -base64 32
 
 将结果写入 `BROKER_CREDENTIALS_ENCRYPTION_KEY`。没有这把 32 字节密钥，后端会拒绝保存任何券商凭据。凭据从不发送给浏览器、不会被 API 回显，且仅在一次同步期间通过本机 Go → sidecar 调用使用。长桥使用 OAuth access token；富途和 IBKR 连接用户已经登录的本地 OpenD / TWS 或 IB Gateway；老虎使用其开放平台凭据。
 
-券商 sidecar 固定为 `BROKER_SYNC_UPSTREAM_URL=http://127.0.0.1:8765`，后端会拒绝向非 loopback 地址发送凭据。
+本机开发时券商 sidecar 固定为 `BROKER_SYNC_UPSTREAM_URL=http://127.0.0.1:8765`。容器部署只允许带 32 字符以上共享密钥的固定 `sidecar` 服务名，浏览器不能提供或覆盖该地址。
 
 ### 券商授权接入前检查清单
 
@@ -201,7 +201,6 @@ GET   /api/v1/stocks/:symbol/eps/quarterly
 GET   /api/v1/stocks/:symbol/revenue/annual
 POST  /api/v1/analysis/:symbol/ai
 GET   /api/v1/analysis/ai/config
-POST  /api/v1/analysis/ai/models
 GET   /api/v1/journal
 POST  /api/v1/journal
 GET   /api/v1/journal/export
@@ -227,6 +226,22 @@ cd ../sidecar && .venv/bin/python -m unittest test_main.py test_ai_runtime.py te
 cd ../frontend && pnpm run typecheck && pnpm run build
 docker compose build sidecar
 ```
+
+## 生产部署安全边界
+
+`docker-compose.prod.yml` 提供非 root、最小权限、内部网络部署基线。先复制 `.env.production.example` 并生成三类彼此独立的随机秘密：
+
+```bash
+cp .env.production.example .env.production
+openssl rand -hex 32   # API_AUTH_TOKEN
+openssl rand -hex 32   # SIDECAR_SHARED_SECRET
+openssl rand -base64 32 # BROKER_CREDENTIALS_ENCRYPTION_KEY
+docker compose --env-file .env.production -f docker-compose.prod.yml up --build -d
+```
+
+容器入口仅绑定到宿主机 `127.0.0.1:${APP_PORT:-8088}`。发布到公网前，必须在其前方配置 HTTPS 和身份感知反向代理；代理应覆盖而不是转发客户端提供的 `X-Internal-API-Token`，并实施用户级限流。LLM Key 只允许出现在 sidecar 的服务端环境中，自定义模型网关必须加入 `AI_ALLOWED_BACKEND_HOSTS` 精确白名单。
+
+上线、回滚、备份、密钥轮换和事件响应要求见 [`docs/production-operations.md`](docs/production-operations.md)；漏洞报告流程见 [`SECURITY.md`](SECURITY.md)。
 
 基本健康检查：
 

@@ -43,7 +43,7 @@ func TestBeginOAuthAddsStateAndPKCEChallenge(t *testing.T) {
 	}
 
 	vault := newTestVault(t)
-	storedVerifier, err := vault.Decrypt(start.VerifierCiphertext, start.VerifierNonce)
+	storedVerifier, err := vault.DecryptScoped("oauth-pkce:longport", start.VerifierCiphertext, start.VerifierNonce)
 	if err != nil {
 		t.Fatalf("decrypt persisted verifier: %v", err)
 	}

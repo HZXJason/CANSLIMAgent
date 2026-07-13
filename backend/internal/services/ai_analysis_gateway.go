@@ -18,20 +18,19 @@ const (
 )
 
 type AIAnalysisRequest struct {
-	Ticker          string            `json:"ticker"`
-	LLMProvider     string            `json:"llm_provider"`
-	DeepThinkLLM    string            `json:"deep_think_llm"`
-	QuickThinkLLM   string            `json:"quick_think_llm"`
-	BackendURL      string            `json:"backend_url"`
-	MaxDebateRounds int               `json:"max_debate_rounds,omitempty"`
-	MaxRiskRounds   int               `json:"max_risk_rounds,omitempty"`
-	OnlineTools     bool              `json:"online_tools"`
-	Analysts        []string          `json:"analysts"`
-	APIKeys         map[string]string `json:"api_keys,omitempty"`
-	AnalysisContext map[string]any    `json:"analysis_context,omitempty"`
-	RunID           string            `json:"run_id,omitempty"`
-	Resume          bool              `json:"resume,omitempty"`
-	LastEventID     int               `json:"last_event_id,omitempty"`
+	Ticker          string         `json:"ticker"`
+	LLMProvider     string         `json:"llm_provider"`
+	DeepThinkLLM    string         `json:"deep_think_llm"`
+	QuickThinkLLM   string         `json:"quick_think_llm"`
+	BackendURL      string         `json:"backend_url"`
+	MaxDebateRounds int            `json:"max_debate_rounds,omitempty"`
+	MaxRiskRounds   int            `json:"max_risk_rounds,omitempty"`
+	OnlineTools     bool           `json:"online_tools"`
+	Analysts        []string       `json:"analysts"`
+	AnalysisContext map[string]any `json:"analysis_context,omitempty"`
+	RunID           string         `json:"run_id,omitempty"`
+	Resume          bool           `json:"resume,omitempty"`
+	LastEventID     int            `json:"last_event_id,omitempty"`
 }
 
 type AIAnalysisProviderConfig struct {
@@ -57,7 +56,6 @@ type AIAnalysisAnalystConfig struct {
 type AIAnalysisContract struct {
 	Version        string   `json:"version"`
 	ConfigEndpoint string   `json:"config_endpoint"`
-	ModelsEndpoint string   `json:"models_endpoint"`
 	StreamEndpoint string   `json:"stream_endpoint"`
 	UpstreamMode   string   `json:"upstream_mode"`
 	Events         []string `json:"events"`
@@ -85,16 +83,21 @@ type AIAnalysisUpstream interface {
 type HTTPAIAnalysisUpstream struct {
 	analyzeURL string
 	client     *http.Client
+	secret     string
 }
 
-func NewHTTPAIAnalysisUpstream(upstreamURL string, timeout time.Duration) *HTTPAIAnalysisUpstream {
+func NewHTTPAIAnalysisUpstream(upstreamURL string, timeout time.Duration, sharedSecret ...string) *HTTPAIAnalysisUpstream {
 	if timeout <= 0 {
 		timeout = DefaultAIAnalysisTimeout
 	}
-	return &HTTPAIAnalysisUpstream{
+	upstream := &HTTPAIAnalysisUpstream{
 		analyzeURL: resolveAIAnalysisURL(upstreamURL),
 		client:     &http.Client{Timeout: timeout + 30*time.Second},
 	}
+	if len(sharedSecret) > 0 {
+		upstream.secret = strings.TrimSpace(sharedSecret[0])
+	}
+	return upstream
 }
 
 func (u *HTTPAIAnalysisUpstream) Config(_ context.Context) (AIAnalysisConfigResponse, error) {
@@ -113,6 +116,9 @@ func (u *HTTPAIAnalysisUpstream) Start(ctx context.Context, payload AIAnalysisRe
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "text/event-stream")
+	if u.secret != "" {
+		req.Header.Set("X-Sidecar-Token", u.secret)
+	}
 
 	resp, err := u.client.Do(req)
 	if err != nil {
@@ -132,7 +138,6 @@ func DefaultAIAnalysisConfig() AIAnalysisConfigResponse {
 		Contract: AIAnalysisContract{
 			Version:        AIAnalysisContractVersion,
 			ConfigEndpoint: "/api/v1/analysis/ai/config",
-			ModelsEndpoint: "/api/v1/analysis/ai/models",
 			StreamEndpoint: "/api/v1/analysis/{symbol}/ai",
 			UpstreamMode:   "sse",
 			Events: []string{

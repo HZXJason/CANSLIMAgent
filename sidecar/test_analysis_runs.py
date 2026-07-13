@@ -1,7 +1,7 @@
 import asyncio
 import unittest
 
-from analysis_runs import AnalysisRunRegistry, RunConflictError, request_fingerprint
+from analysis_runs import AnalysisRunRegistry, RunCapacityError, RunConflictError, request_fingerprint
 
 
 async def source(*events: str):
@@ -109,6 +109,33 @@ class AnalysisRunRegistryTest(unittest.IsolatedAsyncioTestCase):
                 fingerprint="two",
                 last_event_id=0,
                 resume=True,
+                source_factory=lambda: source(),
+            )
+        if run.task:
+            run.task.cancel()
+            with self.assertRaises(asyncio.CancelledError):
+                await run.task
+
+    async def test_active_run_capacity_is_enforced(self):
+        registry = AnalysisRunRegistry(max_active_runs=1)
+
+        async def blocked_source():
+            await asyncio.Event().wait()
+            yield "event: done\ndata: {}\n\n"
+
+        run, _ = registry.get_or_create(
+            run_id="run-capacity-001",
+            fingerprint="one",
+            last_event_id=0,
+            resume=False,
+            source_factory=blocked_source,
+        )
+        with self.assertRaises(RunCapacityError):
+            registry.get_or_create(
+                run_id="run-capacity-002",
+                fingerprint="two",
+                last_event_id=0,
+                resume=False,
                 source_factory=lambda: source(),
             )
         if run.task:

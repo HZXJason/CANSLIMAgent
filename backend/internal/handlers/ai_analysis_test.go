@@ -3,6 +3,7 @@ package handlers
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -11,15 +12,6 @@ import (
 	"github.com/alphalens/canslimagent/backend/internal/services"
 	"github.com/gin-gonic/gin"
 )
-
-type fakeAIModelDiscoverer struct {
-	request services.AIModelDiscoveryRequest
-}
-
-func (f *fakeAIModelDiscoverer) Discover(_ context.Context, request services.AIModelDiscoveryRequest) (services.AIModelDiscoveryResponse, error) {
-	f.request = request
-	return services.AIModelDiscoveryResponse{Models: []string{"model-a", "model-b"}, Source: "gateway.test"}, nil
-}
 
 func setupAIAnalysisRouter(sidecarURL string) *gin.Engine {
 	gin.SetMode(gin.TestMode)
@@ -32,6 +24,7 @@ func setupAIAnalysisRouter(sidecarURL string) *gin.Engine {
 
 func TestAIAnalysisStreamProxiesSSE(t *testing.T) {
 	var received services.AIAnalysisRequest
+	var receivedBody []byte
 	sidecar := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/analyze" {
 			t.Fatalf("unexpected sidecar path: %s", r.URL.Path)
@@ -39,7 +32,12 @@ func TestAIAnalysisStreamProxiesSSE(t *testing.T) {
 		if r.Method != http.MethodPost {
 			t.Fatalf("unexpected method: %s", r.Method)
 		}
-		if err := json.NewDecoder(r.Body).Decode(&received); err != nil {
+		var err error
+		receivedBody, err = io.ReadAll(r.Body)
+		if err != nil {
+			t.Fatalf("read request body: %v", err)
+		}
+		if err := json.Unmarshal(receivedBody, &received); err != nil {
 			t.Fatalf("decode request body: %v", err)
 		}
 		w.Header().Set("Content-Type", "text/event-stream")
@@ -89,47 +87,14 @@ func TestAIAnalysisStreamProxiesSSE(t *testing.T) {
 	if received.MaxDebateRounds != 2 || received.MaxRiskRounds != 3 || !received.OnlineTools {
 		t.Fatalf("expected frontend analysis controls to be forwarded: %+v", received)
 	}
-	if received.APIKeys["openai_compatible"] != "sk-test" {
-		t.Fatalf("expected compatible api key to be forwarded")
-	}
 	if received.RunID != "run-nvda-test-001" || !received.Resume || received.LastEventID != 12 {
 		t.Fatalf("expected resume cursor to be forwarded: %+v", received)
 	}
 	if received.AnalysisContext["stock_summary"] == nil {
 		t.Fatalf("expected analysis context to be forwarded")
 	}
-}
-
-func TestAIAnalysisModelDiscoveryEndpoint(t *testing.T) {
-	discoverer := &fakeAIModelDiscoverer{}
-	handler := NewAIAnalysisHandlerWithSidecarURL("http://127.0.0.1:1")
-	handler.modelDiscovery = discoverer
-	router := gin.New()
-	router.POST("/api/v1/analysis/ai/models", handler.DiscoverModels)
-	request := httptest.NewRequest(
-		http.MethodPost,
-		"/api/v1/analysis/ai/models",
-		strings.NewReader(`{"provider":"openai_compatible","backend_url":"https://lingsuan.top/v1","api_key":"sk-test"}`),
-	)
-	request.Header.Set("Content-Type", "application/json")
-	recorder := httptest.NewRecorder()
-	router.ServeHTTP(recorder, request)
-
-	if recorder.Code != http.StatusOK {
-		t.Fatalf("unexpected status %d: %s", recorder.Code, recorder.Body.String())
-	}
-	if discoverer.request.APIKey != "sk-test" || discoverer.request.BackendURL != "https://lingsuan.top/v1" {
-		t.Fatalf("unexpected discovery request: %+v", discoverer.request)
-	}
-	var payload struct {
-		Success bool                              `json:"success"`
-		Data    services.AIModelDiscoveryResponse `json:"data"`
-	}
-	if err := json.Unmarshal(recorder.Body.Bytes(), &payload); err != nil {
-		t.Fatalf("decode response: %v", err)
-	}
-	if !payload.Success || len(payload.Data.Models) != 2 {
-		t.Fatalf("unexpected response: %+v", payload)
+	if bytes := string(receivedBody); strings.Contains(bytes, "api_keys") || strings.Contains(bytes, "sk-test") {
+		t.Fatalf("browser API key leaked to sidecar: %s", bytes)
 	}
 }
 

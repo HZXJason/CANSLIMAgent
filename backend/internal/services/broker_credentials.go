@@ -18,6 +18,8 @@ type BrokerCredentialVault struct {
 	gcm cipher.AEAD
 }
 
+var scopedCiphertextPrefix = []byte("v2:")
+
 func NewBrokerCredentialVault(encodedKey string) (*BrokerCredentialVault, error) {
 	encodedKey = strings.TrimSpace(encodedKey)
 	if encodedKey == "" {
@@ -55,6 +57,35 @@ func (v *BrokerCredentialVault) Encrypt(values map[string]string) ([]byte, []byt
 
 func (v *BrokerCredentialVault) Decrypt(ciphertext, nonce []byte) (map[string]string, error) {
 	plain, err := v.gcm.Open(nil, nonce, ciphertext, nil)
+	if err != nil {
+		return nil, errors.New("broker credentials could not be decrypted")
+	}
+	values := map[string]string{}
+	if err := json.Unmarshal(plain, &values); err != nil {
+		return nil, fmt.Errorf("decode broker credentials: %w", err)
+	}
+	return values, nil
+}
+
+func (v *BrokerCredentialVault) EncryptScoped(scope string, values map[string]string) ([]byte, []byte, error) {
+	plain, err := json.Marshal(values)
+	if err != nil {
+		return nil, nil, fmt.Errorf("encode broker credentials: %w", err)
+	}
+	nonce := make([]byte, v.gcm.NonceSize())
+	if _, err := io.ReadFull(rand.Reader, nonce); err != nil {
+		return nil, nil, fmt.Errorf("generate broker credential nonce: %w", err)
+	}
+	sealed := v.gcm.Seal(nil, nonce, plain, []byte(strings.TrimSpace(scope)))
+	return append(append([]byte{}, scopedCiphertextPrefix...), sealed...), nonce, nil
+}
+
+func (v *BrokerCredentialVault) DecryptScoped(scope string, ciphertext, nonce []byte) (map[string]string, error) {
+	if !strings.HasPrefix(string(ciphertext), string(scopedCiphertextPrefix)) {
+		// Backward-compatible read for rows written before scoped AAD existed.
+		return v.Decrypt(ciphertext, nonce)
+	}
+	plain, err := v.gcm.Open(nil, nonce, ciphertext[len(scopedCiphertextPrefix):], []byte(strings.TrimSpace(scope)))
 	if err != nil {
 		return nil, errors.New("broker credentials could not be decrypted")
 	}

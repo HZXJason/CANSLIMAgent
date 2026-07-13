@@ -20,7 +20,8 @@ import json
 import math
 import os
 import statistics
-import subprocess
+# A fixed argv subprocess is required for the isolated Vibe runtime.
+import subprocess  # nosec B404
 from collections import defaultdict, deque
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
@@ -282,7 +283,8 @@ def _run_vibe_journal(trades: list[_Trade]) -> tuple[dict[str, Any] | None, dict
         allow_nan=False,
     )
     try:
-        completed = subprocess.run(
+        # The interpreter and runner are server-owned filesystem paths; shell is never used.
+        completed = subprocess.run(  # nosec B603
             [str(interpreter), str(runner)],
             input=payload,
             text=True,

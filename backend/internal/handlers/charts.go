@@ -2,11 +2,14 @@ package handlers
 
 import (
 	"net/http"
+	"regexp"
 	"strings"
 
 	"github.com/alphalens/canslimagent/backend/internal/services"
 	"github.com/gin-gonic/gin"
 )
+
+var safeSymbolPattern = regexp.MustCompile(`^[A-Z0-9][A-Z0-9.^=_-]{0,31}$`)
 
 type ChartsHandler struct {
 	analysis *services.AnalysisService
@@ -18,7 +21,10 @@ func NewChartsHandler(analysis *services.AnalysisService, scanner *services.Scan
 }
 
 func (h *ChartsHandler) Summary(c *gin.Context) {
-	symbol := normalizeSymbolParam(c.Param("symbol"))
+	symbol, ok := validatedSymbol(c)
+	if !ok {
+		return
+	}
 	var sources map[string]services.MetricSourcePayload
 	if h.scanner != nil {
 		refreshedSources, _, err := h.scanner.HydrateStockMetrics(c.Request.Context(), symbol)
@@ -36,7 +42,10 @@ func (h *ChartsHandler) Summary(c *gin.Context) {
 }
 
 func (h *ChartsHandler) Profile(c *gin.Context) {
-	symbol := normalizeSymbolParam(c.Param("symbol"))
+	symbol, ok := validatedSymbol(c)
+	if !ok {
+		return
+	}
 	data, err := h.analysis.CompanyProfile(c.Request.Context(), symbol)
 	if err != nil {
 		Fail(c, http.StatusBadRequest, err.Error())
@@ -46,7 +55,10 @@ func (h *ChartsHandler) Profile(c *gin.Context) {
 }
 
 func (h *ChartsHandler) KLine(c *gin.Context) {
-	symbol := normalizeSymbolParam(c.Param("symbol"))
+	symbol, ok := validatedSymbol(c)
+	if !ok {
+		return
+	}
 	period := c.DefaultQuery("period", services.PeriodDaily)
 	data, err := h.analysis.KLine(c.Request.Context(), symbol, period)
 	if err != nil {
@@ -57,7 +69,10 @@ func (h *ChartsHandler) KLine(c *gin.Context) {
 }
 
 func (h *ChartsHandler) RS(c *gin.Context) {
-	symbol := normalizeSymbolParam(c.Param("symbol"))
+	symbol, ok := validatedSymbol(c)
+	if !ok {
+		return
+	}
 	period := c.DefaultQuery("period", services.PeriodDaily)
 	data, err := h.analysis.RS(c.Request.Context(), symbol, period)
 	if err != nil {
@@ -68,7 +83,10 @@ func (h *ChartsHandler) RS(c *gin.Context) {
 }
 
 func (h *ChartsHandler) EPSQuarterly(c *gin.Context) {
-	symbol := normalizeSymbolParam(c.Param("symbol"))
+	symbol, ok := validatedSymbol(c)
+	if !ok {
+		return
+	}
 	data, err := h.analysis.EPSQuarterly(c.Request.Context(), symbol)
 	if err != nil {
 		Fail(c, http.StatusBadRequest, err.Error())
@@ -78,7 +96,10 @@ func (h *ChartsHandler) EPSQuarterly(c *gin.Context) {
 }
 
 func (h *ChartsHandler) RevenueAnnual(c *gin.Context) {
-	symbol := normalizeSymbolParam(c.Param("symbol"))
+	symbol, ok := validatedSymbol(c)
+	if !ok {
+		return
+	}
 	data, err := h.analysis.RevenueAnnual(c.Request.Context(), symbol)
 	if err != nil {
 		Fail(c, http.StatusBadRequest, err.Error())
@@ -88,7 +109,10 @@ func (h *ChartsHandler) RevenueAnnual(c *gin.Context) {
 }
 
 func (h *ChartsHandler) GrossMarginQuarterly(c *gin.Context) {
-	symbol := normalizeSymbolParam(c.Param("symbol"))
+	symbol, ok := validatedSymbol(c)
+	if !ok {
+		return
+	}
 	data, err := h.analysis.GrossMarginQuarterly(c.Request.Context(), symbol)
 	if err != nil {
 		Fail(c, http.StatusBadRequest, err.Error())
@@ -98,7 +122,10 @@ func (h *ChartsHandler) GrossMarginQuarterly(c *gin.Context) {
 }
 
 func (h *ChartsHandler) SecondLayerData(c *gin.Context) {
-	symbol := normalizeSymbolParam(c.Param("symbol"))
+	symbol, ok := validatedSymbol(c)
+	if !ok {
+		return
+	}
 	data, err := h.analysis.SecondLayerData(c.Request.Context(), symbol)
 	if err != nil {
 		Fail(c, http.StatusBadRequest, err.Error())
@@ -107,6 +134,19 @@ func (h *ChartsHandler) SecondLayerData(c *gin.Context) {
 	OK(c, data)
 }
 
+func validatedSymbol(c *gin.Context) (string, bool) {
+	symbol := normalizeSymbolParam(c.Param("symbol"))
+	if symbol == "" {
+		Fail(c, http.StatusBadRequest, "股票代码格式无效")
+		return "", false
+	}
+	return symbol, true
+}
+
 func normalizeSymbolParam(value string) string {
-	return strings.ToUpper(strings.TrimSpace(value))
+	symbol := strings.ToUpper(strings.TrimSpace(value))
+	if !safeSymbolPattern.MatchString(symbol) {
+		return ""
+	}
+	return symbol
 }

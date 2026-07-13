@@ -83,7 +83,11 @@ func (h *ScreenerHandler) RefreshJob(c *gin.Context) {
 }
 
 func (h *ScreenerHandler) UpdateNLabel(c *gin.Context) {
-	symbol := strings.ToUpper(strings.TrimSpace(c.Param("symbol")))
+	symbol := normalizeSymbolParam(c.Param("symbol"))
+	if symbol == "" {
+		Fail(c, http.StatusBadRequest, "股票代码格式无效")
+		return
+	}
 	var req struct {
 		NLabel          bool   `json:"n_label"`
 		AnalysisSummary string `json:"analysis_summary"`
@@ -103,6 +107,10 @@ func (h *ScreenerHandler) UpdateNLabel(c *gin.Context) {
 
 func (h *ScreenerHandler) MarkAIAnalysisCompleted(c *gin.Context) {
 	symbol := normalizeSymbolParam(c.Param("symbol"))
+	if symbol == "" {
+		Fail(c, http.StatusBadRequest, "股票代码格式无效")
+		return
+	}
 	analysisAt, err := h.scanner.MarkAIAnalysisCompleted(c.Request.Context(), symbol)
 	if err != nil {
 		Fail(c, http.StatusBadRequest, "AI 分析标记写回失败："+err.Error())

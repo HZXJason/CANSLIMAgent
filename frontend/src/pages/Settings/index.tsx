@@ -1,12 +1,11 @@
-import { KeyRound, Loader2, RefreshCw, Settings, SlidersHorizontal } from 'lucide-react';
+import { Settings, SlidersHorizontal } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 import { Card } from '../../components/ui/card';
-import { Button } from '../../components/ui/button';
 import { Checkbox } from '../../components/ui/checkbox';
 import { Input } from '../../components/ui/input';
 import { Label } from '../../components/ui/label';
 import { Select } from '../../components/ui/select';
-import { API_BASE_URL, discoverAIModels, fetchAIAnalysisConfig } from '../../lib/api';
+import { API_BASE_URL, fetchAIAnalysisConfig } from '../../lib/api';
 import {
   FALLBACK_AI_ANALYSIS_OPTIONS,
   getAIAnalysisProvider,
@@ -23,10 +22,6 @@ export default function SettingsPage() {
     normalizeAIAnalysisConfig(readStoredAIAnalysisConfig(), FALLBACK_AI_ANALYSIS_OPTIONS)
   );
   const [loadError, setLoadError] = useState<string | null>(null);
-  const [discoveredModels, setDiscoveredModels] = useState<string[]>([]);
-  const [modelSource, setModelSource] = useState('');
-  const [modelError, setModelError] = useState<string | null>(null);
-  const [modelLoading, setModelLoading] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -54,7 +49,6 @@ export default function SettingsPage() {
     [config.llm_provider, options]
   );
   const customProvider = Boolean(provider.custom_models);
-  const providerApiKey = config.api_keys[config.llm_provider] ?? '';
 
   const updateProvider = (providerId: string) => {
     const nextProvider = getAIAnalysisProvider(options, providerId);
@@ -65,58 +59,10 @@ export default function SettingsPage() {
       quick_think_llm: nextProvider.models.quick[0] ?? '',
       backend_url: nextProvider.default_backend_url ?? ''
     }));
-    setDiscoveredModels([]);
-    setModelSource('');
-    setModelError(null);
-  };
-
-  const updateProviderApiKey = (value: string) => {
-    setConfig((current) => ({
-      ...current,
-      api_keys: {
-        ...current.api_keys,
-        [current.llm_provider]: value
-      }
-    }));
-    setDiscoveredModels([]);
-    setModelSource('');
-    setModelError(null);
   };
 
   const updateBackendURL = (value: string) => {
     setConfig((current) => ({ ...current, backend_url: value }));
-    setDiscoveredModels([]);
-    setModelSource('');
-    setModelError(null);
-  };
-
-  const fetchModels = async () => {
-    if (customProvider && !config.backend_url.trim()) {
-      setModelError('请先填写 OpenAI 兼容 API 地址');
-      return;
-    }
-    setModelLoading(true);
-    setModelError(null);
-    try {
-      const result = await discoverAIModels({
-        provider: config.llm_provider,
-        backend_url: config.backend_url.trim(),
-        api_key: providerApiKey.trim()
-      });
-      setDiscoveredModels(result.models);
-      setModelSource(result.source);
-      setConfig((current) => ({
-        ...current,
-        deep_think_llm: result.models.includes(current.deep_think_llm) ? current.deep_think_llm : result.models[0] ?? '',
-        quick_think_llm: result.models.includes(current.quick_think_llm) ? current.quick_think_llm : result.models[0] ?? ''
-      }));
-    } catch (error) {
-      setDiscoveredModels([]);
-      setModelSource('');
-      setModelError(error instanceof Error ? error.message : '获取模型列表失败');
-    } finally {
-      setModelLoading(false);
-    }
   };
 
   return (
@@ -146,12 +92,12 @@ export default function SettingsPage() {
             </div>
             <div>
               <h2 className="text-lg font-bold text-white">AI 分析连接</h2>
-              <p className="mt-2 text-sm leading-6 text-slate-500">模型、Key 与网关配置会应用到个股 AI 分析。</p>
+              <p className="mt-2 text-sm leading-6 text-slate-500">模型与网关选择会应用到个股 AI 分析；密钥只从 sidecar 服务端环境变量读取。</p>
               {loadError ? <p className="mt-2 text-sm text-amber-300">{loadError}</p> : null}
             </div>
           </div>
 
-          <div className="grid gap-4 md:grid-cols-2">
+          <div className="grid gap-4">
             <div className="space-y-2">
               <Label htmlFor="settings-ai-provider">LLM 提供商</Label>
               <Select id="settings-ai-provider" value={config.llm_provider} onValueChange={updateProvider}>
@@ -162,29 +108,12 @@ export default function SettingsPage() {
                 ))}
               </Select>
             </div>
-
-            <div className="space-y-2">
-              <Label htmlFor="settings-ai-provider-key">{provider.name} API Key</Label>
-              <div className="relative">
-                <Input
-                  id="settings-ai-provider-key"
-                  type="password"
-                  autoComplete="off"
-                  value={providerApiKey}
-                  className="pl-10"
-                  placeholder="可留空使用 sidecar/.env 中的环境变量"
-                  onChange={(event) => updateProviderApiKey(event.target.value)}
-                />
-                <KeyRound className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-500" />
-              </div>
-              <p className="text-xs text-slate-500">保存在本机浏览器，并随分析请求发送到本地 sidecar</p>
-            </div>
           </div>
 
           <div className="grid gap-4 md:grid-cols-2">
             <div className="space-y-2">
               <Label htmlFor="settings-ai-deep-model">深度思考模型</Label>
-              {customProvider && discoveredModels.length === 0 ? (
+              {customProvider ? (
                 <Input
                   id="settings-ai-deep-model"
                   value={config.deep_think_llm}
@@ -197,7 +126,7 @@ export default function SettingsPage() {
                   value={config.deep_think_llm}
                   onValueChange={(value) => setConfig((current) => ({ ...current, deep_think_llm: value }))}
                 >
-                  {(discoveredModels.length > 0 ? discoveredModels : provider.models.deep).map((model) => (
+                  {provider.models.deep.map((model) => (
                     <option key={model} value={model}>
                       {model}
                     </option>
@@ -208,7 +137,7 @@ export default function SettingsPage() {
 
             <div className="space-y-2">
               <Label htmlFor="settings-ai-quick-model">快速响应模型</Label>
-              {customProvider && discoveredModels.length === 0 ? (
+              {customProvider ? (
                 <Input
                   id="settings-ai-quick-model"
                   value={config.quick_think_llm}
@@ -221,7 +150,7 @@ export default function SettingsPage() {
                   value={config.quick_think_llm}
                   onValueChange={(value) => setConfig((current) => ({ ...current, quick_think_llm: value }))}
                 >
-                  {(discoveredModels.length > 0 ? discoveredModels : provider.models.quick).map((model) => (
+                  {provider.models.quick.map((model) => (
                     <option key={model} value={model}>
                       {model}
                     </option>
@@ -242,24 +171,6 @@ export default function SettingsPage() {
               />
               <p className="text-xs text-slate-500">支持 OpenAI Chat Completions 兼容的 /v1 网关</p>
               <p className="text-xs text-amber-300">Vercel 免费层建议使用 anthropic/claude-haiku-4.5；Sonnet/Opus 常会返回 403</p>
-            </div>
-          ) : null}
-
-          {customProvider ? (
-            <div className="flex flex-col gap-3 rounded-lg border border-slate-800 bg-slate-950/35 p-3 sm:flex-row sm:items-center sm:justify-between">
-              <div>
-                <p className="text-sm font-semibold text-slate-200">可用模型列表</p>
-                <p className="mt-1 text-xs text-slate-500">
-                  {discoveredModels.length > 0
-                    ? `已从 ${modelSource} 获取 ${discoveredModels.length} 个模型，可在上方下拉选择`
-                    : '填写 API 地址和 Key 后，从供应商的 /models 接口读取'}
-                </p>
-                {modelError ? <p className="mt-2 text-xs text-red-300">{modelError}</p> : null}
-              </div>
-              <Button type="button" variant="outline" disabled={modelLoading} onClick={() => void fetchModels()}>
-                {modelLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
-                {modelLoading ? '获取中' : '获取可用模型'}
-              </Button>
             </div>
           ) : null}
 

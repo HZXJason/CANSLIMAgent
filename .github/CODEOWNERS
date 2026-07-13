@@ -1,0 +1,5 @@
+* @HZXJason
+/.github/ @HZXJason
+/backend/internal/services/broker_* @HZXJason
+/backend/cmd/server/ @HZXJason
+/sidecar/ @HZXJason
