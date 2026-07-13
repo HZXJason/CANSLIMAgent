@@ -19,6 +19,22 @@ class SecurityBoundaryTest(unittest.TestCase):
         self.assertNotIn("sk-super-secret-value-12345", message)
         self.assertIn("[REDACTED]", message)
 
+    def test_missing_compatible_gateway_key_explains_connection_error(self):
+        request = main.AnalysisRequest(
+            ticker="NVDA",
+            llm_provider="openai_compatible",
+            backend_url="https://gateway.example.com/v1",
+        )
+        with patch.dict(
+            main.os.environ,
+            {"OPENAI_COMPATIBLE_API_KEY": "", "AI_GATEWAY_API_KEY": ""},
+            clear=False,
+        ):
+            message = main.user_error_message(RuntimeError("Connection error."), request)
+
+        self.assertIn("未检测到 API Key", message)
+        self.assertIn("设置中保存", message)
+
     def test_analysis_request_rejects_browser_api_keys(self):
         with self.assertRaises(ValidationError):
             main.AnalysisRequest(ticker="NVDA", api_keys={"openai": "secret"})

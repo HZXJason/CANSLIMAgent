@@ -1250,11 +1250,26 @@ def raw_error_message(exc: Exception) -> str:
     return str(exc).strip()
 
 
-def user_error_message(exc: Exception) -> str:
+def user_error_message(exc: Exception, request: AnalysisRequest | None = None) -> str:
     message = redact_sensitive_text(raw_error_message(exc))
     payload = parse_error_payload(getattr(exc, "body", None)) or parse_error_payload(message)
     payload_code = str((payload or {}).get("code") or (payload or {}).get("type") or "")
     payload_message = redact_sensitive_text(str((payload or {}).get("message") or message))
+
+    # Generic OpenAI-compatible clients use a placeholder for keyless local
+    # servers.  A remote gateway that requires a key consequently surfaces as
+    # an unhelpful SDK-level "Connection error".  Preserve keyless gateways,
+    # but make the missing credential visible when that is the actual setup.
+    if (
+        request is not None
+        and request.llm_provider.strip().lower() == "openai_compatible"
+        and not model_discovery_api_key(request.llm_provider, request.api_key)
+        and payload_message.rstrip(".") == "Connection error"
+    ):
+        return (
+            "OpenAI 兼容网关未检测到 API Key。若当前网关需要鉴权，请在设置中保存与该地址匹配的 Key；"
+            "若网关允许匿名调用，请检查自定义 API 地址和网络连接。"
+        )
 
     if (
         "NoneType" in payload_message
@@ -1693,7 +1708,7 @@ async def analysis_events(request: AnalysisRequest):
                 ),
                 flush=True,
             )
-        message = user_error_message(exc)
+        message = user_error_message(exc, request)
         if request.api_key:
             message = message.replace(request.api_key, "[REDACTED]")
         yield sse("error", {"message": message})

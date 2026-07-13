@@ -416,6 +416,24 @@ def _tool_message_error(raw_result: Any) -> str | None:
     return str(normalized or "Vibe MCP tool returned an error")
 
 
+def _is_transient_mcp_task_group_error(value: Any) -> bool:
+    return "unhandled errors in a TaskGroup" in str(value or "")
+
+
+async def _invoke_vibe_tool_with_retry(tool: Any, arguments: dict[str, Any]) -> Any:
+    """Retry one MCP process-start failure without masking data-source errors."""
+    try:
+        result = await _invoke_vibe_tool(tool, arguments)
+    except Exception as exc:
+        if not _is_transient_mcp_task_group_error(exc):
+            raise
+        return await _invoke_vibe_tool(tool, arguments)
+
+    if _is_transient_mcp_task_group_error(_tool_message_error(result)):
+        return await _invoke_vibe_tool(tool, arguments)
+    return result
+
+
 def _payload_source(tool_name: str, payload: Any) -> str:
     if isinstance(payload, dict):
         source = payload.get("source")
@@ -547,7 +565,7 @@ async def prefetch_vibe_evidence_async(
         raw_result: Any = None
         try:
             raw_result = await asyncio.wait_for(
-                _invoke_vibe_tool(tool, call.arguments),
+                _invoke_vibe_tool_with_retry(tool, call.arguments),
                 timeout=timeout,
             )
             payload = _normalize_tool_output(raw_result)

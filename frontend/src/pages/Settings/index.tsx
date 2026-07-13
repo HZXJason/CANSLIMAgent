@@ -244,7 +244,7 @@ export default function SettingsPage() {
             </div>
             <div>
               <h2 className="text-lg font-bold text-white">AI 分析连接</h2>
-              <p className="mt-2 text-sm leading-6 text-slate-500">模型与网关选择会应用到个股 AI 分析；密钥只从 sidecar 服务端环境变量读取。</p>
+              <p className="mt-2 text-sm leading-6 text-slate-500">模型与网关选择会应用到个股 AI 分析；密钥可加密保存在后端，并仅在本次分析时转发给 sidecar。</p>
               {loadError ? <p className="mt-2 text-sm text-amber-300">{loadError}</p> : null}
             </div>
           </div>
@@ -377,7 +377,7 @@ export default function SettingsPage() {
                   ? '正在从模型服务自动获取...'
                   : discoveredModels.length > 0
                     ? `已从 ${modelSource} 获取 ${discoveredModels.length} 个可用模型`
-                    : '会使用 sidecar 服务端密钥自动获取；失败时保留内置模型列表'}
+                    : '会使用已保存的 Key 或 sidecar 服务端密钥自动获取；失败时保留内置模型列表'}
               </p>
               {modelError ? <p className="mt-2 text-xs text-amber-300">{modelError}</p> : null}
             </div>

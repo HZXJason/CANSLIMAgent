@@ -1,8 +1,11 @@
+import ast
 import json
 import unittest
 from unittest.mock import patch
 
 import ai_runtime as runtime
+from ta_vibe_bridge.codegen import generate_signal_engine_source
+from ta_vibe_bridge.signal_spec import SignalSpec
 
 
 class FakeAsyncTool:
@@ -192,6 +195,28 @@ class VibePrefetchTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(by_key["sec_filings"]["status"], "unavailable")
         self.assertIsNone(by_key["sec_filings"]["payload"])
 
+    async def test_retries_transient_mcp_task_group_error_once(self):
+        attempts = 0
+
+        def flaky_news(_arguments):
+            nonlocal attempts
+            attempts += 1
+            if attempts == 1:
+                raise RuntimeError("unhandled errors in a TaskGroup (1 sub-exception)")
+            return success("yahoo")
+
+        tools = {"get_stock_news": FakeAsyncTool("get_stock_news", flaky_news)}
+        with patch.object(runtime, "vibe_tools_enabled", return_value=True), patch.object(
+            runtime, "_load_tools", return_value=tools
+        ):
+            result = await runtime.prefetch_vibe_evidence_async(
+                "AAPL", analysts=("news",), timeout_seconds=1
+            )
+
+        self.assertEqual(attempts, 2)
+        self.assertEqual(result["status"], "complete")
+        self.assertEqual(result["source_traces"][0]["status"], "ok")
+
     async def test_sync_wrapper_is_safe_when_caller_has_running_event_loop(self):
         tools = {"get_stock_news": FakeAsyncTool("get_stock_news", success("yahoo"))}
 
@@ -223,6 +248,25 @@ class VibePrefetchTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(payload_rows["total_items"], 100)
         self.assertTrue(payload_rows["truncated"])
         self.assertEqual(len(payload_rows["items"]), 16)
+
+
+class VibeSignalEngineCodegenTest(unittest.TestCase):
+    def test_negative_weight_uses_an_ast_literal_default(self):
+        source = generate_signal_engine_source(
+            SignalSpec(ticker="MU.US", rating="Underweight", target_weight=-0.02)
+        )
+
+        self.assertIn("target_weight: str = '-0.02'", source)
+        self.assertIn("self.target_weight = float(target_weight)", source)
+        tree = ast.parse(source)
+        init = next(
+            child
+            for node in tree.body
+            if isinstance(node, ast.ClassDef) and node.name == "SignalEngine"
+            for child in node.body
+            if isinstance(child, ast.FunctionDef) and child.name == "__init__"
+        )
+        self.assertTrue(all(isinstance(default, ast.Constant) or isinstance(default, ast.Tuple) for default in init.args.defaults))
 
 
 if __name__ == "__main__":

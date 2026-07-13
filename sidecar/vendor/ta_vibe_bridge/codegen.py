@@ -82,7 +82,7 @@ class SignalEngine:
         self,
 {init_defaults}
     ):
-        self.target_weight = target_weight
+        self.target_weight = float(target_weight)
         self.holding_days = holding_days
         self.rsi_period = rsi_period
         self.macd_fast = macd_fast
@@ -191,7 +191,10 @@ def _init_defaults_block(spec: SignalSpec) -> str:
     """Build the indented, literal-only ``__init__`` default arguments."""
     stop = "None" if spec.stop_pct is None else repr(float(spec.stop_pct))
     lines = [
-        f"        target_weight: float = {repr(float(spec.target_weight))},",
+        # Vibe's runner accepts AST constants but rejects a negative number's
+        # UnaryOp node. Keep every generated weight as a string constant and
+        # convert it inside the fixed engine body.
+        f"        target_weight: str = {repr(str(float(spec.target_weight)))},",
         f"        holding_days: int = {int(spec.holding_days)},",
         "        rsi_period: int = 14,",
         "        macd_fast: int = 12,",
