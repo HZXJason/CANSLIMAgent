@@ -179,7 +179,7 @@ export function fetchBrokerConnections() {
 }
 
 export function startBrokerConnection(broker: BrokerID) {
-  return request<BrokerConnectionStart>('/brokers/' + encodeURIComponent(broker) + '/connect', {
+  return request<BrokerConnectionStart>('/brokers/connect/' + encodeURIComponent(broker), {
     method: 'POST'
   });
 }

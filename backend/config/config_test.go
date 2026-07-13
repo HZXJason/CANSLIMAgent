@@ -2,6 +2,32 @@ package config
 
 import "testing"
 
+func TestLoadLongPortOAuthUsesPublicPKCEDefaults(t *testing.T) {
+	t.Setenv("BROKER_LONGPORT_CLIENT_ID", "public-client-id")
+	t.Setenv("BROKER_LONGPORT_CLIENT_SECRET", "")
+	t.Setenv("BROKER_LONGPORT_AUTHORIZE_URL", "")
+	t.Setenv("BROKER_LONGPORT_TOKEN_URL", "")
+	t.Setenv("BROKER_LONGPORT_REDIRECT_URL", "")
+	t.Setenv("BROKER_LONGPORT_SCOPES", "")
+
+	cfg := Load()
+	if !cfg.BrokerLongPortOAuth.Enabled() {
+		t.Fatal("public PKCE client must be enabled without a client secret")
+	}
+	if got, want := cfg.BrokerLongPortOAuth.AuthorizeURL, "https://openapi.longbridge.com/oauth2/authorize"; got != want {
+		t.Fatalf("authorize URL = %q, want %q", got, want)
+	}
+	if got, want := cfg.BrokerLongPortOAuth.TokenURL, "https://openapi.longbridge.com/oauth2/token"; got != want {
+		t.Fatalf("token URL = %q, want %q", got, want)
+	}
+	if got, want := cfg.BrokerLongPortOAuth.RedirectURL, "http://127.0.0.1:8080/api/v1/brokers/oauth/longport/callback"; got != want {
+		t.Fatalf("redirect URL = %q, want %q", got, want)
+	}
+	if got, want := cfg.BrokerLongPortOAuth.Scopes, []string{"3"}; len(got) != 1 || got[0] != want[0] {
+		t.Fatalf("scopes = %#v, want %#v", got, want)
+	}
+}
+
 func TestLoadBrokerGatewaysAcceptsLoopbackHosts(t *testing.T) {
 	t.Setenv("BROKER_FUTU_HOST", "localhost")
 	t.Setenv("BROKER_FUTU_PORT", "11112")

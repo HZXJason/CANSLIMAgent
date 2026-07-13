@@ -18,11 +18,12 @@ import (
 )
 
 type BrokerHandler struct {
-	db         *gorm.DB
-	vault      *services.BrokerCredentialVault
-	syncer     services.BrokerSyncUpstream
-	authorizer services.BrokerAuthorizer
-	now        func() time.Time
+	db          *gorm.DB
+	vault       *services.BrokerCredentialVault
+	syncer      services.BrokerSyncUpstream
+	authorizer  services.BrokerAuthorizer
+	frontendURL string
+	now         func() time.Time
 }
 
 type brokerConnectionResponse struct {
@@ -53,7 +54,11 @@ type importBrokerExecutionsRequest struct {
 }
 
 func NewBrokerHandler(database *gorm.DB, vault *services.BrokerCredentialVault, syncer services.BrokerSyncUpstream, authorizer services.BrokerAuthorizer) *BrokerHandler {
-	return &BrokerHandler{db: database, vault: vault, syncer: syncer, authorizer: authorizer, now: time.Now}
+	return NewBrokerHandlerWithFrontendURL(database, vault, syncer, authorizer, "")
+}
+
+func NewBrokerHandlerWithFrontendURL(database *gorm.DB, vault *services.BrokerCredentialVault, syncer services.BrokerSyncUpstream, authorizer services.BrokerAuthorizer, frontendURL string) *BrokerHandler {
+	return &BrokerHandler{db: database, vault: vault, syncer: syncer, authorizer: authorizer, frontendURL: strings.TrimSpace(frontendURL), now: time.Now}
 }
 
 func (h *BrokerHandler) List(c *gin.Context) {
@@ -267,7 +272,7 @@ func (h *BrokerHandler) Sync(c *gin.Context) {
 		return
 	}
 	endAt := h.now().UTC()
-	startAt := endAt.AddDate(0, -3, 0)
+	startAt := endAt.AddDate(-1, 0, 0)
 	var err error
 	if strings.TrimSpace(request.StartAt) != "" {
 		startAt, err = parseBrokerTime(request.StartAt)
@@ -578,6 +583,12 @@ func (h *BrokerHandler) redirectBrokerSettings(c *gin.Context, broker, connectio
 	query := url.Values{"broker": {broker}}
 	if strings.TrimSpace(connectionError) != "" {
 		query.Set("connection_error", connectionError)
+	}
+	if target, err := url.Parse(h.frontendURL); err == nil && target.Scheme != "" && target.Host != "" {
+		target.Path = strings.TrimRight(target.Path, "/") + "/settings"
+		target.RawQuery = query.Encode()
+		c.Redirect(http.StatusFound, target.String())
+		return
 	}
 	c.Redirect(http.StatusFound, "/settings?"+query.Encode())
 }

@@ -39,6 +39,15 @@ func TestConnectOAuthReturnsRedirectWithoutEchoingCredentials(t *testing.T) {
 	}
 }
 
+func TestBrokerSyncDefaultsToOneYearOfHistory(t *testing.T) {
+	handler := &BrokerHandler{now: func() time.Time { return time.Date(2026, 7, 12, 0, 0, 0, 0, time.UTC) }}
+	endAt := handler.now().UTC()
+	startAt := endAt.AddDate(-1, 0, 0)
+	if got, want := startAt, time.Date(2025, 7, 12, 0, 0, 0, 0, time.UTC); !got.Equal(want) {
+		t.Fatalf("default sync start = %s, want %s", got, want)
+	}
+}
+
 func TestOAuthCallbackRejectsExpiredState(t *testing.T) {
 	router, database := setupBrokerRouter(t, &fakeOAuthAuthorizer{})
 	rawState := "expired-state"
@@ -50,6 +59,18 @@ func TestOAuthCallbackRejectsExpiredState(t *testing.T) {
 	router.ServeHTTP(res, httptest.NewRequest(http.MethodGet, "/api/v1/brokers/oauth/longport/callback?code=code&state="+rawState, nil))
 	if res.Code != http.StatusBadRequest {
 		t.Fatalf("got %d", res.Code)
+	}
+}
+
+func TestRedirectBrokerSettingsUsesConfiguredFrontend(t *testing.T) {
+	handler := NewBrokerHandlerWithFrontendURL(nil, nil, nil, nil, "http://127.0.0.1:5173")
+	router := gin.New()
+	router.GET("/callback", func(c *gin.Context) { handler.redirectBrokerSettings(c, models.BrokerLongPort, "") })
+
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/callback", nil))
+	if got, want := response.Header().Get("Location"), "http://127.0.0.1:5173/settings?broker=longport"; got != want {
+		t.Fatalf("Location = %q, want %q", got, want)
 	}
 }
 

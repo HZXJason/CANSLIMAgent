@@ -114,6 +114,36 @@ func TestCompleteOAuthExchangesCodeAndReturnsAllowedAccountIdentity(t *testing.T
 	}
 }
 
+func TestCompleteOAuthSupportsLongbridgePublicPKCEClient(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got, want := r.URL.Path, "/token"; got != want {
+			t.Fatalf("path = %q, want %q", got, want)
+		}
+		if err := r.ParseForm(); err != nil {
+			t.Fatalf("parse token form: %v", err)
+		}
+		if got := r.PostForm.Get("client_secret"); got != "" {
+			t.Fatalf("public client sent client_secret %q", got)
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"access_token": "access-token"})
+	}))
+	defer server.Close()
+
+	authorizer := newTestAuthorizerWithConfig(t, config.BrokerOAuthConfig{
+		ClientID: "public-client-id", AuthorizeURL: server.URL + "/authorize",
+		TokenURL: server.URL + "/token", RedirectURL: "http://127.0.0.1:8080/api/v1/brokers/oauth/longport/callback",
+		Scopes: []string{"3"},
+	})
+
+	identity, err := authorizer.CompleteOAuth(context.Background(), models.BrokerLongPort, "authorization-code", "pkce-verifier")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := identity.AccountName, "长桥账户（已授权）"; got != want {
+		t.Fatalf("account name = %q, want %q", got, want)
+	}
+}
+
 func TestDetectGatewayRejectsRemoteSidecar(t *testing.T) {
 	_, err := NewHTTPBrokerGatewayClient("https://broker.example.com").DetectGateway(context.Background(), models.BrokerFutu)
 	if err == nil {

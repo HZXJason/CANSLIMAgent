@@ -18,5 +18,7 @@ export function brokerConnectionView(connection: BrokerConnection): BrokerConnec
       return { statusLabel: '需要重新连接', actionLabel: '重新连接', canSync: false };
     case 'gateway_unavailable':
       return { statusLabel: '未检测到本地网关', actionLabel: '重新检测', canSync: false };
+    default:
+      return { statusLabel: '未绑定', actionLabel: '连接账户', canSync: false };
   }
 }

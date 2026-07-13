@@ -138,7 +138,7 @@ func (a *HTTPBrokerAuthorizer) CompleteOAuth(ctx context.Context, broker, code, 
 	if err != nil {
 		return BrokerAuthorizationIdentity{}, err
 	}
-	accountName, err := a.fetchOAuthAccountName(ctx, oauth, credentials["access_token"])
+	accountName, err := a.fetchOAuthAccountName(ctx, broker, oauth, credentials["access_token"])
 	if err != nil {
 		return BrokerAuthorizationIdentity{}, err
 	}
@@ -170,7 +170,9 @@ func (a *HTTPBrokerAuthorizer) exchangeOAuthCode(ctx context.Context, oauth conf
 		"code_verifier": {verifier},
 		"redirect_uri":  {oauth.RedirectURL},
 		"client_id":     {oauth.ClientID},
-		"client_secret": {oauth.ClientSecret},
+	}
+	if strings.TrimSpace(oauth.ClientSecret) != "" {
+		form.Set("client_secret", oauth.ClientSecret)
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, oauth.TokenURL, strings.NewReader(form.Encode()))
 	if err != nil {
@@ -209,7 +211,13 @@ func (a *HTTPBrokerAuthorizer) exchangeOAuthCode(ctx context.Context, oauth conf
 	return credentials, expiresAt, nil
 }
 
-func (a *HTTPBrokerAuthorizer) fetchOAuthAccountName(ctx context.Context, oauth config.BrokerOAuthConfig, accessToken string) (string, error) {
+func (a *HTTPBrokerAuthorizer) fetchOAuthAccountName(ctx context.Context, broker string, oauth config.BrokerOAuthConfig, accessToken string) (string, error) {
+	if strings.TrimSpace(oauth.AccountURL) == "" {
+		if broker == models.BrokerLongPort {
+			return "长桥账户（已授权）", nil
+		}
+		return "", errors.New("OAuth account endpoint is not configured")
+	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, oauth.AccountURL, nil)
 	if err != nil {
 		return "", fmt.Errorf("create OAuth account request: %w", err)
@@ -286,6 +294,9 @@ func validateOAuthScopes(scopes []string) error {
 	}
 	for _, scope := range scopes {
 		normalized := normalizeOAuthScope(scope)
+		if normalized == "3" {
+			continue
+		}
 		for _, forbidden := range []string{
 			"write", "execute", "execution", "place_order", "order-placement",
 			"order_placement", "order.write", "trade.write", "trading", "withdraw",

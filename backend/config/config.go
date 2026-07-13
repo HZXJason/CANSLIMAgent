@@ -34,6 +34,7 @@ type Config struct {
 	BrokerTigerOAuth        BrokerOAuthConfig
 	BrokerFutuGateway       BrokerGatewayConfig
 	BrokerIBKRGateway       BrokerGatewayConfig
+	FrontendURL             string
 	AllowedOrigins          []string
 	RequestTimeout          time.Duration
 	ScanDelay               time.Duration
@@ -53,10 +54,8 @@ type BrokerOAuthConfig struct {
 
 func (c BrokerOAuthConfig) Enabled() bool {
 	return strings.TrimSpace(c.ClientID) != "" &&
-		strings.TrimSpace(c.ClientSecret) != "" &&
 		strings.TrimSpace(c.AuthorizeURL) != "" &&
 		strings.TrimSpace(c.TokenURL) != "" &&
-		strings.TrimSpace(c.AccountURL) != "" &&
 		strings.TrimSpace(c.RedirectURL) != ""
 }
 
@@ -94,14 +93,27 @@ func Load() Config {
 		AIAnalysisTimeout:       time.Duration(getEnvInt("AI_ANALYSIS_TIMEOUT_SECONDS", 1200)) * time.Second,
 		BrokerSyncUpstreamURL:   getEnv("BROKER_SYNC_UPSTREAM_URL", "http://127.0.0.1:8765"),
 		BrokerCredentialsKey:    strings.TrimSpace(os.Getenv("BROKER_CREDENTIALS_ENCRYPTION_KEY")),
-		BrokerLongPortOAuth:     loadBrokerOAuthConfig("BROKER_LONGPORT"),
+		BrokerLongPortOAuth:     loadLongPortOAuthConfig(),
 		BrokerTigerOAuth:        loadBrokerOAuthConfig("BROKER_TIGER"),
 		BrokerFutuGateway:       futuGateway,
 		BrokerIBKRGateway:       ibkrGateway,
+		FrontendURL:             getEnv("FRONTEND_URL", "http://127.0.0.1:5173"),
 		AllowedOrigins:          splitOrigins(getEnv("ALLOWED_ORIGINS", "http://localhost:5173,http://127.0.0.1:5173")),
 		RequestTimeout:          time.Duration(getEnvInt("REQUEST_TIMEOUT_SECONDS", 20)) * time.Second,
 		ScanDelay:               time.Duration(getEnvInt("SCAN_DELAY_MS", 80)) * time.Millisecond,
 	}
+}
+
+func loadLongPortOAuthConfig() BrokerOAuthConfig {
+	oauth := loadBrokerOAuthConfig("BROKER_LONGPORT")
+	oauth.AuthorizeURL = getEnv("BROKER_LONGPORT_AUTHORIZE_URL", "https://openapi.longbridge.com/oauth2/authorize")
+	oauth.TokenURL = getEnv("BROKER_LONGPORT_TOKEN_URL", "https://openapi.longbridge.com/oauth2/token")
+	oauth.RedirectURL = getEnv("BROKER_LONGPORT_REDIRECT_URL", "http://127.0.0.1:"+getEnv("PORT", "8080")+"/api/v1/brokers/oauth/longport/callback")
+	if len(oauth.Scopes) == 0 {
+		// Longbridge documents scope=3 for the OAuth authorization-code flow.
+		oauth.Scopes = []string{"3"}
+	}
+	return oauth
 }
 
 func loadBrokerGateway(prefix, defaultPort string) BrokerGatewayConfig {

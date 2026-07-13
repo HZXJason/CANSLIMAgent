@@ -82,7 +82,7 @@ func main() {
 		"longport": cfg.BrokerLongPortOAuth,
 		"tiger":    cfg.BrokerTigerOAuth,
 	}, brokerVault, brokerGatewayClient, cfg.RequestTimeout)
-	brokerHandler := handlers.NewBrokerHandler(database, brokerVault, brokerSyncUpstream, brokerAuthorizer)
+	brokerHandler := handlers.NewBrokerHandlerWithFrontendURL(database, brokerVault, brokerSyncUpstream, brokerAuthorizer, cfg.FrontendURL)
 
 	router := gin.New()
 	router.Use(safeAccessLogger(), gin.Recovery())
@@ -141,9 +141,9 @@ func main() {
 		api.PATCH("/journal/:id", journalHandler.Patch)
 		api.DELETE("/journal/:id", journalHandler.Delete)
 		api.GET("/brokers", brokerHandler.List)
-		api.POST("/brokers/:broker/connect", brokerHandler.Connect)
+		api.POST("/brokers/connect/:broker", brokerHandler.Connect)
 		api.GET("/brokers/oauth/:broker/callback", brokerHandler.OAuthCallback)
-		api.POST("/brokers/:broker/detect", brokerHandler.Detect)
+		api.POST("/brokers/detect/:broker", brokerHandler.Detect)
 		api.DELETE("/brokers/:id", brokerHandler.Delete)
 		api.POST("/brokers/:id/sync", brokerHandler.Sync)
 		api.POST("/brokers/:id/import", brokerHandler.Import)

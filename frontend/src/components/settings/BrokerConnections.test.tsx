@@ -105,12 +105,12 @@ describe('BrokerConnections', () => {
     locationSearch = '';
   });
 
-  it('renders four broker rows and a bound account', async () => {
+  it('hides Tiger while rendering the supported broker rows and bound account', async () => {
     render(<BrokerConnections />);
 
     expect(await screen.findByText('长桥 LongPort')).toBeInTheDocument();
     expect(screen.getByText('Longbridge · 12345678')).toBeInTheDocument();
-    expect(screen.getByText('老虎证券 Tiger')).toBeInTheDocument();
+    expect(screen.queryByText('老虎证券 Tiger')).not.toBeInTheDocument();
     expect(screen.getByText('富途证券 Futu')).toBeInTheDocument();
     expect(screen.getByText('盈透证券 IBKR')).toBeInTheDocument();
     expect(screen.queryByLabelText('OAuth Access Token')).not.toBeInTheDocument();
@@ -170,15 +170,12 @@ describe('BrokerConnections', () => {
     expect(screen.queryByRole('button', { name: '同步预览' })).not.toBeInTheDocument();
   });
 
-  it('keeps sync preview, import, and disconnect available for a connected account', async () => {
-    mockSyncBrokerConnection.mockResolvedValue(syncResult);
-    mockImportBrokerExecutions.mockResolvedValue({ created: 1, skipped: 0, warnings: [] });
+  it('keeps trade-log sync controls out of account settings', async () => {
     render(<BrokerConnections />);
 
-    fireEvent.click(await screen.findByRole('button', { name: '同步预览' }));
-    expect(await screen.findByText('0 项持仓，1 笔可导入成交')).toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: '确认导入成交' }));
-    await waitFor(() => expect(mockImportBrokerExecutions).toHaveBeenCalledWith('longport-1', syncResult.executions));
+    await screen.findByText('长桥 LongPort');
+    expect(screen.queryByRole('button', { name: '同步预览' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '确认导入成交' })).not.toBeInTheDocument();
     fireEvent.click(screen.getAllByRole('button', { name: '断开' })[0]);
     await waitFor(() => expect(mockDeleteBrokerConnection).toHaveBeenCalledWith('longport-1'));
   });

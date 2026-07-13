@@ -23,4 +23,15 @@ describe('brokerConnectionView', () => {
       connection_status: 'gateway_unavailable'
     } as BrokerConnection).actionLabel).toBe('重新检测');
   });
+
+  it('keeps settings usable when an older backend omits connection status', () => {
+    expect(brokerConnectionView({
+      broker: 'longport',
+      connected: false
+    } as BrokerConnection)).toEqual({
+      statusLabel: '未绑定',
+      actionLabel: '连接账户',
+      canSync: false
+    });
+  });
 });

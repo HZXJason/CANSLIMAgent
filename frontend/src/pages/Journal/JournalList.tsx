@@ -2,9 +2,10 @@ import { BookOpenCheck, BrainCircuit, Circle, CircleCheck, Plus, RefreshCw } fro
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
 import MarkdownContent from '../../components/analysis/MarkdownContent';
+import BrokerJournalImport from '../../components/journal/BrokerJournalImport';
 import { Button } from '../../components/ui/button';
 import { Card } from '../../components/ui/card';
-import { fetchJournalEntries, fetchLatestJournalReflection, generateJournalReflection } from '../../lib/api';
+import { fetchBrokerConnections, fetchJournalEntries, fetchLatestJournalReflection, generateJournalReflection } from '../../lib/api';
 import { cn } from '../../lib/utils';
 import type { JournalEntry, StoredJournalReflection } from '../../types/journal';
 
@@ -73,6 +74,7 @@ export default function JournalList() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const query = useQuery({ queryKey: ['journal-entries'], queryFn: fetchJournalEntries });
+  const brokerQuery = useQuery({ queryKey: ['broker-connections'], queryFn: fetchBrokerConnections });
   const reflectionQuery = useQuery({ queryKey: ['journal-reflection-latest'], queryFn: fetchLatestJournalReflection });
   const reflectionMutation = useMutation({
     mutationFn: generateJournalReflection,
@@ -97,6 +99,8 @@ export default function JournalList() {
           <Button onClick={() => navigate('/journal/new')}><Plus className="h-4 w-4" />新建成交</Button>
         </div>
       </header>
+
+      <BrokerJournalImport connections={brokerQuery.data ?? []} onImported={() => { void queryClient.invalidateQueries({ queryKey: ['journal-entries'] }); }} />
 
       {reflectionMutation.isError ? <Card className="border-red-800 bg-red-950/30 text-sm text-red-100">{reflectionMutation.error instanceof Error ? reflectionMutation.error.message : '行为反思生成失败'}</Card> : null}
       {reflectionQuery.data ? <ReflectionCard reflection={reflectionQuery.data} /> : null}

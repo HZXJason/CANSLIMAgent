@@ -175,18 +175,88 @@ def sync_broker(
 
 
 def _sync_longport(credentials: dict[str, str], start_at: datetime, end_at: datetime) -> dict[str, list[dict[str, Any]]]:
-    base_url = credentials.get("base_url", "https://openapi.longportapp.com").rstrip("/")
+    base_url = credentials.get("base_url", "https://openapi.longbridge.com").rstrip("/")
     token = credentials["access_token"]
     headers = {"Authorization": f"Bearer {token}", "Accept": "application/json"}
-    positions_payload = _get_json(f"{base_url}/v1/trade/asset/stock", headers=headers)
     history_payload = _get_json(
         f"{base_url}/v1/trade/execution/history",
         headers=headers,
         params={"start_at": int(start_at.timestamp()), "end_at": int(end_at.timestamp())},
     )
-    positions = [_position_from_mapping(row) for row in _items(positions_payload)]
-    executions = [_execution_from_mapping(row) for row in _items(history_payload)]
-    return _result(positions, executions)
+    today_payload = _get_json(f"{base_url}/v1/trade/execution/today", headers=headers)
+    history_orders = _longport_orders_by_market(
+        f"{base_url}/v1/trade/order/history",
+        headers,
+        {"start_at": int(start_at.timestamp()), "end_at": int(end_at.timestamp())},
+    )
+    today_orders = _longport_orders_by_market(f"{base_url}/v1/trade/order/today", headers, {})
+    trades = _dedupe_longport_trades(_items(history_payload) + _items(today_payload))
+    order_details = _longport_order_details(base_url, headers, trades)
+    executions = [_execution_from_mapping({**order_details.get(_first(trade, "order_id"), {}), **trade}) for trade in trades]
+    fallback_executions = _longport_order_fallback_executions(history_orders + today_orders, trades)
+    result = _result([], executions + fallback_executions)
+    if fallback_executions:
+        result["warnings"].append(f"长桥成交接口未返回的 {len(fallback_executions)} 笔已成交订单，已按订单成交汇总补齐")
+    return result
+
+
+def _longport_orders_by_market(url: str, headers: dict[str, str], params: dict[str, Any]) -> list[dict[str, Any]]:
+    orders: list[dict[str, Any]] = []
+    for market in ("US", "HK"):
+        payload = _get_json(url, headers=headers, params={**params, "market": market})
+        orders.extend(_items(payload))
+    return orders
+
+
+def _dedupe_longport_trades(trades: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    result: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for trade in trades:
+        trade_id = _first(trade, "trade_id", "execution_id", "id")
+        if not trade_id or trade_id in seen:
+            continue
+        seen.add(trade_id)
+        result.append(trade)
+    return result
+
+
+def _longport_order_details(base_url: str, headers: dict[str, str], trades: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    details: dict[str, dict[str, Any]] = {}
+    for order_id in dict.fromkeys(_first(trade, "order_id") for trade in trades):
+        if not order_id:
+            continue
+        payload = _get_json(f"{base_url}/v1/trade/order", headers=headers, params={"order_id": order_id})
+        data = payload.get("data") if isinstance(payload, dict) else None
+        if isinstance(data, dict):
+            details[order_id] = data
+    return details
+
+
+def _longport_order_fallback_executions(orders: list[dict[str, Any]], trades: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    execution_order_ids = {_first(trade, "order_id") for trade in trades if _first(trade, "order_id")}
+    unique_orders = {
+        order_id: order
+        for order in orders
+        if (order_id := _first(order, "order_id")) and order_id not in execution_order_ids
+    }
+    result: list[dict[str, Any]] = []
+    for order_id, order in unique_orders.items():
+        quantity = _number(_first(order, "executed_quantity"))
+        price = _number(_first(order, "executed_price", "last_done"))
+        if quantity <= 0 or price <= 0:
+            continue
+        result.append(_execution_from_mapping({
+            "execution_id": f"order:{order_id}",
+            "symbol": _first(order, "symbol"),
+            "stock_name": _first(order, "stock_name", "name"),
+            "side": _first(order, "side"),
+            "quantity": quantity,
+            "price": price,
+            "currency": _first(order, "currency"),
+            "market": _first(order, "market"),
+            "executed_at": _first(order, "updated_at", "submitted_at"),
+        }))
+    return result
 
 
 def _sync_futu(credentials: dict[str, str], start_at: datetime, end_at: datetime) -> dict[str, list[dict[str, Any]]]:
@@ -291,7 +361,11 @@ def _get_json(url: str, *, headers: dict[str, str], params: dict[str, Any] | Non
     response = requests.get(url, headers=headers, params=params, timeout=25)
     if response.status_code >= 400:
         raise RuntimeError("长桥 OpenAPI 返回授权或账户读取错误")
-    return response.json()
+    payload = response.json()
+    if isinstance(payload, dict) and str(payload.get("code", "0")) not in {"0", ""}:
+        message = str(payload.get("message") or "unknown Longbridge API error").strip()
+        raise RuntimeError(f"长桥 OpenAPI 请求失败：{message}")
+    return payload
 
 
 def _items(payload: Any) -> list[dict[str, Any]]:
@@ -299,7 +373,7 @@ def _items(payload: Any) -> list[dict[str, Any]]:
         return [item for item in payload if isinstance(item, dict)]
     if not isinstance(payload, dict):
         return []
-    for key in ("data", "list", "items", "positions", "executions"):
+    for key in ("data", "list", "items", "positions", "executions", "trades", "orders"):
         value = payload.get(key)
         if isinstance(value, list):
             return [item for item in value if isinstance(item, dict)]
@@ -322,7 +396,7 @@ def _position_from_mapping(row: dict[str, Any]) -> dict[str, Any]:
 
 def _execution_from_mapping(row: dict[str, Any]) -> dict[str, Any]:
     return {
-        "external_id": _first(row, "execution_id", "exec_id", "deal_id", "id", "order_id"),
+        "external_id": _first(row, "trade_id", "execution_id", "exec_id", "deal_id", "id", "order_id"),
         "symbol": _first(row, "symbol", "stock_code", "contract_code", "ticker"),
         "name": _first(row, "name", "stock_name", "contract_name"),
         "side": _first(row, "side", "trd_side", "action"),
@@ -331,12 +405,23 @@ def _execution_from_mapping(row: dict[str, Any]) -> dict[str, Any]:
         "fee": _number(_first(row, "fee", "commission", "total_commission")),
         "currency": _first(row, "currency", "currency_name"),
         "market": _first(row, "market", "market_name", "exchange"),
-        "executed_at": _first(row, "trade_done_at", "executed_at", "time", "create_time", "updated_at"),
+        "executed_at": _execution_timestamp(_first(row, "trade_done_at", "executed_at", "time", "create_time", "updated_at")),
     }
 
 
 def _result(positions: list[dict[str, Any]], executions: list[dict[str, Any]]) -> dict[str, list[dict[str, Any]]]:
     return {"positions": positions, "executions": executions, "warnings": []}
+
+
+def _execution_timestamp(value: str) -> str:
+    text = str(value or "").strip()
+    try:
+        unix = int(text)
+    except ValueError:
+        return text
+    if unix > 10_000_000_000:
+        unix /= 1_000
+    return datetime.fromtimestamp(unix, tz=timezone.utc).isoformat()
 
 
 def _first(row: dict[str, Any], *keys: str) -> str:
