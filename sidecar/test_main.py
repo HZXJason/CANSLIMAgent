@@ -504,14 +504,9 @@ class VibeEvidenceIntegrationTest(unittest.IsolatedAsyncioTestCase):
             observed_context.update(received.analysis_context)
             return {"market_report": "技术结论", "final_trade_decision": "HOLD"}, "HOLD"
 
-        validation = {
-            "schema_version": "vibe.execution_validation.v1",
-            "status": "complete",
-            "reflection": "The signal held up in backtest.",
-        }
         with patch.object(main, "prefetch_vibe_evidence_async", return_value=bundle), patch.object(
             main, "run_analysis", side_effect=fake_analysis
-        ), patch.object(main, "validate_execution_plan", return_value=validation), patch.object(main, "REPORT_DELTA_DELAY", 0):
+        ), patch.object(main, "REPORT_DELTA_DELAY", 0):
             events = [event async for event in main.analysis_events(request)]
 
         self.assertEqual(observed_context["vibe_trading"], bundle)
@@ -531,7 +526,6 @@ class VibeEvidenceIntegrationTest(unittest.IsolatedAsyncioTestCase):
         self.assertIn("get_market_data", events[vibe_result_index])
         self.assertTrue(any('"agent": "DataAuditor"' in event for event in events))
         self.assertTrue(any('"agent": "VibeEvidenceReconciler"' in event for event in events))
-        self.assertTrue(any('"agent": "VibeExecutionValidation"' in event for event in events))
 
 
 class VibeDecisionFlowTest(unittest.TestCase):
@@ -550,19 +544,6 @@ class VibeDecisionFlowTest(unittest.TestCase):
         self.assertEqual(pack["roles"]["market"]["coverage"], "partial")
         self.assertEqual(pack["roles"]["market"]["available"], 1)
         self.assertEqual(pack["roles"]["market"]["gaps"][0]["reason"], "timeout")
-
-    def test_execution_gate_only_blocks_completed_negative_validation(self):
-        action, _ = vibe_decision_flow.apply_execution_gate(
-            "BUY", {"status": "unavailable", "error": "source offline"}
-        )
-        self.assertEqual(action, "BUY")
-
-        action, note = vibe_decision_flow.apply_execution_gate(
-            "BUY", {"status": "complete", "reflection": "The signal did not hold up in backtest."}
-        )
-        self.assertEqual(action, "HOLD")
-        self.assertIn("未通过", note)
-
 
 class DataAuditorTest(unittest.TestCase):
     def test_prefers_period_aware_annual_series_and_blocks_ambiguous_vibe_10k_value(self):

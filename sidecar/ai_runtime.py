@@ -1,8 +1,8 @@
-"""Vendored TradingAgents runtime plus an isolated Vibe-Trading adapter.
+"""Vendored TradingAgents runtime plus an isolated Vibe-Trading MCP adapter.
 
 The TradingAgents graph and the CANSLIM/Vibe bridge live under ``sidecar/vendor``
 in this repository.  Vibe-Trading remains an independent runtime because its
-MCP server and backtest engine intentionally use a separate Python environment.
+MCP server intentionally uses a separate Python environment.
 """
 
 from __future__ import annotations
@@ -122,10 +122,7 @@ def _load_tools() -> dict[str, Any]:
         from ta_vibe_bridge.config import BridgeConfig
         from ta_vibe_bridge.mcp_data_tools import load_vibe_tools_sync, preflight
 
-        cfg = BridgeConfig(
-            vibe_root=vibe_root,
-            ta_root=_VENDOR_ROOT,
-        )
+        cfg = BridgeConfig(vibe_root=vibe_root)
         problems = preflight(cfg)
         if problems:
             raise RuntimeError("Vibe runtime preflight failed: " + "; ".join(problems))

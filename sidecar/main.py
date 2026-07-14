@@ -41,11 +41,8 @@ from ai_runtime import (
     runtime_status,
 )
 from vibe_decision_flow import (
-    apply_execution_gate,
     build_research_pack,
     render_evidence_reconciliation,
-    render_execution_validation,
-    validate_execution_plan,
 )
 
 load_dotenv()
@@ -233,7 +230,6 @@ AGENT_DISPLAY_NAMES = {
     "VibeEvidence": "Vibe 数据证据",
     "DataAuditor": "数据审计员",
     "VibeEvidenceReconciler": "Vibe 证据对账",
-    "VibeExecutionValidation": "Vibe 执行验证",
     "FundamentalsAnalyst": "基本面分析师",
     "SentimentAnalyst": "情绪分析师",
     "NewsAnalyst": "新闻分析师",
@@ -1591,46 +1587,6 @@ async def analysis_events(request: AnalysisRequest):
             },
         )
 
-        yield sse(
-            "progress",
-            {
-                "agent": "VibeExecutionValidation",
-                "status": "running",
-                "message": "正在把 PM 交易建议交给 Vibe 做历史执行验证...",
-            },
-        )
-        if request.online_tools:
-            original_pm_decision = state.get("final_trade_decision") or decision
-            validation_future = loop.run_in_executor(
-                None,
-                validate_execution_plan,
-                request.ticker,
-                original_pm_decision,
-                state.get("trader_investment_plan", ""),
-            )
-            while not validation_future.done():
-                yield sse("heartbeat", {})
-                await asyncio.sleep(NARRATION_INTERVAL_SECONDS)
-            validation = await validation_future
-        else:
-            validation = {"schema_version": "vibe.execution_validation.v1", "status": "disabled"}
-        request.analysis_context["vibe_execution_validation"] = validation
-        yield sse("result", {"agent": "VibeExecutionValidation", "content": render_execution_validation(validation)})
-        validation_status = "done" if validation.get("status") in {"complete", "not_actionable", "disabled"} else "error"
-        validation_message = (
-            "历史执行验证完成，最终建议将携带该验证结果"
-            if validation_status == "done"
-            else "执行验证不可用；最终建议将明确标记为未验证"
-        )
-        yield sse(
-            "progress",
-            {
-                "agent": "VibeExecutionValidation",
-                "status": validation_status,
-                "message": validation_message,
-            },
-        )
-
         for agent in custom_agents:
             yield sse(
                 "progress",
@@ -1675,11 +1631,6 @@ async def analysis_events(request: AnalysisRequest):
             action = normalize_action(decision)
             summary = str(state.get("final_trade_decision") or decision or "")
             confidence = confidence_for_action(action, decision)
-            action, execution_gate_note = apply_execution_gate(action, validation)
-            if execution_gate_note:
-                summary = "\n\n".join(part for part in [summary, f"Vibe 执行门：{execution_gate_note}"] if part)
-            if action == "HOLD" and validation.get("status") == "complete":
-                confidence = "LOW"
         yield sse(
             "decision",
             {

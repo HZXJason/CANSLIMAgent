@@ -11,7 +11,6 @@ CANSLIMAgent 是一个面向美股研究的本地优先工作台：从 CANSLIM �
 - 运行基本面、情绪、新闻、技术、看多/看空、交易员、风控与投资组合经理组成的多智能体分析。
 - 在分析前通过 Vibe-Trading MCP 预取申报文件、财务报表、行情、新闻、期权和公司资料。
 - 使用确定性的 `DataAuditor` 按来源、申报类型、报告期间和 accession 审计冲突数据；可验证事实进入分析上下文，期间不明或冲突的数值会被阻止引用并明确显示为未知。
-- 在投资组合经理初步结论后执行 Vibe 历史执行验证。完成但统计证据不足的验证可将 BUY/SELL 拦截为 HOLD；无法执行时会如实标记为“未验证”，不会伪造成功结果。
 - 记录交易日志、生成 `vibe.trade_record.v1` 兼容导出，并给出确定性的交易行为复盘。
 - 可在设置中连接长桥、老虎、富途 OpenD 或 IBKR 本地 API，会先预览只读成交，再标准化导入交易日志；不提供自动下单。
 - 通过 SSE 实时显示进度和报告，支持暂停/续传，并可将完整 AI 报告另存为 Markdown。
@@ -29,7 +28,7 @@ Python sidecar（FastAPI）
   ├─ 内置 TradingAgents 图
   ├─ 内置 Vibe 桥接层
   ├─ DataAuditor
-  └─ Vibe MCP / 独立的 Vibe 回测运行时
+  └─ Vibe MCP / 独立的交易日志复盘运行时
 ```
 
 浏览器只访问 Go 服务的 `/api/v1`；Go 服务再代理到可替换的 Python sidecar（`AI_ANALYSIS_UPSTREAM_URL`）。因此前端、API 与 AI 编排解耦，同时保持流式事件契约稳定。
@@ -39,11 +38,11 @@ Python sidecar（FastAPI）
 - `sidecar/main.py`：编排、审计接入与 SSE 生产者。
 - `sidecar/ai_runtime.py`：内置运行时和 Vibe 工具加载。
 - `sidecar/vendor/tradingagents/`：随项目提交的 TradingAgents 图运行时。
-- `sidecar/vendor/ta_vibe_bridge/`：随项目提交的 MCP 与回测桥接层。
+- `sidecar/vendor/ta_vibe_bridge/`：随项目提交的 MCP 桥接层。
 - `sidecar/data_auditor.py`：来源与期间感知的数据审计。
-- `sidecar/vibe_decision_flow.py`：证据协调与执行验证门。
+- `sidecar/vibe_decision_flow.py`：证据协调。
 
-`Vibe-Trading` 本身保持为独立运行时：其 MCP 服务与回测引擎有单独的依赖栈。仅在启用 Vibe 工具、执行验证或日志复盘时需要一个本地 checkout，并通过 `VIBE_TRADING_ROOT` 指定；核心 AI 编排与桥接源码不再依赖 `TradingAgent2.0` 目录。
+`Vibe-Trading` 本身保持为独立运行时：其 MCP 服务与交易日志复盘工具有单独的依赖栈。仅在启用 Vibe 工具或日志复盘时需要一个本地 checkout，并通过 `VIBE_TRADING_ROOT` 指定；核心 AI 编排与桥接源码不再依赖 `TradingAgent2.0` 目录。
 
 ## AI 研究流程
 
@@ -55,7 +54,6 @@ Vibe MCP 证据预取
   → 交易员与风控审阅
   → 投资组合经理初步结论
   → Vibe 证据协调
-  → Vibe 历史执行验证
   → 面向人工的最终动作
 ```
 
@@ -164,13 +162,9 @@ ANTHROPIC_API_KEY=
 GOOGLE_API_KEY=
 OPENAI_COMPATIBLE_API_KEY=
 
-# 独立的 Vibe-Trading 运行时；未设置时仅兼容旧的同级安装
+# 独立的 Vibe-Trading MCP / 交易日志复盘运行时；未设置时仅兼容旧的同级安装
 VIBE_TRADING_ROOT=/absolute/path/to/Vibe-Trading
 ENABLE_VIBE_MCP_TOOLS=true
-
-# 在投资组合经理初步建议之后执行历史验证
-ENABLE_VIBE_EXECUTION_VALIDATION=true
-VIBE_EXECUTION_VALIDATION_TIMEOUT_SECONDS=90
 ```
 
 Vibe 功能是可选的。禁用或不可用时，系统会明确记录能力降级，而不会生成替代证据。

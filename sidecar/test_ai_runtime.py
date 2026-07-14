@@ -1,11 +1,8 @@
-import ast
 import json
 import unittest
 from unittest.mock import patch
 
 import ai_runtime as runtime
-from ta_vibe_bridge.codegen import generate_signal_engine_source
-from ta_vibe_bridge.signal_spec import SignalSpec
 
 
 class FakeAsyncTool:
@@ -248,25 +245,6 @@ class VibePrefetchTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(payload_rows["total_items"], 100)
         self.assertTrue(payload_rows["truncated"])
         self.assertEqual(len(payload_rows["items"]), 16)
-
-
-class VibeSignalEngineCodegenTest(unittest.TestCase):
-    def test_negative_weight_uses_an_ast_literal_default(self):
-        source = generate_signal_engine_source(
-            SignalSpec(ticker="MU.US", rating="Underweight", target_weight=-0.02)
-        )
-
-        self.assertIn("target_weight: str = '-0.02'", source)
-        self.assertIn("self.target_weight = float(target_weight)", source)
-        tree = ast.parse(source)
-        init = next(
-            child
-            for node in tree.body
-            if isinstance(node, ast.ClassDef) and node.name == "SignalEngine"
-            for child in node.body
-            if isinstance(child, ast.FunctionDef) and child.name == "__init__"
-        )
-        self.assertTrue(all(isinstance(default, ast.Constant) or isinstance(default, ast.Tuple) for default in init.args.defaults))
 
 
 if __name__ == "__main__":

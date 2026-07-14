@@ -30,7 +30,6 @@ const AGENT_ORDER = [
   { id: 'Trader', label: '交易员' },
   { id: 'RiskManagement', label: '风险管理团队' },
   { id: 'VibeEvidenceReconciler', label: 'Vibe 证据对账' },
-  { id: 'VibeExecutionValidation', label: 'Vibe 执行验证' },
   { id: 'PortfolioManager', label: '投资组合经理' }
 ];
 
