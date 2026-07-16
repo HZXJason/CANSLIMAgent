@@ -51,18 +51,22 @@ class PortfolioRating(str, Enum):
     SELL = "Sell"
 
 
-class TraderAction(str, Enum):
-    """3-tier transaction direction used by the Trader.
+class DirectionalView(str, Enum):
+    BULLISH = "Bullish"
+    NEUTRAL = "Neutral"
+    BEARISH = "Bearish"
 
-    The Trader's job is to translate the Research Manager's investment plan
-    into a concrete transaction proposal: should the desk execute a Buy, a
-    Sell, or sit on Hold this round.  Position sizing and the nuanced
-    Overweight / Underweight calls happen later at the Portfolio Manager.
-    """
 
-    BUY = "Buy"
-    HOLD = "Hold"
-    SELL = "Sell"
+class DecisionConfidence(str, Enum):
+    LOW = "Low"
+    MEDIUM = "Medium"
+    HIGH = "High"
+
+
+class DataQuality(str, Enum):
+    INSUFFICIENT = "Insufficient"
+    PARTIAL = "Partial"
+    SUFFICIENT = "Sufficient"
 
 
 # ---------------------------------------------------------------------------
@@ -79,12 +83,19 @@ class ResearchPlan(BaseModel):
     instructions the trader can execute against.
     """
 
+    direction: DirectionalView = Field(
+        description="Expected price direction over the stated horizon: Bullish, Neutral, or Bearish.",
+    )
+    confidence: DecisionConfidence = Field(
+        description="Confidence in the directional forecast. Missing data lowers confidence, not direction.",
+    )
+    data_quality: DataQuality = Field(
+        description="Quality of the evidence: Insufficient, Partial, or Sufficient.",
+    )
     recommendation: PortfolioRating = Field(
         description=(
-            "The investment recommendation. Exactly one of Buy / Overweight / "
-            "Hold / Underweight / Sell. Reserve Hold for situations where the "
-            "evidence on both sides is genuinely balanced; otherwise commit to "
-            "the side with the stronger arguments."
+            "The position recommendation. Exactly one of Buy / Overweight / Hold / "
+            "Underweight / Sell. This is separate from expected price direction."
         ),
     )
     rationale: str = Field(
@@ -105,6 +116,10 @@ class ResearchPlan(BaseModel):
 def render_research_plan(plan: ResearchPlan) -> str:
     """Render a ResearchPlan to markdown for storage and the trader's prompt context."""
     return "\n".join([
+        f"**Direction**: {plan.direction.value}",
+        f"**Confidence**: {plan.confidence.value}",
+        f"**Data Quality**: {plan.data_quality.value}",
+        "",
         f"**Recommendation**: {plan.recommendation.value}",
         "",
         f"**Rationale**: {plan.rationale}",
@@ -127,8 +142,11 @@ class TraderProposal(BaseModel):
     entry, stop-loss, and sizing.
     """
 
-    action: TraderAction = Field(
-        description="The transaction direction. Exactly one of Buy / Hold / Sell.",
+    direction: DirectionalView = Field(
+        description="Expected price direction: Bullish, Neutral, or Bearish.",
+    )
+    action: PortfolioRating = Field(
+        description="The position action. Exactly one of Buy / Overweight / Hold / Underweight / Sell.",
     )
     reasoning: str = Field(
         description=(
@@ -163,6 +181,7 @@ def render_trader_proposal(proposal: TraderProposal) -> str:
     and any external code that greps for it.
     """
     parts = [
+        f"**Direction**: {proposal.direction.value}",
         f"**Action**: {proposal.action.value}",
         "",
         f"**Reasoning**: {proposal.reasoning}",
@@ -173,9 +192,16 @@ def render_trader_proposal(proposal: TraderProposal) -> str:
         parts.extend(["", f"**Stop Loss**: {proposal.stop_loss}"])
     if proposal.position_sizing:
         parts.extend(["", f"**Position Sizing**: {proposal.position_sizing}"])
+    legacy_action = {
+        PortfolioRating.BUY: "BUY",
+        PortfolioRating.OVERWEIGHT: "BUY",
+        PortfolioRating.HOLD: "HOLD",
+        PortfolioRating.UNDERWEIGHT: "SELL",
+        PortfolioRating.SELL: "SELL",
+    }[proposal.action]
     parts.extend([
         "",
-        f"FINAL TRANSACTION PROPOSAL: **{proposal.action.value.upper()}**",
+        f"FINAL TRANSACTION PROPOSAL: **{legacy_action}**",
     ])
     return "\n".join(parts)
 
@@ -194,6 +220,18 @@ class PortfolioDecision(BaseModel):
     the rating-scale guidance.
     """
 
+    direction: DirectionalView = Field(
+        description=(
+            "Expected price direction over the stated horizon: Bullish, Neutral, or Bearish. "
+            "Do not turn missing data, high volatility, or a smaller position into Bearish."
+        ),
+    )
+    confidence: DecisionConfidence = Field(
+        description="Confidence in the directional forecast: Low, Medium, or High.",
+    )
+    data_quality: DataQuality = Field(
+        description="Quality of evidence: Insufficient, Partial, or Sufficient.",
+    )
     rating: PortfolioRating = Field(
         description=(
             "The final position rating. Exactly one of Buy / Overweight / Hold / "
@@ -237,6 +275,10 @@ def render_pm_decision(decision: PortfolioDecision) -> str:
     parsers and the report writers already handle.
     """
     parts = [
+        f"**Direction**: {decision.direction.value}",
+        f"**Confidence**: {decision.confidence.value}",
+        f"**Data Quality**: {decision.data_quality.value}",
+        "",
         f"**Rating**: {decision.rating.value}",
         "",
         f"**Executive Summary**: {decision.executive_summary}",
