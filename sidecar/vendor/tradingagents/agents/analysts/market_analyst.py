@@ -1,4 +1,5 @@
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
+from langchain_core.tools import tool
 
 from tradingagents.agents.utils.agent_utils import (
     get_indicators,
@@ -15,10 +16,56 @@ def create_market_analyst(llm):
         current_date = state["trade_date"]
         instrument_context = get_instrument_context_from_state(state)
 
+        # The prompt tells the model that current_date is the point-in-time
+        # cutoff, but a causal replay must not trust model-supplied tool
+        # arguments. Bind all three market tools to the state cutoff so a model
+        # cannot request a later date, even accidentally.
+        @tool("get_stock_data")
+        def point_in_time_stock_data(symbol: str, start_date: str, end_date: str) -> str:
+            """Retrieve OHLCV without allowing rows after the graph's as-of date."""
+            safe_end = min(end_date, current_date)
+            if start_date > current_date:
+                return f"Requested start_date {start_date} is after the point-in-time cutoff {current_date}."
+            return get_stock_data.invoke(
+                {"symbol": symbol, "start_date": start_date, "end_date": safe_end}
+            )
+
+        @tool("get_indicators")
+        def point_in_time_indicators(
+            symbol: str,
+            indicator: str,
+            curr_date: str,
+            look_back_days: int = 30,
+        ) -> str:
+            """Retrieve indicators at the graph's fixed point-in-time cutoff."""
+            return get_indicators.invoke(
+                {
+                    "symbol": symbol,
+                    "indicator": indicator,
+                    "curr_date": current_date,
+                    "look_back_days": look_back_days,
+                }
+            )
+
+        @tool("get_verified_market_snapshot")
+        def point_in_time_verified_snapshot(
+            symbol: str,
+            curr_date: str,
+            look_back_days: int = 30,
+        ) -> str:
+            """Return a verified snapshot fixed to the graph's as-of date."""
+            return get_verified_market_snapshot.invoke(
+                {
+                    "symbol": symbol,
+                    "curr_date": current_date,
+                    "look_back_days": look_back_days,
+                }
+            )
+
         tools = [
-            get_stock_data,
-            get_indicators,
-            get_verified_market_snapshot,
+            point_in_time_stock_data,
+            point_in_time_indicators,
+            point_in_time_verified_snapshot,
         ]
 
         system_message = (

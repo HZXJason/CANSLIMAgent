@@ -165,9 +165,19 @@ OPENAI_COMPATIBLE_API_KEY=
 # 独立的 Vibe-Trading MCP / 交易日志复盘运行时；未设置时仅兼容旧的同级安装
 VIBE_TRADING_ROOT=/absolute/path/to/Vibe-Trading
 ENABLE_VIBE_MCP_TOOLS=true
+
+# 历史校准受控并发及单节点重试次数
+AI_CALIBRATION_CONCURRENCY=3
+AI_CALIBRATION_NODE_MAX_ATTEMPTS=3
 ```
 
 Vibe 功能是可选的。禁用或不可用时，系统会明确记录能力降级，而不会生成替代证据。
+
+### 确定性量化趋势基准
+
+Sidecar 内置独立于大模型的 `daily_tsm_sign_21_63_252.v1`：以 Hurst-style 的 21/63/252 个交易日总收益方向多数票决定 `BUY / HOLD / SELL`，把 12–2 相对强弱排名、MA50/MA200 趋势、52 周高点保留为独立确认项，同时记录数据哈希和配置哈希。它是面向单标的消融的日频适配，并非原论文月末、多市场、等风险组合的逐项复现。它不会输出未经校准的上涨概率，也不会读取 LLM Key。`POST /quant/trend/predict` 返回单节点快照，`POST /quant/trend/evaluate` 使用下一交易日开盘和非重叠历史窗口生成包含三分类、恒定方向基准、方向覆盖与探索性总回报的 Run Card；量化仓位按三路信号投票强度缩放，恒定方向基线保持满仓。
+
+该模块为后续 `quant_only / ta_blind / quant_informed` 配对消融预留严格隔离契约，当前不会改变普通 AI 分析行为。默认 Yahoo 数据只适合原型和单标的探索验证；正式横截面研究必须替换为带历史成分与退市证券的 point-in-time 数据源。实现与使用说明见 [`sidecar/quant_trend/README.md`](sidecar/quant_trend/README.md)。
 
 ## 数据策略
 
@@ -199,6 +209,9 @@ POST  /api/v1/analysis/ai/models
 GET   /api/v1/llm/credentials/:provider
 PUT   /api/v1/llm/credentials/:provider
 DELETE /api/v1/llm/credentials/:provider
+POST  /api/v1/analysis/:symbol/calibration/status
+POST  /api/v1/analysis/:symbol/calibration/stop
+POST  /api/v1/analysis/:symbol/calibration
 GET   /api/v1/journal
 POST  /api/v1/journal
 GET   /api/v1/journal/export
@@ -214,6 +227,8 @@ DELETE /api/v1/brokers/:id
 
 AI 分析会转发 `progress`、`result`、`report_start`、`report_delta`、`decision`、`done` 和 `error` 等 SSE 事件。设置页会通过 Go → sidecar 自动读取当前供应商可用模型；用户填写的 LLM Key 由 Go 加密保存，按提供商及自定义网关主机隔离，并只在一次固定 Go → sidecar 请求期间解密使用。
 
+分析页的“模型历史校准”是独立后台任务：它按标的、深度/快速模型组合、分析师配置、预测周期和校准策略版本缓存 Run Card，默认以 7 路受控并发重放近三年均匀分布的 10 个历史节点。v5 支持独立的 20 日短期和 40 日中期校准，要求分析师分别输出对应周期的 `BULLISH / NEUTRAL / BEARISH` 方向、`BUY / HOLD / SELL` 仓位动作与证据充分性；单分析师校准只评分方向，不再把“偏多但不追高”的 HOLD 误判为横盘。证据不足节点标记为不可评分并排除在准确率分母之外。判分从下一交易日开盘开始，同时展示两种指标：方向机会命中表示观察期内曾达到波动率调整后的有利走势，可执行命中则要求先达到止盈线、再触及 `max(2%, 0.75 × ATR20%)` 止损线；20 日止盈为 `max(3%, ATR20%)`，40 日止盈在此基础上乘以 `√2`，避免仅因窗口加长而虚高。Run Card 还展示恒定 BUY、SELL、HOLD 基准以及模型相对最佳基准的增量；置信度只有在至少 10 个可评分节点且超过基准时才会提升。校准节点统一使用历史 `as_of_date`，不读取或写入普通分析的全局交易记忆，完整报告另存审计文件；历史财务报表采用保守披露时滞，历史新闻节点禁用实时预测市场。每个完成节点立即缓存；旧报告仅在明确给出方向或明确 BUY/SELL 时安全复用，语义含混的旧 HOLD 会重新分析。失败或服务重启后只补缺失节点。运行中的任务可在页面停止，已经发出的最多 7 个模型请求会短暂收尾并保留缓存。普通 AI 分析不会重复回测，只读取同配置的已完成 20 日结果；历史结果只允许下调当前置信度。无法可靠重建历史截面的实时社交数据和自定义应用上下文会被明确排除，避免未来数据泄漏。
+
 本地开发允许设置页连接经过校验的公网 HTTPS 自定义网关；仍会拒绝内网、loopback、凭据型 URL 和重定向。生产环境始终强制 `AI_ALLOWED_BACKEND_HOSTS` 精确白名单；开发环境也可设置 `AI_REQUIRE_BACKEND_ALLOWLIST=true` 使用同一策略。
 
 ## 验证
@@ -222,7 +237,7 @@ AI 分析会转发 `progress`、`result`、`report_start`、`report_delta`、`de
 
 ```bash
 cd backend && go test ./...
-cd ../sidecar && .venv/bin/python -m unittest test_main.py test_ai_runtime.py test_journal_reflection.py test_analysis_runs.py
+cd ../sidecar && .venv/bin/python -m unittest test_main.py test_ai_runtime.py test_journal_reflection.py test_analysis_runs.py test_quant_trend.py
 cd ../frontend && pnpm run typecheck && pnpm run build
 docker compose build sidecar
 ```

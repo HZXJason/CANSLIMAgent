@@ -18,9 +18,10 @@ interface AIAnalysisConfigProps {
   symbol: string;
   onStartAnalysis: (config: AnalysisConfig) => void;
   isAnalyzing: boolean;
+  onConfigChange?: (config: AnalysisConfig) => void;
 }
 
-export default function AIAnalysisConfig({ symbol, onStartAnalysis, isAnalyzing }: AIAnalysisConfigProps) {
+export default function AIAnalysisConfig({ symbol, onStartAnalysis, isAnalyzing, onConfigChange }: AIAnalysisConfigProps) {
   const [expanded, setExpanded] = useState(true);
   const [options, setOptions] = useState<AIAnalysisConfigResponse>(FALLBACK_AI_ANALYSIS_OPTIONS);
   const [config, setConfig] = useState<AnalysisConfig>(() =>
@@ -47,7 +48,8 @@ export default function AIAnalysisConfig({ symbol, onStartAnalysis, isAnalyzing 
 
   useEffect(() => {
     writeStoredAIAnalysisConfig(config);
-  }, [config]);
+    onConfigChange?.(config);
+  }, [config, onConfigChange]);
 
   const depthValue = config.max_debate_rounds >= 2 ? 'deep' : 'standard';
   const disabled = isAnalyzing;

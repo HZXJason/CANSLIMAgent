@@ -16,6 +16,7 @@ import pandas as pd
 from stockstats import wrap
 
 from tradingagents.dataflows.stockstats_utils import load_ohlcv
+from tradingagents.dataflows.frozen_ohlcv import frozen_model_data_id
 
 # A fixed, common indicator set so the snapshot is the same shape every run.
 DEFAULT_SNAPSHOT_INDICATORS: tuple[str, ...] = (
@@ -98,6 +99,9 @@ def build_verified_market_snapshot(
         "| Field | Value |",
         "|---|---:|",
     ]
+    model_data_id = frozen_model_data_id()
+    if model_data_id:
+        lines.insert(5, f"- Data source: protocol-frozen canonical OHLCV `{model_data_id}`")
     for field in ("Open", "High", "Low", "Close", "Volume"):
         lines.append(f"| {field} | {_fmt(latest.get(field))} |")
 

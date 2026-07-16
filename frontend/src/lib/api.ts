@@ -2,6 +2,8 @@ import type { APIResponse, Market, RefreshJob, RefreshJobResponse, StockWithMetr
 import type {
 	AIAnalysisMarkResponse,
 	AIAnalysisConfigResponse,
+  AICalibrationRun,
+  AnalysisConfig,
   AIModelDiscoveryInput,
   AIModelDiscoveryResponse,
   LLMCredentialStatus,
@@ -43,7 +45,16 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
         ...Object.fromEntries(headers.entries())
       }
     });
-    const payload = (await response.json()) as APIResponse<T>;
+    const contentType = response.headers.get('content-type') ?? '';
+    const rawBody = await response.text();
+    let payload: APIResponse<T>;
+    try {
+      payload = rawBody && contentType.includes('application/json')
+        ? (JSON.parse(rawBody) as APIResponse<T>)
+        : ({ success: false, data: null, error: rawBody.trim() || `HTTP ${response.status}` } as APIResponse<T>);
+    } catch {
+      payload = { success: false, data: null, error: rawBody.trim() || `HTTP ${response.status}` } as APIResponse<T>;
+    }
     if (!response.ok || !payload.success) {
       throw new Error(payload.error ?? '请求失败');
     }
@@ -125,6 +136,27 @@ export function discoverAIModels(input: AIModelDiscoveryInput) {
   return request<AIModelDiscoveryResponse>(AI_ANALYSIS_MODELS_PATH, {
     method: 'POST',
     body: JSON.stringify(input)
+  });
+}
+
+export function fetchAICalibration(symbol: string, config: AnalysisConfig, horizonDays = 20) {
+  return request<AICalibrationRun | null>('/analysis/' + encodeURIComponent(symbol) + '/calibration/status', {
+    method: 'POST',
+    body: JSON.stringify({ ...config, horizon_days: horizonDays })
+  });
+}
+
+export function startAICalibration(symbol: string, config: AnalysisConfig, refresh = false, horizonDays = 20) {
+  return request<AICalibrationRun>('/analysis/' + encodeURIComponent(symbol) + '/calibration', {
+    method: 'POST',
+    body: JSON.stringify({ ...config, refresh, horizon_days: horizonDays })
+  });
+}
+
+export function stopAICalibration(symbol: string, config: AnalysisConfig, horizonDays = 20) {
+  return request<AICalibrationRun | null>('/analysis/' + encodeURIComponent(symbol) + '/calibration/stop', {
+    method: 'POST',
+    body: JSON.stringify({ ...config, horizon_days: horizonDays })
   });
 }
 

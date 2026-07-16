@@ -1,19 +1,23 @@
 import asyncio
 import ast
 import copy
+import hashlib
 import hmac
 import ipaddress
 import json
+import math
 import os
 import re
 import socket
 import time
 import traceback
 import uuid
+from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from queue import Empty, Queue
-from datetime import date, datetime
+from threading import Event, Lock, Thread
+from datetime import date, datetime, timedelta
 from pathlib import Path
-from typing import Any, AsyncIterator, Iterable
+from typing import Any, AsyncIterator, Callable, Iterable
 from urllib.parse import urlparse
 
 import uvicorn
@@ -44,10 +48,13 @@ from vibe_decision_flow import (
     build_research_pack,
     render_evidence_reconciliation,
 )
+from quant_trend import InsufficientDataError, PriceDataError, QuantTrendService
+from ablation_study import run_study as run_ablation_study
 
 load_dotenv()
 
 app = FastAPI(title="AlphaLens TradingAgents Sidecar")
+quant_trend_service = QuantTrendService()
 
 # This is a protocol header name, not a password.
 SIDECAR_TOKEN_HEADER = "X-Sidecar-Token"  # nosec B105
@@ -56,6 +63,10 @@ MAX_MODEL_DISCOVERY_RESPONSE_BYTES = 2 * 1024 * 1024
 MAX_CONCURRENT_REQUESTS = max(1, int(os.getenv("SIDECAR_MAX_CONCURRENT_REQUESTS", "16")))
 _active_requests = 0
 _active_requests_lock = asyncio.Lock()
+_calibration_cancel_events: dict[str, Event] = {}
+_calibration_cancel_lock = Lock()
+_ablation_cancel_events: dict[str, Event] = {}
+_ablation_cancel_lock = Lock()
 
 
 def _env_enabled(name: str) -> bool:
@@ -186,6 +197,63 @@ class ModelDiscoveryRequest(StrictRequestModel):
     provider: str = Field(..., min_length=1, max_length=64)
     backend_url: str | None = Field(default=None, max_length=2048)
     api_key: str | None = Field(default=None, min_length=1, max_length=8192, repr=False)
+
+
+class CalibrationRequest(AnalysisRequest):
+    job_id: str | None = Field(default=None, min_length=1, max_length=128, pattern=r"^[A-Za-z0-9_-]+$")
+    sample_count: int = Field(default=10, ge=5, le=30)
+    horizon_days: int = Field(default=20, ge=5, le=252)
+    force_refresh: bool = False
+
+
+class AblationStudyRequest(AnalysisRequest):
+    job_id: str | None = Field(default=None, min_length=1, max_length=128, pattern=r"^[A-Za-z0-9_-]+$")
+    start_date: date = date(2022, 1, 3)
+    end_date: date = date(2025, 6, 30)
+    horizon_days: int = Field(default=20, ge=5, le=60)
+    maximum_nodes: int = Field(default=45, ge=5, le=60)
+    repeats: int = Field(default=1, ge=1, le=5)
+    concurrency: int = Field(default=7, ge=1, le=10)
+    transaction_cost_bps: float = Field(default=10.0, ge=0, le=500)
+    max_attempts: int = Field(default=3, ge=1, le=5)
+    adaptive_stages: bool = True
+    stage_one_nodes: int = Field(default=30, ge=5, le=55)
+    reproducibility_nodes: int = Field(default=5, ge=1, le=20)
+
+    @field_validator("analysts")
+    @classmethod
+    def validate_ablation_analysts(cls, values: list[str]) -> list[str]:
+        normalized = [value.strip().lower() for value in values]
+        if normalized not in (["technical"], ["market"]):
+            raise ValueError("confirmatory ablation requires the point-in-time technical/market analyst only")
+        return ["technical"]
+
+
+class QuantTrendRequest(StrictRequestModel):
+    symbol: str = Field(..., min_length=1, max_length=32, pattern=r"^[A-Za-z0-9][A-Za-z0-9.^=_-]{0,31}$")
+    as_of_date: date = Field(default_factory=date.today)
+    horizon_days: int = Field(default=20, ge=5, le=252)
+    universe: list[str] = Field(default_factory=list, max_length=500)
+    universe_version: str | None = Field(default=None, min_length=1, max_length=128)
+    force_refresh: bool = False
+
+    @field_validator("universe")
+    @classmethod
+    def validate_universe(cls, values: list[str]) -> list[str]:
+        symbol_pattern = re.compile(r"^[A-Za-z0-9][A-Za-z0-9.^=_-]{0,31}$")
+        if any(not symbol_pattern.fullmatch(value.strip()) for value in values):
+            raise ValueError("universe symbols must be 1-32 characters")
+        return values
+
+
+class QuantTrendEvaluationRequest(StrictRequestModel):
+    symbol: str = Field(..., min_length=1, max_length=32, pattern=r"^[A-Za-z0-9][A-Za-z0-9.^=_-]{0,31}$")
+    start_date: date
+    end_date: date
+    horizon_days: int = Field(default=20, ge=5, le=252)
+    step_days: int | None = Field(default=None, ge=1, le=252)
+    maximum_nodes: int = Field(default=500, ge=1, le=1000)
+    transaction_cost_bps: float = Field(default=10.0, ge=0, le=500)
 
 
 class JournalReflectionRequest(StrictRequestModel):
@@ -757,6 +825,131 @@ class StreamingCallback(BaseCallbackHandler):
             self.output_queue.put(text)
 
 
+class EvidenceUsageCallback(BaseCallbackHandler):
+    """Best-effort non-secret usage ledger across all LLM calls in one graph."""
+
+    def __init__(self) -> None:
+        self._lock = Lock()
+        self._calls = 0
+        self._reported_calls = 0
+        self._prompt_tokens = 0
+        self._completion_tokens = 0
+        self._total_tokens = 0
+        self._seen_llm_runs: set[str] = set()
+        self._tool_starts: dict[str, dict[str, Any]] = {}
+        self._tool_calls: list[dict[str, Any]] = []
+
+    @staticmethod
+    def _usage_from_response(response: Any) -> dict[str, Any]:
+        output = getattr(response, "llm_output", None)
+        if isinstance(output, dict):
+            for key in ("token_usage", "usage"):
+                usage = output.get(key)
+                if isinstance(usage, dict):
+                    return usage
+        for generation_group in getattr(response, "generations", None) or []:
+            for generation in generation_group or []:
+                message = getattr(generation, "message", None)
+                usage = getattr(message, "usage_metadata", None)
+                if isinstance(usage, dict):
+                    return usage
+        return {}
+
+    @staticmethod
+    def _int(usage: dict[str, Any], *keys: str) -> int:
+        for key in keys:
+            value = usage.get(key)
+            if isinstance(value, int) and not isinstance(value, bool):
+                return max(0, value)
+        return 0
+
+    @classmethod
+    def _raw_value(cls, value: Any) -> Any:
+        if value is None or isinstance(value, (str, int, float, bool)):
+            return value
+        if isinstance(value, dict):
+            return {str(key): cls._raw_value(child) for key, child in value.items()}
+        if isinstance(value, (list, tuple)):
+            return [cls._raw_value(child) for child in value]
+        content = getattr(value, "content", None)
+        if content is not None and content is not value:
+            return cls._raw_value(content)
+        return str(value)
+
+    def on_llm_end(self, response: Any, **kwargs: Any) -> None:
+        usage = self._usage_from_response(response)
+        prompt = self._int(usage, "prompt_tokens", "input_tokens", "prompt_token_count")
+        completion = self._int(usage, "completion_tokens", "output_tokens", "candidates_token_count")
+        total = self._int(usage, "total_tokens", "total_token_count") or prompt + completion
+        run_id = str(kwargs.get("run_id") or "")
+        with self._lock:
+            if run_id and run_id in self._seen_llm_runs:
+                return
+            if run_id:
+                self._seen_llm_runs.add(run_id)
+            self._calls += 1
+            if usage:
+                self._reported_calls += 1
+            self._prompt_tokens += prompt
+            self._completion_tokens += completion
+            self._total_tokens += total
+
+    def on_tool_start(
+        self,
+        serialized: dict[str, Any],
+        input_str: str,
+        **kwargs: Any,
+    ) -> None:
+        run_id = str(kwargs.get("run_id") or uuid.uuid4())
+        name = str((serialized or {}).get("name") or kwargs.get("name") or "unknown")
+        inputs = kwargs.get("inputs")
+        with self._lock:
+            self._tool_starts[run_id] = {
+                "run_id": run_id,
+                "name": name,
+                "input": self._raw_value(inputs if isinstance(inputs, dict) else input_str),
+                "started_monotonic": time.monotonic(),
+            }
+
+    def _finish_tool(self, run_id: Any, *, output: Any = None, error: Any = None) -> None:
+        key = str(run_id or "")
+        with self._lock:
+            started = self._tool_starts.pop(key, None) or {
+                "run_id": key,
+                "name": "unknown",
+                "input": None,
+                "started_monotonic": time.monotonic(),
+            }
+            elapsed = time.monotonic() - float(started.pop("started_monotonic"))
+            self._tool_calls.append(
+                {
+                    **started,
+                    "output": self._raw_value(output),
+                    "error": str(error) if error is not None else None,
+                    "duration_seconds": round(elapsed, 6),
+                }
+            )
+
+    def on_tool_end(self, output: Any, **kwargs: Any) -> None:
+        self._finish_tool(kwargs.get("run_id"), output=output)
+
+    def on_tool_error(self, error: BaseException, **kwargs: Any) -> None:
+        self._finish_tool(kwargs.get("run_id"), error=error)
+
+    def snapshot(self) -> dict[str, Any]:
+        with self._lock:
+            return {
+                "llm_calls": self._calls,
+                "usage_reported_calls": self._reported_calls,
+                "usage_missing_calls": self._calls - self._reported_calls,
+                "prompt_tokens": self._prompt_tokens,
+                "completion_tokens": self._completion_tokens,
+                "total_tokens": self._total_tokens,
+                "tool_calls": copy.deepcopy(self._tool_calls),
+                "unfinished_tool_calls": len(self._tool_starts),
+            }
+
+
 async def drain_model_output(output_queue: Queue[str]) -> AsyncIterator[str]:
     while True:
         try:
@@ -823,6 +1016,7 @@ def configured_graph(
     config["max_risk_rounds"] = request.max_risk_rounds
     config["online_tools"] = request.online_tools
     config["output_language"] = OUTPUT_LANGUAGE_INSTRUCTION
+    configure_historical_isolation(config, request)
     configure_analysis_checkpoint(config, request)
 
     try:
@@ -840,6 +1034,22 @@ def configured_graph(
         config.pop("api_key", None)
     attach_application_context(graph, request)
     return graph
+
+
+def configure_historical_isolation(config: dict[str, Any], request: AnalysisRequest) -> bool:
+    calibration_context = (
+        request.analysis_context.get("calibration")
+        if isinstance(request.analysis_context, dict)
+        else None
+    )
+    if not isinstance(calibration_context, dict):
+        return False
+    # Historical nodes must be independent. The normal global memory log
+    # contains later decisions and realized outcomes, and concurrent replay
+    # arms would otherwise read/write each other's state.
+    config["memory_log_path"] = None
+    config["historical_isolation"] = True
+    return True
 
 
 def configure_analysis_checkpoint(config: dict[str, Any], request: AnalysisRequest) -> None:
@@ -906,13 +1116,715 @@ def attach_application_context(graph: Any, request: AnalysisRequest) -> None:
     graph.resolve_instrument_context = resolve_with_application_context
 
 
-def run_analysis(request: AnalysisRequest, callbacks: list[Any] | None = None) -> tuple[dict[str, Any], Any]:
-    analysts = selected_builtin_analysts(request)
+def run_analysis(
+    request: AnalysisRequest,
+    callbacks: list[Any] | None = None,
+    *,
+    analysis_date: date | None = None,
+    analysts: tuple[str, ...] | None = None,
+) -> tuple[dict[str, Any], Any]:
+    analysts = analysts if analysts is not None else selected_builtin_analysts(request)
     if not analysts:
         return {}, None
     graph = configured_graph(request, analysts=analysts, callbacks=callbacks)
-    state, decision = graph.propagate(request.ticker.strip().upper(), date.today().isoformat())
+    as_of = analysis_date or date.today()
+    state, decision = graph.propagate(request.ticker.strip().upper(), as_of.isoformat())
     return state, decision
+
+
+def _calibration_price_frame(ticker: str):
+    """Load one aligned stock/benchmark frame for selecting and scoring nodes."""
+    import pandas as pd
+    import yfinance as yf
+    from tradingagents.dataflows.symbol_utils import normalize_symbol
+
+    end = date.today() + timedelta(days=1)
+    start = end - timedelta(days=365 * 5)
+    stock = yf.Ticker(normalize_symbol(ticker)).history(start=start.isoformat(), end=end.isoformat(), auto_adjust=True)
+    benchmark = yf.Ticker("SPY").history(start=start.isoformat(), end=end.isoformat(), auto_adjust=True)
+    if stock.empty or benchmark.empty:
+        raise ValueError("无法取得标的或 SPY 的历史价格")
+    stock_index = pd.to_datetime(stock.index).tz_localize(None)
+    benchmark_index = pd.to_datetime(benchmark.index).tz_localize(None)
+    stock_frame = pd.DataFrame(
+        {
+            "stock_open": stock["Open"].to_numpy(),
+            "stock_high": stock["High"].to_numpy(),
+            "stock_low": stock["Low"].to_numpy(),
+            "stock_close": stock["Close"].to_numpy(),
+        },
+        index=stock_index,
+    )
+    benchmark_frame = pd.DataFrame(
+        {
+            "benchmark_open": benchmark["Open"].to_numpy(),
+            "benchmark_close": benchmark["Close"].to_numpy(),
+        },
+        index=benchmark_index,
+    )
+    frame = pd.concat([stock_frame, benchmark_frame], axis=1, join="inner").dropna()
+    # Close aliases preserve the small public surface used by node selection and
+    # older callers while scoring uses the full point-in-time OHLC path.
+    frame["stock"] = frame["stock_close"]
+    frame["benchmark"] = frame["benchmark_close"]
+    if len(frame) < 400:
+        raise ValueError("历史价格不足，无法构造可靠的时间截面")
+    return frame
+
+
+def _calibration_node_indexes(frame: Any, sample_count: int, horizon_days: int) -> list[int]:
+    """Choose evenly distributed point-in-time nodes from the latest three years."""
+    latest = len(frame) - horizon_days - 1
+    earliest_date = frame.index[latest] - timedelta(days=365 * 3)
+    earliest = int(frame.index.searchsorted(earliest_date))
+    if latest <= earliest or latest - earliest + 1 < sample_count:
+        raise ValueError("可验证历史节点不足")
+    if sample_count == 1:
+        return [latest]
+    span = latest - earliest
+    return sorted({earliest + round(span * index / (sample_count - 1)) for index in range(sample_count)})
+
+
+def _calibration_confidence(
+    correct_count: int,
+    sample_count: int,
+    best_baseline_accuracy: float = 0.0,
+) -> str:
+    """Grade only demonstrated skill above a constant-direction baseline."""
+    if sample_count < 10:
+        return "INSUFFICIENT"
+    accuracy = correct_count / sample_count
+    lift = accuracy - best_baseline_accuracy
+    if accuracy >= 0.8 and lift >= 0.1:
+        return "HIGH"
+    if accuracy >= 0.6 and lift > 0:
+        return "MEDIUM"
+    return "LOW"
+
+
+CALIBRATION_SCHEMA_VERSION = "vibe.decision_calibration.v5"
+CALIBRATION_NODE_SCHEMA_VERSION = "vibe.decision_calibration.node.v5"
+CALIBRATION_AUDIT_SCHEMA_VERSION = "vibe.decision_calibration.audit.v5"
+LEGACY_CALIBRATION_NODE_SCHEMA_VERSION = "vibe.decision_calibration.node.v4"
+OLDER_CALIBRATION_NODE_SCHEMA_VERSION = "vibe.decision_calibration.node.v3"
+LEGACY_CALIBRATION_NODE_SCHEMA_VERSIONS = (
+    LEGACY_CALIBRATION_NODE_SCHEMA_VERSION,
+    OLDER_CALIBRATION_NODE_SCHEMA_VERSION,
+)
+
+
+def _calibration_node_cache_path(
+    request: CalibrationRequest,
+    as_of: date,
+    safe_analysts: tuple[str, ...],
+    schema_version: str = CALIBRATION_NODE_SCHEMA_VERSION,
+) -> Path:
+    fingerprint = {
+        "schema_version": schema_version,
+        "symbol": request.ticker.strip().upper(),
+        "provider": request.llm_provider,
+        "deep_think_llm": request.deep_think_llm,
+        "quick_think_llm": request.quick_think_llm,
+        "backend_url": (request.backend_url or "").rstrip("/"),
+        "max_debate_rounds": request.max_debate_rounds,
+        "max_risk_rounds": request.max_risk_rounds,
+        "online_tools": request.online_tools,
+        "analysts": sorted(safe_analysts),
+        "sample_count": request.sample_count,
+        "horizon_days": request.horizon_days,
+        "as_of_date": as_of.isoformat(),
+    }
+    encoded = json.dumps(fingerprint, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    digest = hashlib.sha256(encoded).hexdigest()
+    root = Path(
+        os.getenv(
+            "AI_CALIBRATION_NODE_CACHE_DIR",
+            str(Path(__file__).resolve().parent / "data" / "calibration-nodes"),
+        )
+    ).expanduser()
+    return root / f"{digest}.json"
+
+
+def _load_calibration_node(
+    path: Path,
+    schema_version: str = CALIBRATION_NODE_SCHEMA_VERSION,
+) -> dict[str, Any] | None:
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (FileNotFoundError, OSError, json.JSONDecodeError):
+        return None
+    if not isinstance(payload, dict) or payload.get("schema_version") != schema_version:
+        return None
+    node = payload.get("node")
+    return node if isinstance(node, dict) else None
+
+
+def _store_calibration_node(path: Path, node: dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_name(f".{path.name}.{uuid.uuid4().hex}.tmp")
+    payload = {"schema_version": CALIBRATION_NODE_SCHEMA_VERSION, "node": node}
+    temporary.write_text(json.dumps(payload, ensure_ascii=False, sort_keys=True), encoding="utf-8")
+    temporary.replace(path)
+
+
+def _store_calibration_audit(
+    cache_path: Path,
+    *,
+    state: dict[str, Any],
+    raw_decision: Any,
+    rating: str,
+    direction: str,
+    decision_source: str,
+) -> str:
+    """Persist full reasoning beside the compact node cache for later audit."""
+    audit_path = cache_path.with_suffix(".audit.json")
+    fields = (
+        "market_report",
+        "fundamentals_report",
+        "news_report",
+        "sentiment_report",
+        "investment_plan",
+        "trader_investment_plan",
+        "final_trade_decision",
+        "investment_debate_state",
+        "risk_debate_state",
+    )
+    payload = {
+        "schema_version": CALIBRATION_AUDIT_SCHEMA_VERSION,
+        "rating": rating,
+        "direction": direction,
+        "decision_source": decision_source,
+        "raw_decision": str(raw_decision or ""),
+        "state": {field: state.get(field) for field in fields if state.get(field)},
+    }
+    audit_path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = audit_path.with_name(f".{audit_path.name}.{uuid.uuid4().hex}.tmp")
+    temporary.write_text(
+        json.dumps(payload, ensure_ascii=False, sort_keys=True, default=str),
+        encoding="utf-8",
+    )
+    temporary.replace(audit_path)
+    return audit_path.name
+
+
+def _load_calibration_audit(cache_path: Path) -> dict[str, Any] | None:
+    try:
+        payload = json.loads(cache_path.with_suffix(".audit.json").read_text(encoding="utf-8"))
+    except (FileNotFoundError, OSError, json.JSONDecodeError):
+        return None
+    return payload if isinstance(payload, dict) and isinstance(payload.get("state"), dict) else None
+
+
+def _prefer_legacy_calibration_index(
+    frame: Any,
+    frame_index: int,
+    request: CalibrationRequest,
+    safe_analysts: tuple[str, ...],
+) -> int:
+    """Keep historical cutoffs stable when the latest Yahoo bar temporarily shifts."""
+    for offset in (0, 1, -1, 2, -2, 3, -3):
+        candidate = frame_index + offset
+        if candidate < 0 or candidate + request.horizon_days >= len(frame):
+            continue
+        as_of = frame.index[candidate].date()
+        for schema_version in LEGACY_CALIBRATION_NODE_SCHEMA_VERSIONS:
+            legacy_path = _calibration_node_cache_path(
+                request,
+                as_of,
+                safe_analysts,
+                schema_version=schema_version,
+            )
+            if (
+                _load_calibration_node(legacy_path, schema_version=schema_version) is not None
+                and _load_calibration_audit(legacy_path) is not None
+            ):
+                return candidate
+    return frame_index
+
+
+def _calibration_pending_path(cache_path: Path) -> Path:
+    return cache_path.with_suffix(".pending.json")
+
+
+def _load_or_create_calibration_run_id(cache_path: Path) -> tuple[str, bool]:
+    pending_path = _calibration_pending_path(cache_path)
+    try:
+        payload = json.loads(pending_path.read_text(encoding="utf-8"))
+        run_id = str(payload.get("run_id") or "") if isinstance(payload, dict) else ""
+        if run_id.startswith("cal-"):
+            return run_id, True
+    except (FileNotFoundError, OSError, json.JSONDecodeError):
+        pass
+    run_id = f"cal-{uuid.uuid4()}"
+    pending_path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = pending_path.with_name(f".{pending_path.name}.{uuid.uuid4().hex}.tmp")
+    temporary.write_text(json.dumps({"run_id": run_id}), encoding="utf-8")
+    temporary.replace(pending_path)
+    return run_id, False
+
+
+def _calibration_concurrency(sample_count: int) -> int:
+    try:
+        configured = int(os.getenv("AI_CALIBRATION_CONCURRENCY", "3"))
+    except ValueError:
+        configured = 3
+    return max(1, min(10, sample_count, configured))
+
+
+def _score_calibration_path(
+    frame: Any,
+    *,
+    frame_index: int,
+    horizon_days: int,
+    action: str,
+) -> dict[str, Any]:
+    """Score a decision by the first volatility-adjusted barrier hit.
+
+    Entry is the next aligned trading-day open. A directional signal succeeds
+    only when its profit barrier is reached before its stop; no barrier within
+    the evaluation window is neutral and counts as correct. With daily OHLC we
+    cannot know intraday order when both barriers are touched on the same day,
+    so that case is conservatively marked ambiguous and incorrect.
+    """
+    entry_index = frame_index + 1
+    outcome_index = frame_index + horizon_days
+    window = frame.iloc[entry_index : outcome_index + 1]
+    if len(window) != horizon_days:
+        raise ValueError("历史价格不足，无法完成未来路径判分")
+
+    entry_stock = float(window.iloc[0]["stock_open"])
+    entry_benchmark = float(window.iloc[0]["benchmark_open"])
+    if entry_stock <= 0 or entry_benchmark <= 0:
+        raise ValueError("历史开盘价格无效")
+
+    atr_start = max(1, frame_index - 19)
+    true_ranges: list[float] = []
+    for index in range(atr_start, frame_index + 1):
+        row = frame.iloc[index]
+        previous_close = float(frame.iloc[index - 1]["stock_close"])
+        high = float(row["stock_high"])
+        low = float(row["stock_low"])
+        true_ranges.append(max(high - low, abs(high - previous_close), abs(low - previous_close)))
+    if not true_ranges:
+        raise ValueError("历史波动率数据不足")
+    as_of_close = float(frame.iloc[frame_index]["stock_close"])
+    atr_percent = sum(true_ranges) / len(true_ranges) / as_of_close
+    horizon_scale = math.sqrt(max(1.0, horizon_days / 20.0))
+    profit_threshold = max(0.03, atr_percent) * horizon_scale
+    stop_threshold = max(0.02, atr_percent * 0.75)
+
+    rating = action.upper()
+    highs = [float(value) for value in window["stock_high"]]
+    lows = [float(value) for value in window["stock_low"]]
+    stock_close_returns = [float(value) / entry_stock - 1 for value in window["stock_close"]]
+    benchmark_close_returns = [float(value) / entry_benchmark - 1 for value in window["benchmark_close"]]
+    alpha_path = [stock_return - benchmark_return for stock_return, benchmark_return in zip(stock_close_returns, benchmark_close_returns)]
+    if rating == "SELL":
+        favorable_moves = [(entry_stock - low) / entry_stock for low in lows]
+        adverse_moves = [(high - entry_stock) / entry_stock for high in highs]
+        scoring_basis = "absolute"
+    elif rating == "BUY":
+        favorable_moves = [(high - entry_stock) / entry_stock for high in highs]
+        adverse_moves = [(entry_stock - low) / entry_stock for low in lows]
+        scoring_basis = "absolute"
+    elif rating == "UNDERWEIGHT":
+        favorable_moves = [-alpha for alpha in alpha_path]
+        adverse_moves = alpha_path
+        scoring_basis = "relative_to_spy"
+    elif rating == "OVERWEIGHT":
+        favorable_moves = alpha_path
+        adverse_moves = [-alpha for alpha in alpha_path]
+        scoring_basis = "relative_to_spy"
+    else:
+        favorable_moves = [max((high - entry_stock) / entry_stock, (entry_stock - low) / entry_stock) for high, low in zip(highs, lows)]
+        adverse_moves = favorable_moves
+        scoring_basis = "absolute_neutral"
+
+    outcome = "neutral"
+    first_barrier = "none"
+    barrier_hit_day: int | None = None
+    barrier_hit_date: str | None = None
+    for offset, (timestamp, row) in enumerate(window.iterrows(), start=1):
+        high = float(row["stock_high"])
+        low = float(row["stock_low"])
+        if rating == "SELL":
+            profit_hit = (entry_stock - low) / entry_stock >= profit_threshold
+            stop_hit = (high - entry_stock) / entry_stock >= stop_threshold
+        elif rating == "BUY":
+            profit_hit = (high - entry_stock) / entry_stock >= profit_threshold
+            stop_hit = (entry_stock - low) / entry_stock >= stop_threshold
+        elif rating in {"UNDERWEIGHT", "OVERWEIGHT"}:
+            alpha = alpha_path[offset - 1]
+            favorable = -alpha if rating == "UNDERWEIGHT" else alpha
+            adverse = alpha if rating == "UNDERWEIGHT" else -alpha
+            profit_hit = favorable >= profit_threshold
+            stop_hit = adverse >= stop_threshold
+        else:
+            up_hit = (high - entry_stock) / entry_stock >= profit_threshold
+            down_hit = (entry_stock - low) / entry_stock >= profit_threshold
+            if up_hit and down_hit:
+                outcome, first_barrier = "ambiguous", "both"
+            elif up_hit or down_hit:
+                outcome = "wrong"
+                first_barrier = "up_move" if up_hit else "down_move"
+            else:
+                continue
+            barrier_hit_day = offset
+            barrier_hit_date = timestamp.date().isoformat()
+            break
+        if profit_hit and stop_hit:
+            outcome, first_barrier = "ambiguous", "both"
+        elif profit_hit:
+            outcome, first_barrier = "correct", "profit"
+        elif stop_hit:
+            outcome = "wrong"
+            first_barrier = "stop"
+        else:
+            continue
+        barrier_hit_day = offset
+        barrier_hit_date = timestamp.date().isoformat()
+        break
+
+    raw_return = float(window.iloc[-1]["stock_close"]) / entry_stock - 1
+    benchmark_return = float(window.iloc[-1]["benchmark_close"]) / entry_benchmark - 1
+    execution_outcome = outcome
+    execution_correct = execution_outcome in {"correct", "neutral"}
+    opportunity_correct = (
+        execution_correct
+        if rating == "HOLD"
+        else execution_outcome == "neutral" or max(favorable_moves) >= profit_threshold
+    )
+    opportunity_outcome = "correct" if opportunity_correct else "wrong"
+    return {
+        "outcome_date": window.index[-1].date().isoformat(),
+        "outcome": opportunity_outcome,
+        "correct": opportunity_correct,
+        "opportunity_outcome": opportunity_outcome,
+        "opportunity_correct": opportunity_correct,
+        "execution_outcome": execution_outcome,
+        "execution_correct": execution_correct,
+        "scoring_basis": scoring_basis,
+        "first_barrier": first_barrier,
+        "barrier_hit_day": barrier_hit_day,
+        "barrier_hit_date": barrier_hit_date,
+        "entry_price": round(entry_stock, 6),
+        "atr_percent": round(atr_percent, 6),
+        "profit_threshold": round(profit_threshold, 6),
+        "horizon_threshold_scale": round(horizon_scale, 6),
+        "stop_threshold": round(stop_threshold, 6),
+        "mfe": round(max(0.0, max(favorable_moves)), 6),
+        "mae": round(max(0.0, max(adverse_moves)), 6),
+        "raw_return": round(raw_return, 6),
+        "benchmark_return": round(benchmark_return, 6),
+        "alpha_return": round(raw_return - benchmark_return, 6),
+    }
+
+
+def _run_calibration_node(
+    request: CalibrationRequest,
+    *,
+    ordinal: int,
+    total_nodes: int,
+    frame_index: int,
+    frame: Any,
+    safe_analysts: tuple[str, ...],
+    cache_path: Path,
+) -> dict[str, Any]:
+    as_of = frame.index[frame_index].date()
+    state: dict[str, Any] = {}
+    decision: Any = None
+    reused_analysis = False
+    if not request.force_refresh:
+        for schema_version in LEGACY_CALIBRATION_NODE_SCHEMA_VERSIONS:
+            legacy_cache_path = _calibration_node_cache_path(
+                request,
+                as_of,
+                safe_analysts,
+                schema_version=schema_version,
+            )
+            legacy_node = _load_calibration_node(legacy_cache_path, schema_version=schema_version)
+            legacy_audit = _load_calibration_audit(legacy_cache_path) if legacy_node is not None else None
+            if legacy_audit is None:
+                continue
+            legacy_state = legacy_audit["state"]
+            legacy_decision = _calibration_raw_decision(
+                legacy_state,
+                legacy_audit.get("raw_decision"),
+                safe_analysts,
+            )
+            if not _legacy_calibration_decision_is_reusable(legacy_decision):
+                continue
+            state = legacy_state
+            decision = legacy_audit.get("raw_decision")
+            reused_analysis = True
+            break
+
+    node_request = None
+    if not reused_analysis:
+        node_run_id, should_resume = _load_or_create_calibration_run_id(cache_path)
+        node_request = request.model_copy(
+            update={
+                "analysis_context": {
+                    "calibration": {
+                        "schema_version": CALIBRATION_SCHEMA_VERSION,
+                        "as_of_date": as_of.isoformat(),
+                        "horizon_trading_days": request.horizon_days,
+                        "task": (
+                            f"Forecast the price direction over the next {request.horizon_days} trading days. "
+                            "Keep directional outlook separate from the current position action."
+                        ),
+                        "rule": "Use only information available on or before as_of_date.",
+                    }
+                },
+                "run_id": node_run_id,
+                "resume": should_resume,
+                "last_event_id": 0,
+            }
+        )
+    try:
+        max_attempts = max(1, min(5, int(os.getenv("AI_CALIBRATION_NODE_MAX_ATTEMPTS", "3"))))
+    except ValueError:
+        max_attempts = 3
+    for attempt in (range(1, max_attempts + 1) if node_request is not None else ()):
+        try:
+            state, decision = run_analysis(node_request, analysis_date=as_of, analysts=safe_analysts)
+            break
+        except Exception as exc:  # noqa: BLE001 - isolate transient LLM failures per historical node
+            if attempt >= max_attempts:
+                detail = user_error_message(exc, request)
+                raise RuntimeError(
+                    f"历史校准节点 {ordinal}/{total_nodes}（{as_of.isoformat()}）"
+                    f"连续失败 {max_attempts} 次：{detail}"
+                ) from exc
+            node_request.resume = True
+            time.sleep(min(2 ** (attempt - 1), 8))
+
+    if len(safe_analysts) == 1:
+        decision_source = safe_analysts[0]
+        raw_decision = _calibration_raw_decision(state, decision, safe_analysts)
+    else:
+        decision_source = "portfolio_manager"
+        raw_decision = state.get("final_trade_decision") or decision
+    direction = normalize_directional_outlook(raw_decision)
+    action = directional_outlook_action(direction)
+    rating = normalize_rating(raw_decision)
+    evidence_status = normalize_evidence_status(raw_decision)
+    scorable = evidence_status != "INSUFFICIENT"
+    score = _score_calibration_path(
+        frame,
+        frame_index=frame_index,
+        horizon_days=request.horizon_days,
+        action=action,
+    )
+    baseline_scores = {
+        baseline_action: _compact_baseline_score(
+            _score_calibration_path(
+                frame,
+                frame_index=frame_index,
+                horizon_days=request.horizon_days,
+                action=baseline_action,
+            )
+        )
+        for baseline_action in ("BUY", "SELL", "HOLD")
+    }
+    if not scorable:
+        score.update(
+            {
+                "outcome": "unscorable",
+                "correct": None,
+                "opportunity_outcome": "unscorable",
+                "opportunity_correct": None,
+                "execution_outcome": "unscorable",
+                "execution_correct": None,
+            }
+        )
+    node = {
+        "ordinal": ordinal,
+        "as_of_date": as_of.isoformat(),
+        "action": action,
+        "direction": direction,
+        "rating": rating,
+        "evidence_status": evidence_status,
+        "scorable": scorable,
+        "unscorable_reason": None if scorable else "point_in_time_evidence_insufficient",
+        "decision_source": decision_source,
+        "reused_analysis": reused_analysis,
+        "baseline_scores": baseline_scores,
+        **score,
+    }
+    node["audit_file"] = _store_calibration_audit(
+        cache_path,
+        state=state,
+        raw_decision=raw_decision,
+        rating=rating,
+        direction=direction,
+        decision_source=decision_source,
+    )
+    _store_calibration_node(cache_path, node)
+    try:
+        _calibration_pending_path(cache_path).unlink(missing_ok=True)
+    except OSError:
+        pass
+    return node
+
+
+def run_historical_calibration(
+    request: CalibrationRequest,
+    progress_callback: Callable[[dict[str, int]], None] | None = None,
+    cancel_event: Event | None = None,
+) -> dict[str, Any]:
+    """Replay the configured model at ten historical cutoffs and score later alpha.
+
+    Live social feeds and custom application-context analysts are intentionally
+    excluded because they cannot be reconstructed point-in-time. Their omission
+    is explicit in the Run Card instead of silently introducing look-ahead bias.
+    """
+    if cancel_event is not None and cancel_event.is_set():
+        raise RuntimeError("用户已停止历史校准")
+    frame = _calibration_price_frame(request.ticker)
+    indexes = _calibration_node_indexes(frame, request.sample_count, request.horizon_days)
+    selected = selected_builtin_analysts(request)
+    safe_analysts = tuple(role for role in selected if role != "social")
+    excluded = []
+    if "social" in selected:
+        excluded.append("sentiment")
+    excluded.extend(str(item) for item in request.analysts if item.strip().lower() in CUSTOM_ANALYST_MAP)
+    if not safe_analysts:
+        raise ValueError("所选分析师都无法进行无未来数据的历史重放")
+    if not request.force_refresh:
+        indexes = [
+            _prefer_legacy_calibration_index(frame, frame_index, request, safe_analysts)
+            for frame_index in indexes
+        ]
+
+    nodes_by_ordinal: dict[int, dict[str, Any]] = {}
+    pending: list[tuple[int, int, Path]] = []
+    for ordinal, frame_index in enumerate(indexes, start=1):
+        as_of = frame.index[frame_index].date()
+        cache_path = _calibration_node_cache_path(request, as_of, safe_analysts)
+        cached_node = None if request.force_refresh else _load_calibration_node(cache_path)
+        if cached_node is not None:
+            cached_node = dict(cached_node)
+            cached_node["ordinal"] = ordinal
+            nodes_by_ordinal[ordinal] = cached_node
+        else:
+            if request.force_refresh:
+                try:
+                    _calibration_pending_path(cache_path).unlink(missing_ok=True)
+                except OSError:
+                    pass
+            pending.append((ordinal, frame_index, cache_path))
+
+    cached_count = len(nodes_by_ordinal)
+    failed_count = 0
+
+    def report_progress() -> None:
+        if progress_callback is not None:
+            progress_callback(
+                {
+                    "completed_nodes": len(nodes_by_ordinal) + failed_count,
+                    "total_nodes": len(indexes),
+                    "cached_nodes": cached_count,
+                    "failed_nodes": failed_count,
+                }
+            )
+
+    report_progress()
+
+    failures: list[tuple[int, Exception]] = []
+    if pending:
+        executor = ThreadPoolExecutor(
+            max_workers=_calibration_concurrency(len(pending)),
+            thread_name_prefix="ai-calibration",
+        )
+        futures = {
+            executor.submit(
+                _run_calibration_node,
+                request,
+                ordinal=ordinal,
+                total_nodes=len(indexes),
+                frame_index=frame_index,
+                frame=frame,
+                safe_analysts=safe_analysts,
+                cache_path=cache_path,
+            ): ordinal
+            for ordinal, frame_index, cache_path in pending
+        }
+        unfinished = set(futures)
+        try:
+            while unfinished:
+                if cancel_event is not None and cancel_event.is_set():
+                    raise RuntimeError("用户已停止历史校准")
+                completed, unfinished = wait(unfinished, timeout=0.25, return_when=FIRST_COMPLETED)
+                for future in completed:
+                    ordinal = futures[future]
+                    try:
+                        node = future.result()
+                        nodes_by_ordinal[ordinal] = node
+                        if node.get("reused_analysis"):
+                            cached_count += 1
+                    except Exception as exc:  # noqa: BLE001 - allow other nodes to finish and cache
+                        failures.append((ordinal, exc))
+                        failed_count += 1
+                    report_progress()
+        except Exception:
+            for future in unfinished:
+                future.cancel()
+            executor.shutdown(wait=False, cancel_futures=True)
+            raise
+        else:
+            executor.shutdown(wait=True)
+
+    if failures:
+        failures.sort(key=lambda item: item[0])
+        first_ordinal, first_error = failures[0]
+        raise RuntimeError(
+            f"{len(failures)} 个历史节点失败；其他成功节点已缓存。"
+            f"首个失败节点 {first_ordinal}/{len(indexes)}：{first_error}"
+        ) from first_error
+
+    nodes = [nodes_by_ordinal[ordinal] for ordinal in sorted(nodes_by_ordinal)]
+    scorable_nodes = [node for node in nodes if node.get("scorable", True)]
+    sample_count = len(scorable_nodes)
+    correct_count = sum(int(bool(node.get("opportunity_correct", node.get("correct")))) for node in scorable_nodes)
+    execution_correct_count = sum(int(bool(node.get("execution_correct"))) for node in scorable_nodes)
+    opportunity_accuracy = round(correct_count / sample_count, 6) if sample_count else 0.0
+    execution_accuracy = round(execution_correct_count / sample_count, 6) if sample_count else 0.0
+    baselines = _calibration_baselines(scorable_nodes)
+    best_opportunity_baseline = max(
+        (item["opportunity_accuracy"] for item in baselines.values()),
+        default=0.0,
+    )
+    best_execution_baseline = max(
+        (item["execution_accuracy"] for item in baselines.values()),
+        default=0.0,
+    )
+    return {
+        "schema_version": CALIBRATION_SCHEMA_VERSION,
+        "symbol": request.ticker.strip().upper(),
+        "status": "complete",
+        "sample_count": sample_count,
+        "total_node_count": len(nodes),
+        "unscorable_count": len(nodes) - sample_count,
+        "coverage": round(sample_count / len(nodes), 6) if nodes else 0.0,
+        "correct_count": correct_count,
+        "accuracy": opportunity_accuracy,
+        "opportunity_correct_count": correct_count,
+        "opportunity_accuracy": opportunity_accuracy,
+        "execution_correct_count": execution_correct_count,
+        "execution_accuracy": execution_accuracy,
+        "baselines": baselines,
+        "opportunity_lift_vs_best_baseline": round(opportunity_accuracy - best_opportunity_baseline, 6),
+        "execution_lift_vs_best_baseline": round(execution_accuracy - best_execution_baseline, 6),
+        "confidence": _calibration_confidence(correct_count, sample_count, best_opportunity_baseline),
+        "horizon_days": request.horizon_days,
+        "benchmark": "SPY",
+        "scoring_rule": "directional_outlook_with_baseline_adjusted_skill",
+        "neutral_counts_as_correct": True,
+        "point_in_time_analysts": list(safe_analysts),
+        "excluded_analysts": sorted(set(excluded)),
+        "nodes": nodes,
+    }
 
 
 def get_nested(data: dict[str, Any], dotted_path: str) -> Any:
@@ -1023,6 +1935,12 @@ async def attach_vibe_evidence(request: AnalysisRequest) -> dict[str, Any]:
 
 def compact_context_json(request: AnalysisRequest) -> str:
     provided_data = copy.deepcopy(request.analysis_context or {})
+    calibration = provided_data.get("calibration")
+    analysis_date = date.today().isoformat()
+    if isinstance(calibration, dict):
+        historical_date = str(calibration.get("as_of_date") or "").strip()
+        if re.fullmatch(r"\d{4}-\d{2}-\d{2}", historical_date):
+            analysis_date = historical_date
     # The Vibe compact financial rows can include comparative values without an
     # XBRL duration.  Do not leave those raw values beside the audit contract:
     # a model could otherwise quote a rejected candidate as a fact.
@@ -1043,7 +1961,7 @@ def compact_context_json(request: AnalysisRequest) -> str:
                     }
     payload = {
         "ticker": request.ticker.strip().upper(),
-        "analysis_date": date.today().isoformat(),
+        "analysis_date": analysis_date,
         "provided_data": provided_data,
     }
     return json.dumps(payload, ensure_ascii=False, indent=2, default=str)
@@ -1096,22 +2014,161 @@ def run_custom_analysis(
     raise ValueError(f"unknown custom analyst: {agent}")
 
 
+def normalize_rating(decision: Any) -> str:
+    """Extract the explicit structured decision without scanning its thesis.
+
+    Portfolio-manager prose often discusses rejected alternatives such as
+    "do not Sell". Searching the entire document therefore turns Hold or
+    Overweight decisions into false SELL signals. Prefer the rendered Rating
+    field, then the Trader's Action/final proposal for legacy output.
+    """
+    value = str(decision or "").strip()
+    patterns = (
+        r"(?im)^\s*\**\s*rating\s*\**\s*[:：-]\s*\**\s*(buy|overweight|hold|underweight|sell)\b",
+        r"(?im)^\s*\**\s*action\s*\**\s*[:：-]\s*\**\s*(buy|hold|sell)\b",
+        r"(?im)^\s*final transaction proposal\s*[:：-]\s*\**\s*(buy|hold|sell)\b",
+    )
+    for pattern in patterns:
+        match = re.search(pattern, value)
+        if match:
+            return match.group(1).upper()
+    stripped = value.strip(" *.:：-").upper()
+    if stripped in {"BUY", "OVERWEIGHT", "HOLD", "UNDERWEIGHT", "SELL"}:
+        return stripped
+    return "HOLD"
+
+
+def normalize_direction(decision: Any) -> str:
+    value = str(decision or "").strip()
+    match = re.search(
+        r"(?im)^\s*\**\s*direction\s*\**\s*[:：-]\s*\**\s*(bullish|neutral|bearish)\b",
+        value,
+    )
+    if match:
+        return {
+            "bullish": "BUY",
+            "neutral": "HOLD",
+            "bearish": "SELL",
+        }[match.group(1).lower()]
+    return normalize_action(value)
+
+
+def normalize_directional_outlook(decision: Any) -> str:
+    """Extract a forecast label without conflating it with position action."""
+    value = str(decision or "").strip()
+    patterns = (
+        r"(?im)^\s*\**\s*directional\s+outlook\s*\**\s*[:：-]\s*\**\s*(bullish|neutral|bearish)\b",
+        r"(?im)^\s*\**\s*direction\s*\**\s*[:：-]\s*\**\s*(bullish|neutral|bearish)\b",
+    )
+    for pattern in patterns:
+        match = re.search(pattern, value)
+        if match:
+            return match.group(1).upper()
+    action = normalize_action(value)
+    return {"BUY": "BULLISH", "SELL": "BEARISH"}.get(action, "NEUTRAL")
+
+
+def directional_outlook_action(direction: str) -> str:
+    return {
+        "BULLISH": "BUY",
+        "BEARISH": "SELL",
+        "NEUTRAL": "HOLD",
+    }.get(str(direction or "").upper(), "HOLD")
+
+
+def normalize_evidence_status(decision: Any) -> str:
+    value = str(decision or "").strip()
+    patterns = (
+        r"(?im)^\s*\**\s*evidence\s+status\s*\**\s*[:：-]\s*\**\s*(sufficient|insufficient)\b",
+        r"(?im)^\s*\**\s*data\s+quality\s*\**\s*[:：-]\s*\**\s*(sufficient|partial|insufficient)\b",
+    )
+    for pattern in patterns:
+        match = re.search(pattern, value)
+        if match:
+            return "INSUFFICIENT" if match.group(1).lower() == "insufficient" else "SUFFICIENT"
+    return "SUFFICIENT"
+
+
+def _calibration_raw_decision(
+    state: dict[str, Any],
+    fallback: Any,
+    safe_analysts: tuple[str, ...],
+) -> Any:
+    report_fields = {
+        "fundamentals": "fundamentals_report",
+        "news": "news_report",
+        "market": "market_report",
+    }
+    if len(safe_analysts) == 1:
+        return state.get(report_fields.get(safe_analysts[0], "")) or fallback
+    return state.get("final_trade_decision") or fallback
+
+
+def _legacy_calibration_decision_is_reusable(decision: Any) -> bool:
+    """Reuse old reports only when their directional meaning is unambiguous."""
+    value = str(decision or "")
+    if re.search(r"(?im)^\s*\**\s*(?:directional\s+outlook|direction)\s*\**\s*[:：-]", value):
+        return True
+    return normalize_action(value) in {"BUY", "SELL"}
+
+
+def _compact_baseline_score(score: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "opportunity_correct": bool(score.get("opportunity_correct")),
+        "execution_correct": bool(score.get("execution_correct")),
+    }
+
+
+def _calibration_baselines(nodes: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    sample_count = len(nodes)
+    summaries: dict[str, dict[str, Any]] = {}
+    for action in ("BUY", "SELL", "HOLD"):
+        opportunity_correct = sum(
+            int(bool((node.get("baseline_scores") or {}).get(action, {}).get("opportunity_correct")))
+            for node in nodes
+        )
+        execution_correct = sum(
+            int(bool((node.get("baseline_scores") or {}).get(action, {}).get("execution_correct")))
+            for node in nodes
+        )
+        summaries[action] = {
+            "sample_count": sample_count,
+            "opportunity_correct_count": opportunity_correct,
+            "opportunity_accuracy": round(opportunity_correct / sample_count, 6) if sample_count else 0.0,
+            "execution_correct_count": execution_correct,
+            "execution_accuracy": round(execution_correct / sample_count, 6) if sample_count else 0.0,
+        }
+    return summaries
+
+
 def normalize_action(decision: Any) -> str:
-    value = str(decision or "").strip().lower()
-    if "sell" in value or "underweight" in value:
-        return "SELL"
-    if "buy" in value or "overweight" in value:
+    rating = normalize_rating(decision)
+    if rating in {"BUY", "OVERWEIGHT"}:
         return "BUY"
+    if rating in {"SELL", "UNDERWEIGHT"}:
+        return "SELL"
     return "HOLD"
 
 
 def confidence_for_action(action: str, decision: Any) -> str:
-    value = str(decision or "").strip().lower()
-    if action in {"BUY", "SELL"} and ("buy" in value or "sell" in value):
+    rating = normalize_rating(decision)
+    if rating in {"BUY", "SELL"}:
         return "HIGH"
-    if "hold" in value:
+    if rating in {"OVERWEIGHT", "UNDERWEIGHT", "HOLD"}:
         return "MEDIUM"
     return "LOW"
+
+
+def apply_historical_calibration(confidence: str, analysis_context: dict[str, Any]) -> str:
+    """Use cached empirical evidence conservatively: it may downgrade, never upgrade."""
+    calibration = analysis_context.get("model_calibration") if isinstance(analysis_context, dict) else None
+    if not isinstance(calibration, dict) or int(calibration.get("sample_count") or 0) < 10:
+        return confidence
+    historical = str(calibration.get("confidence") or "").upper()
+    rank = {"LOW": 0, "MEDIUM": 1, "HIGH": 2}
+    if historical not in rank or confidence not in rank:
+        return confidence
+    return min((confidence, historical), key=lambda value: rank[value])
 
 
 GRADE_LABELS = [
@@ -1631,6 +2688,7 @@ async def analysis_events(request: AnalysisRequest):
             action = normalize_action(decision)
             summary = str(state.get("final_trade_decision") or decision or "")
             confidence = confidence_for_action(action, decision)
+        confidence = apply_historical_calibration(confidence, request.analysis_context)
         yield sse(
             "decision",
             {
@@ -1689,6 +2747,58 @@ async def models(request: ModelDiscoveryRequest):
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
 
+@app.post("/quant/trend/predict")
+async def quant_trend_predict(request: QuantTrendRequest):
+    """Return a cached, LLM-free point-in-time trend snapshot."""
+
+    try:
+        return await asyncio.to_thread(
+            quant_trend_service.predict,
+            symbol=request.symbol,
+            as_of=request.as_of_date,
+            horizon_days=request.horizon_days,
+            universe=tuple(request.universe),
+            universe_version=request.universe_version,
+            force_refresh=request.force_refresh,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except InsufficientDataError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except PriceDataError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+
+@app.post("/quant/trend/evaluate")
+async def quant_trend_evaluate(request: QuantTrendEvaluationRequest):
+    """Run a deterministic single-symbol evaluation without any model call."""
+
+    try:
+        result = await asyncio.to_thread(
+            quant_trend_service.evaluate,
+            symbol=request.symbol,
+            start_date=request.start_date,
+            end_date=request.end_date,
+            horizon_days=request.horizon_days,
+            step_days=request.step_days,
+            maximum_nodes=request.maximum_nodes,
+            transaction_cost_bps=request.transaction_cost_bps,
+        )
+        # The service returns a local path for the CLI, but an HTTP response
+        # must not disclose the sidecar filesystem. The content-addressed run
+        # ID is the stable artifact handle for future backend persistence.
+        return {
+            **{key: value for key, value in result.items() if key != "artifact_path"},
+            "artifact_id": result.get("run_id"),
+        }
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except InsufficientDataError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except PriceDataError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+
 @app.post("/analyze")
 async def analyze(request: AnalysisRequest):
     try:
@@ -1736,6 +2846,188 @@ async def analyze(request: AnalysisRequest):
         media_type="text/event-stream",
         headers=headers,
     )
+
+
+def calibration_event_stream(request: CalibrationRequest, cancel_event: Event):
+    events: Queue[dict[str, Any]] = Queue()
+
+    def publish_progress(progress: dict[str, int]) -> None:
+        events.put({"type": "progress", "progress": progress})
+
+    def execute() -> None:
+        try:
+            result = run_historical_calibration(request, progress_callback=publish_progress, cancel_event=cancel_event)
+            events.put({"type": "result", "result": result})
+        except Exception as exc:  # noqa: BLE001 - terminal stream event is redacted below
+            message = user_error_message(exc, request)
+            print(
+                json.dumps(
+                    {
+                        "event": "calibration_failed",
+                        "error_type": type(exc).__name__,
+                        "symbol": request.ticker.strip().upper(),
+                        "message": message,
+                    },
+                    ensure_ascii=False,
+                ),
+                flush=True,
+            )
+            events.put({"type": "error", "error": message})
+        finally:
+            if request.job_id:
+                with _calibration_cancel_lock:
+                    if _calibration_cancel_events.get(request.job_id) is cancel_event:
+                        _calibration_cancel_events.pop(request.job_id, None)
+
+    events.put(
+        {
+            "type": "progress",
+            "progress": {"completed_nodes": 0, "total_nodes": request.sample_count, "cached_nodes": 0, "failed_nodes": 0},
+        }
+    )
+    Thread(target=execute, name="calibration-stream", daemon=True).start()
+    while True:
+        event = events.get()
+        yield json.dumps(event, ensure_ascii=False, default=str) + "\n"
+        if event.get("type") in {"result", "error"}:
+            return
+
+
+@app.post("/calibrate")
+async def calibrate(request: CalibrationRequest):
+    try:
+        request.backend_url = validate_backend_url(request.backend_url)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    cancel_event = Event()
+    if request.job_id:
+        with _calibration_cancel_lock:
+            _calibration_cancel_events[request.job_id] = cancel_event
+    return StreamingResponse(calibration_event_stream(request, cancel_event), media_type="application/x-ndjson")
+
+
+@app.post("/calibrate/{job_id}/cancel")
+async def cancel_calibration(job_id: str):
+    with _calibration_cancel_lock:
+        cancel_event = _calibration_cancel_events.get(job_id)
+    if cancel_event is not None:
+        cancel_event.set()
+    return {"status": "stopping" if cancel_event is not None else "not_running", "job_id": job_id}
+
+
+def ablation_event_stream(request: AblationStudyRequest, cancel_event: Event):
+    events: Queue[dict[str, Any]] = Queue()
+
+    def publish_progress(progress: dict[str, Any]) -> None:
+        events.put({"type": "progress", "progress": progress})
+
+    def execute() -> None:
+        try:
+            artifact_root = Path(
+                os.getenv(
+                    "AI_ABLATION_ARTIFACT_DIR",
+                    str(Path(__file__).resolve().parent / "data" / "ablation-studies"),
+                )
+            )
+            result = run_ablation_study(
+                request,
+                quant_service=quant_trend_service,
+                run_analysis=run_analysis,
+                callback_factory=EvidenceUsageCallback,
+                artifact_root=artifact_root,
+                repo_root=Path(__file__).resolve().parent.parent,
+                progress_callback=publish_progress,
+                cancel_event=cancel_event,
+            )
+            # The backend receives stable identifiers and the analysis, but not
+            # the sidecar's absolute filesystem path.
+            events.put(
+                {
+                    "type": "result",
+                    "result": {key: value for key, value in result.items() if key != "artifact_root"},
+                }
+            )
+        except Exception as exc:  # noqa: BLE001 - terminal evidence error is persisted by the runner
+            message = user_error_message(exc, request)
+            print(
+                json.dumps(
+                    {
+                        "event": "ablation_failed",
+                        "error_type": type(exc).__name__,
+                        "symbol": request.ticker.strip().upper(),
+                        "message": message,
+                    },
+                    ensure_ascii=False,
+                ),
+                flush=True,
+            )
+            events.put({"type": "error", "error": message})
+        finally:
+            if request.job_id:
+                with _ablation_cancel_lock:
+                    if _ablation_cancel_events.get(request.job_id) is cancel_event:
+                        _ablation_cancel_events.pop(request.job_id, None)
+
+    total_runs = (
+        request.maximum_nodes * 2 + request.reproducibility_nodes * 2
+        if request.adaptive_stages
+        else request.maximum_nodes * request.repeats * 2
+    )
+    events.put(
+        {
+            "type": "progress",
+            "progress": {
+                "status": "preparing",
+                "completed_runs": 0,
+                "total_runs": total_runs,
+                "cached_runs": 0,
+                "failed_runs": 0,
+                "independent_nodes": request.maximum_nodes,
+            },
+        }
+    )
+    Thread(target=execute, name="ablation-stream", daemon=True).start()
+    while True:
+        event = events.get()
+        yield json.dumps(event, ensure_ascii=False, default=str) + "\n"
+        if event.get("type") in {"result", "error"}:
+            return
+
+
+@app.post("/ablate")
+async def ablate(request: AblationStudyRequest):
+    try:
+        request.backend_url = validate_backend_url(request.backend_url)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if request.end_date < request.start_date:
+        raise HTTPException(status_code=400, detail="end_date must not precede start_date")
+    if request.adaptive_stages and (
+        request.stage_one_nodes >= request.maximum_nodes
+        or request.reproducibility_nodes > request.stage_one_nodes
+        or request.repeats != 1
+    ):
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "adaptive ablation requires repeats=1, stage_one_nodes < maximum_nodes, "
+                "and reproducibility_nodes <= stage_one_nodes"
+            ),
+        )
+    cancel_event = Event()
+    if request.job_id:
+        with _ablation_cancel_lock:
+            _ablation_cancel_events[request.job_id] = cancel_event
+    return StreamingResponse(ablation_event_stream(request, cancel_event), media_type="application/x-ndjson")
+
+
+@app.post("/ablate/{job_id}/cancel")
+async def cancel_ablation(job_id: str):
+    with _ablation_cancel_lock:
+        cancel_event = _ablation_cancel_events.get(job_id)
+    if cancel_event is not None:
+        cancel_event.set()
+    return {"status": "stopping" if cancel_event is not None else "not_running", "job_id": job_id}
 
 
 @app.post("/journal/reflect")

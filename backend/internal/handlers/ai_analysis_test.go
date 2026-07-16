@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/alphalens/canslimagent/backend/internal/models"
 	"github.com/alphalens/canslimagent/backend/internal/services"
@@ -267,5 +268,202 @@ func TestAIAnalysisStreamReturns503WhenSidecarUnavailable(t *testing.T) {
 	}
 	if !strings.Contains(recorder.Body.String(), "上游服务") {
 		t.Fatalf("expected upstream error message, got %s", recorder.Body.String())
+	}
+}
+
+func TestAICalibrationPersistsAndIsInjectedIntoLaterAnalysis(t *testing.T) {
+	var receivedAnalysis services.AIAnalysisRequest
+	sidecar := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/calibrate":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"schema_version":"vibe.decision_calibration.v5","symbol":"NVDA","status":"complete","sample_count":10,"total_node_count":10,"correct_count":7,"accuracy":0.7,"confidence":"MEDIUM","horizon_days":20,"nodes":[]}`))
+		case "/analyze":
+			if err := json.NewDecoder(r.Body).Decode(&receivedAnalysis); err != nil {
+				t.Fatal(err)
+			}
+			w.Header().Set("Content-Type", "text/event-stream")
+			_, _ = w.Write([]byte("event: done\ndata: {}\n\n"))
+		default:
+			t.Fatalf("unexpected sidecar path: %s", r.URL.Path)
+		}
+	}))
+	defer sidecar.Close()
+
+	database, err := gorm.Open(sqlite.Open("file:"+strings.ReplaceAll(t.Name(), "/", "_")+"?mode=memory&cache=shared"), &gorm.Config{Logger: logger.Default.LogMode(logger.Silent)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := database.AutoMigrate(&models.AICalibration{}, &models.TradeJournalEntry{}); err != nil {
+		t.Fatal(err)
+	}
+	handler := NewAIAnalysisHandlerWithUpstreamAndJournal(
+		services.NewHTTPAIAnalysisUpstream(sidecar.URL, time.Minute), time.Minute, database,
+	)
+	router := gin.New()
+	router.POST("/api/v1/analysis/:symbol/calibration", handler.StartCalibration)
+	router.POST("/api/v1/analysis/:symbol/calibration/status", handler.CalibrationStatus)
+	router.POST("/api/v1/analysis/:symbol/ai", handler.Stream)
+	config := `{"llm_provider":"openai","deep_think_llm":"gpt-deep","quick_think_llm":"gpt-quick","max_debate_rounds":1,"max_risk_rounds":1,"online_tools":false,"analysts":["technical"]}`
+
+	startRequest := httptest.NewRequest(http.MethodPost, "/api/v1/analysis/NVDA/calibration", strings.NewReader(config))
+	startRequest.Header.Set("Content-Type", "application/json")
+	startRecorder := httptest.NewRecorder()
+	router.ServeHTTP(startRecorder, startRequest)
+	if startRecorder.Code != http.StatusAccepted {
+		t.Fatalf("expected 202, got %d: %s", startRecorder.Code, startRecorder.Body.String())
+	}
+
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		var row models.AICalibration
+		if err := database.First(&row).Error; err == nil && row.Status == models.AICalibrationStatusComplete {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("calibration did not complete")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	analysisRequest := httptest.NewRequest(http.MethodPost, "/api/v1/analysis/NVDA/ai", strings.NewReader(config))
+	analysisRequest.Header.Set("Content-Type", "application/json")
+	analysisRecorder := httptest.NewRecorder()
+	router.ServeHTTP(analysisRecorder, analysisRequest)
+	if analysisRecorder.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", analysisRecorder.Code, analysisRecorder.Body.String())
+	}
+	calibration, ok := receivedAnalysis.AnalysisContext["model_calibration"].(map[string]interface{})
+	if !ok || calibration["confidence"] != "MEDIUM" || calibration["sample_count"] != float64(10) {
+		t.Fatalf("cached calibration was not injected: %#v", receivedAnalysis.AnalysisContext)
+	}
+}
+
+func TestAICalibrationCanBeStopped(t *testing.T) {
+	started := make(chan string, 1)
+	canceled := make(chan struct{})
+	sidecar := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/calibrate":
+			var request services.AICalibrationRequest
+			if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+				w.WriteHeader(http.StatusBadRequest)
+				return
+			}
+			started <- request.JobID
+			w.Header().Set("Content-Type", "application/x-ndjson")
+			_, _ = w.Write([]byte("{\"type\":\"progress\",\"progress\":{\"completed_nodes\":0,\"total_nodes\":10}}\n"))
+			if flusher, ok := w.(http.Flusher); ok {
+				flusher.Flush()
+			}
+			<-canceled
+		case strings.HasPrefix(r.URL.Path, "/calibrate/") && strings.HasSuffix(r.URL.Path, "/cancel"):
+			close(canceled)
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"status":"stopping"}`))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer sidecar.Close()
+
+	database, err := gorm.Open(sqlite.Open("file:"+strings.ReplaceAll(t.Name(), "/", "_")+"?mode=memory&cache=shared"), &gorm.Config{Logger: logger.Default.LogMode(logger.Silent)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := database.AutoMigrate(&models.AICalibration{}); err != nil {
+		t.Fatal(err)
+	}
+	handler := NewAIAnalysisHandlerWithUpstreamAndJournal(
+		services.NewHTTPAIAnalysisUpstream(sidecar.URL, time.Minute), time.Minute, database,
+	)
+	router := gin.New()
+	router.POST("/api/v1/analysis/:symbol/calibration", handler.StartCalibration)
+	router.POST("/api/v1/analysis/:symbol/calibration/stop", handler.StopCalibration)
+	config := `{"llm_provider":"openai","deep_think_llm":"gpt-deep","quick_think_llm":"gpt-quick","analysts":["technical"]}`
+
+	startRequest := httptest.NewRequest(http.MethodPost, "/api/v1/analysis/MU/calibration", strings.NewReader(config))
+	startRequest.Header.Set("Content-Type", "application/json")
+	startRecorder := httptest.NewRecorder()
+	router.ServeHTTP(startRecorder, startRequest)
+	if startRecorder.Code != http.StatusAccepted {
+		t.Fatalf("expected 202, got %d: %s", startRecorder.Code, startRecorder.Body.String())
+	}
+	jobID := <-started
+	if jobID == "" {
+		t.Fatal("calibration job id was not sent to sidecar")
+	}
+
+	stopRequest := httptest.NewRequest(http.MethodPost, "/api/v1/analysis/MU/calibration/stop", strings.NewReader(config))
+	stopRequest.Header.Set("Content-Type", "application/json")
+	stopRecorder := httptest.NewRecorder()
+	router.ServeHTTP(stopRecorder, stopRequest)
+	if stopRecorder.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", stopRecorder.Code, stopRecorder.Body.String())
+	}
+	var row models.AICalibration
+	if err := database.First(&row).Error; err != nil {
+		t.Fatal(err)
+	}
+	if row.Status != models.AICalibrationStatusFailed || row.Error == nil || !strings.Contains(*row.Error, "用户已停止") {
+		t.Fatalf("unexpected stopped row: %+v", row)
+	}
+}
+
+func TestAICalibrationProxyPreservesSidecarFailureDetail(t *testing.T) {
+	sidecar := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadGateway)
+		_, _ = w.Write([]byte(`{"detail":"历史校准节点 4/10 连续失败 3 次：模型网关连接失败"}`))
+	}))
+	defer sidecar.Close()
+
+	upstream := services.NewHTTPAIAnalysisUpstream(sidecar.URL, time.Minute)
+	_, err := upstream.Calibrate(context.Background(), services.AICalibrationRequest{
+		AIAnalysisRequest: services.AIAnalysisRequest{Ticker: "MU"},
+	})
+	if err == nil || err.Error() != "历史校准节点 4/10 连续失败 3 次：模型网关连接失败" {
+		t.Fatalf("unexpected calibration error: %v", err)
+	}
+}
+
+func TestCalibrationHashSeparatesTwentyAndFortyDayHorizons(t *testing.T) {
+	request := services.AIAnalysisRequest{
+		LLMProvider: "openai", DeepThinkLLM: "deep", QuickThinkLLM: "quick",
+		Analysts: []string{"technical"}, OnlineTools: true,
+	}
+	if calibrationHash(request, 20) == calibrationHash(request, 40) {
+		t.Fatal("20-day and 40-day calibrations must not share a cache key")
+	}
+	if horizon, ok := normalizeCalibrationHorizon(0); !ok || horizon != 20 {
+		t.Fatalf("default horizon = %d, %v; want 20, true", horizon, ok)
+	}
+	if _, ok := normalizeCalibrationHorizon(30); ok {
+		t.Fatal("unsupported calibration horizon was accepted")
+	}
+}
+
+func TestAICalibrationProxyStreamsProgress(t *testing.T) {
+	sidecar := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/x-ndjson")
+		_, _ = w.Write([]byte("{\"type\":\"progress\",\"progress\":{\"completed_nodes\":3,\"total_nodes\":10,\"cached_nodes\":3,\"failed_nodes\":0}}\n"))
+		_, _ = w.Write([]byte("{\"type\":\"result\",\"result\":{\"schema_version\":\"vibe.decision_calibration.v5\",\"symbol\":\"MU\",\"status\":\"complete\",\"sample_count\":10,\"total_node_count\":10,\"correct_count\":7,\"accuracy\":0.7,\"confidence\":\"MEDIUM\",\"horizon_days\":20,\"nodes\":[]}}\n"))
+	}))
+	defer sidecar.Close()
+
+	var progress services.AICalibrationProgress
+	upstream := services.NewHTTPAIAnalysisUpstream(sidecar.URL, time.Minute)
+	result, err := upstream.Calibrate(context.Background(), services.AICalibrationRequest{
+		AIAnalysisRequest: services.AIAnalysisRequest{Ticker: "MU"},
+		Progress:          func(value services.AICalibrationProgress) { progress = value },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if progress.CompletedNodes != 3 || progress.CachedNodes != 3 || progress.TotalNodes != 10 {
+		t.Fatalf("unexpected progress: %+v", progress)
+	}
+	if result.SampleCount != 10 || result.Confidence != "MEDIUM" {
+		t.Fatalf("unexpected result: %+v", result)
 	}
 }

@@ -1,5 +1,5 @@
 import { PauseCircle, PlayCircle, Sparkles } from 'lucide-react';
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import AIAnalysisConfig, { type AnalysisConfig } from '../../../components/analysis/AIAnalysisConfig';
 import AIAnalysisStream from '../../../components/analysis/AIAnalysisStream';
@@ -13,6 +13,7 @@ import { markAIAnalysisCompleted } from '../../../lib/api';
 import { useAnalysisStore } from '../../../stores/analysisStore';
 import type { SymbolAnalysisState } from '../../../types/analysis';
 import AIActions from './AIActions';
+import AICalibrationCard from './AICalibrationCard';
 
 interface AISectionProps {
   symbol: string;
@@ -26,6 +27,7 @@ export default function AISection({ symbol, state }: AISectionProps) {
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [pendingConfig, setPendingConfig] = useState<AnalysisConfig | null>(null);
 	const lastConfigRef = useRef<AnalysisConfig | null>(readStoredAIAnalysisConfig() as AnalysisConfig | null);
+	const [currentConfig, setCurrentConfig] = useState<AnalysisConfig | null>(lastConfigRef.current);
 	const markedRunRef = useRef<string | null>(null);
   const isAnalyzing = state.aiStatus === 'streaming';
   const hasOutput =
@@ -56,8 +58,14 @@ export default function AISection({ symbol, state }: AISectionProps) {
 
   const runAnalysis = (config: AnalysisConfig) => {
     lastConfigRef.current = config;
+		setCurrentConfig(config);
     start(config, buildAIAnalysisContext(state));
   };
+
+	const handleConfigChange = useCallback((config: AnalysisConfig) => {
+		lastConfigRef.current = config;
+		setCurrentConfig(config);
+	}, []);
 
   const requestAnalysis = (config: AnalysisConfig) => {
     if (hasOutput && !isAnalyzing) {
@@ -83,7 +91,9 @@ export default function AISection({ symbol, state }: AISectionProps) {
 
   return (
     <section className="space-y-5">
-      <AIAnalysisConfig symbol={symbol} onStartAnalysis={requestAnalysis} isAnalyzing={isAnalyzing} />
+      <AIAnalysisConfig symbol={symbol} onStartAnalysis={requestAnalysis} isAnalyzing={isAnalyzing} onConfigChange={handleConfigChange} />
+
+			{currentConfig ? <AICalibrationCard symbol={symbol} config={currentConfig} disabled={isAnalyzing} /> : null}
 
       <Card className="space-y-5 border-cyan-400/20 bg-slate-950/70">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">

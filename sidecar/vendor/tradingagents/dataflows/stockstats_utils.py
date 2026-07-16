@@ -9,6 +9,7 @@ from stockstats import wrap
 from yfinance.exceptions import YFRateLimitError
 
 from .config import get_config
+from .frozen_ohlcv import frozen_ohlcv_slice
 from .symbol_utils import NoMarketDataError, normalize_symbol
 from .utils import safe_ticker_component
 
@@ -138,6 +139,17 @@ def load_ohlcv(symbol: str, curr_date: str) -> pd.DataFrame:
     config = get_config()
     curr_date_dt = pd.to_datetime(curr_date)
 
+    frozen = frozen_ohlcv_slice(
+        symbol,
+        start_date=None,
+        end_date=curr_date,
+        purpose="technical_indicators",
+    )
+    if frozen is not None:
+        data = _clean_dataframe(frozen)
+        _assert_ohlcv_not_stale(data, curr_date, symbol, canonical)
+        return data
+
     # Cache uses a fixed window (5y to today) so one file per symbol.
     today_date = pd.Timestamp.today()
     start_date = today_date - pd.DateOffset(years=5)
@@ -192,16 +204,20 @@ def load_ohlcv(symbol: str, curr_date: str) -> pd.DataFrame:
     return data
 
 
-def filter_financials_by_date(data: pd.DataFrame, curr_date: str) -> pd.DataFrame:
-    """Drop financial statement columns (fiscal period timestamps) after curr_date.
+def filter_financials_by_date(
+    data: pd.DataFrame,
+    curr_date: str,
+    minimum_lag_days: int = 0,
+) -> pd.DataFrame:
+    """Drop statements that would not plausibly be public by ``curr_date``.
 
-    yfinance financial statements use fiscal period end dates as columns.
-    Columns after curr_date represent future data and are removed to
-    prevent look-ahead bias.
+    Yahoo columns are fiscal period end dates, not filing dates. A period that
+    ended before the replay cutoff may still have been unpublished, so callers
+    apply a conservative reporting lag for point-in-time calibration.
     """
     if not curr_date or data.empty:
         return data
-    cutoff = pd.Timestamp(curr_date)
+    cutoff = pd.Timestamp(curr_date) - pd.Timedelta(days=max(0, minimum_lag_days))
     mask = pd.to_datetime(data.columns, errors="coerce") <= cutoff
     return data.loc[:, mask]
 

@@ -1,6 +1,9 @@
+import json
 import unittest
 import tempfile
+from datetime import datetime
 import httpx
+import pandas as pd
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -639,6 +642,465 @@ class ReconnectableAnalyzeEndpointTest(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(str(first_events[0]).startswith("id: 1"))
         self.assertEqual(len(resumed_events), 1)
         self.assertTrue(str(resumed_events[0]).startswith("id: 2"))
+
+
+class HistoricalCalibrationTest(unittest.TestCase):
+    def test_cancelled_calibration_stops_before_loading_market_data(self):
+        request = main.CalibrationRequest(ticker="MU", analysts=["technical"])
+        cancel_event = main.Event()
+        cancel_event.set()
+
+        with patch.object(main, "_calibration_price_frame") as price_frame:
+            with self.assertRaisesRegex(RuntimeError, "用户已停止历史校准"):
+                main.run_historical_calibration(request, cancel_event=cancel_event)
+
+        price_frame.assert_not_called()
+
+    @staticmethod
+    def _barrier_frame():
+        dates = pd.bdate_range("2024-01-01", periods=50)
+        values = [100.0] * len(dates)
+        return pd.DataFrame(
+            {
+                "stock_open": values,
+                "stock_high": [100.5] * len(dates),
+                "stock_low": [99.5] * len(dates),
+                "stock_close": values,
+                "benchmark_open": values,
+                "benchmark_close": values,
+                "stock": values,
+                "benchmark": values,
+            },
+            index=dates,
+        )
+
+    def test_first_hit_barrier_scores_profit_stop_neutral_and_ambiguous(self):
+        scenarios = [
+            (96.0, 101.0, "correct", True, True),
+            (99.0, 103.0, "wrong", False, False),
+            (99.0, 101.0, "neutral", True, True),
+            (96.0, 103.0, "ambiguous", False, True),
+        ]
+        for low, high, execution_outcome, execution_correct, opportunity_correct in scenarios:
+            with self.subTest(outcome=execution_outcome):
+                frame = self._barrier_frame()
+                frame.iloc[25, frame.columns.get_loc("stock_low")] = low
+                frame.iloc[25, frame.columns.get_loc("stock_high")] = high
+                score = main._score_calibration_path(
+                    frame,
+                    frame_index=24,
+                    horizon_days=5,
+                    action="SELL",
+                )
+                self.assertEqual(score["execution_outcome"], execution_outcome)
+                self.assertEqual(score["execution_correct"], execution_correct)
+                self.assertEqual(score["opportunity_correct"], opportunity_correct)
+                self.assertEqual(score["correct"], opportunity_correct)
+
+    def test_relative_underweight_uses_spy_alpha_path(self):
+        frame = self._barrier_frame()
+        frame.iloc[25, frame.columns.get_loc("stock_close")] = 96.0
+        score = main._score_calibration_path(
+            frame,
+            frame_index=24,
+            horizon_days=5,
+            action="UNDERWEIGHT",
+        )
+        self.assertEqual(score["scoring_basis"], "relative_to_spy")
+        self.assertEqual(score["execution_outcome"], "correct")
+
+        frame = self._barrier_frame()
+        frame.iloc[25, frame.columns.get_loc("stock_close")] = 103.0
+        score = main._score_calibration_path(
+            frame,
+            frame_index=24,
+            horizon_days=5,
+            action="UNDERWEIGHT",
+        )
+        self.assertEqual(score["execution_outcome"], "wrong")
+
+    def test_forty_day_horizon_scales_profit_target_by_sqrt_two(self):
+        dates = pd.bdate_range("2024-01-01", periods=90)
+        values = [100.0] * len(dates)
+        frame = pd.DataFrame(
+            {
+                "stock_open": values,
+                "stock_high": [100.5] * len(dates),
+                "stock_low": [99.5] * len(dates),
+                "stock_close": values,
+                "benchmark_open": values,
+                "benchmark_close": values,
+                "stock": values,
+                "benchmark": values,
+            },
+            index=dates,
+        )
+        twenty = main._score_calibration_path(frame, frame_index=24, horizon_days=20, action="BUY")
+        forty = main._score_calibration_path(frame, frame_index=24, horizon_days=40, action="BUY")
+
+        self.assertAlmostEqual(twenty["horizon_threshold_scale"], 1.0, places=6)
+        self.assertAlmostEqual(forty["horizon_threshold_scale"], 2 ** 0.5, places=6)
+        self.assertAlmostEqual(
+            forty["profit_threshold"],
+            twenty["profit_threshold"] * (2 ** 0.5),
+            places=6,
+        )
+
+    def test_explicit_rating_wins_over_rejected_sell_language(self):
+        hold = "**Rating**: Hold\n\nDo not execute the trader Sell proposal."
+        overweight = "**Rating**: Overweight\n\nA full Sell is not justified."
+        self.assertEqual(main.normalize_rating(hold), "HOLD")
+        self.assertEqual(main.normalize_action(hold), "HOLD")
+        self.assertEqual(main.normalize_rating(overweight), "OVERWEIGHT")
+        self.assertEqual(main.normalize_action(overweight), "BUY")
+        self.assertEqual(
+            main.normalize_direction("**Direction**: Bullish\n\n**Rating**: Underweight"),
+            "BUY",
+        )
+
+    def test_single_analyst_calibration_scores_analyst_report_not_portfolio_manager(self):
+        frame = self._barrier_frame()
+        request = main.CalibrationRequest(ticker="MU", analysts=["technical"], horizon_days=5)
+        state = {
+            "market_report": "FINAL TRANSACTION PROPOSAL: **SELL**",
+            "final_trade_decision": "**Direction**: Bullish\n\n**Rating**: Buy",
+        }
+        with tempfile.TemporaryDirectory() as cache_dir, patch.dict(
+            main.os.environ, {"AI_CALIBRATION_NODE_CACHE_DIR": cache_dir}
+        ), patch.object(main, "run_analysis", return_value=(state, "BUY")):
+            cache_path = main._calibration_node_cache_path(
+                request,
+                frame.index[24].date(),
+                ("market",),
+            )
+            node = main._run_calibration_node(
+                request,
+                ordinal=1,
+                total_nodes=1,
+                frame_index=24,
+                frame=frame,
+                safe_analysts=("market",),
+                cache_path=cache_path,
+            )
+
+        self.assertEqual(node["direction"], "BEARISH")
+        self.assertEqual(node["action"], "SELL")
+        self.assertEqual(node["decision_source"], "market")
+
+    def test_directional_outlook_is_separate_from_hold_position_action(self):
+        frame = self._barrier_frame()
+        request = main.CalibrationRequest(ticker="MU", analysts=["technical"], horizon_days=5)
+        report = (
+            "Trend remains constructive, but do not chase the entry.\n"
+            "EVIDENCE STATUS: **SUFFICIENT**\n"
+            "DIRECTIONAL OUTLOOK: **BULLISH**\n"
+            "FINAL TRANSACTION PROPOSAL: **HOLD**"
+        )
+        with tempfile.TemporaryDirectory() as cache_dir, patch.dict(
+            main.os.environ, {"AI_CALIBRATION_NODE_CACHE_DIR": cache_dir}
+        ), patch.object(main, "run_analysis", return_value=({"market_report": report}, "HOLD")):
+            cache_path = main._calibration_node_cache_path(request, frame.index[24].date(), ("market",))
+            node = main._run_calibration_node(
+                request,
+                ordinal=1,
+                total_nodes=1,
+                frame_index=24,
+                frame=frame,
+                safe_analysts=("market",),
+                cache_path=cache_path,
+            )
+
+        self.assertEqual(node["direction"], "BULLISH")
+        self.assertEqual(node["action"], "BUY")
+        self.assertEqual(node["rating"], "HOLD")
+        self.assertTrue(node["scorable"])
+
+    def test_insufficient_evidence_nodes_are_excluded_from_accuracy(self):
+        dates = pd.bdate_range("2021-01-01", periods=900)
+        stock = [100 + index * 0.20 for index in range(900)]
+        frame = pd.DataFrame(
+            {
+                "stock_open": stock,
+                "stock_high": [value + 0.5 for value in stock],
+                "stock_low": [value - 0.5 for value in stock],
+                "stock_close": stock,
+                "benchmark_open": stock,
+                "benchmark_close": stock,
+                "stock": stock,
+                "benchmark": stock,
+            },
+            index=dates,
+        )
+        calls = 0
+
+        def replay(*_args, **_kwargs):
+            nonlocal calls
+            calls += 1
+            status = "INSUFFICIENT" if calls <= 5 else "SUFFICIENT"
+            report = (
+                f"EVIDENCE STATUS: **{status}**\n"
+                "DIRECTIONAL OUTLOOK: **BULLISH**\n"
+                "FINAL TRANSACTION PROPOSAL: **HOLD**"
+            )
+            return {"market_report": report}, "HOLD"
+
+        request = main.CalibrationRequest(
+            ticker="MU", analysts=["technical"], sample_count=10, horizon_days=20
+        )
+        with tempfile.TemporaryDirectory() as cache_dir, patch.dict(
+            main.os.environ,
+            {"AI_CALIBRATION_NODE_CACHE_DIR": cache_dir, "AI_CALIBRATION_CONCURRENCY": "1"},
+        ), patch.object(main, "_calibration_price_frame", return_value=frame), patch.object(
+            main, "run_analysis", side_effect=replay
+        ):
+            result = main.run_historical_calibration(request)
+
+        self.assertEqual(result["total_node_count"], 10)
+        self.assertEqual(result["sample_count"], 5)
+        self.assertEqual(result["unscorable_count"], 5)
+        self.assertEqual(result["coverage"], 0.5)
+        self.assertEqual(result["confidence"], "INSUFFICIENT")
+        self.assertEqual(sum(node["scorable"] for node in result["nodes"]), 5)
+
+    def test_calibration_context_uses_historical_date(self):
+        request = main.CalibrationRequest(
+            ticker="MU",
+            analysts=["technical"],
+            analysis_context={
+                "calibration": {
+                    "as_of_date": "2024-02-09",
+                    "horizon_trading_days": 20,
+                }
+            },
+        )
+        payload = json.loads(main.compact_context_json(request))
+        self.assertEqual(payload["analysis_date"], "2024-02-09")
+        self.assertEqual(payload["provided_data"]["calibration"]["horizon_trading_days"], 20)
+
+    def test_historical_context_disables_global_outcome_memory(self):
+        request = main.AblationStudyRequest(
+            ticker="MU",
+            analysts=["technical"],
+            analysis_context={
+                "calibration": {
+                    "as_of_date": "2024-02-09",
+                    "horizon_trading_days": 20,
+                }
+            },
+        )
+        config = {"memory_log_path": "/tmp/global-outcome-memory.md"}
+        self.assertTrue(main.configure_historical_isolation(config, request))
+        self.assertIsNone(config["memory_log_path"])
+        self.assertTrue(config["historical_isolation"])
+
+    def test_historical_stock_tool_omits_wall_clock_retrieval_date(self):
+        from tradingagents.dataflows import y_finance
+
+        frame = pd.DataFrame(
+            {
+                "Open": [42.0],
+                "High": [43.0],
+                "Low": [41.0],
+                "Close": [42.5],
+                "Volume": [1000],
+            },
+            index=pd.DatetimeIndex(["2024-02-09"]),
+        )
+        with patch.object(y_finance.yf, "Ticker"), patch.object(
+            y_finance, "yf_retry", return_value=frame
+        ):
+            output = y_finance.get_YFin_data_online(
+                "MU", "2024-02-09", "2024-02-09"
+            )
+
+        self.assertNotIn("Data retrieved on", output)
+        self.assertNotIn(str(datetime.now().year), output)
+        self.assertIn("2024-02-09", output)
+
+    def test_v4_calibration_reuses_v3_audit_without_model_call(self):
+        frame = self._barrier_frame()
+        request = main.CalibrationRequest(ticker="MU", analysts=["technical"], horizon_days=5)
+        as_of = frame.index[24].date()
+        with tempfile.TemporaryDirectory() as cache_dir, patch.dict(
+            main.os.environ, {"AI_CALIBRATION_NODE_CACHE_DIR": cache_dir}
+        ):
+            legacy_path = main._calibration_node_cache_path(
+                request,
+                as_of,
+                ("market",),
+                schema_version=main.LEGACY_CALIBRATION_NODE_SCHEMA_VERSION,
+            )
+            legacy_path.parent.mkdir(parents=True, exist_ok=True)
+            legacy_path.write_text(
+                json.dumps(
+                    {
+                        "schema_version": main.LEGACY_CALIBRATION_NODE_SCHEMA_VERSION,
+                        "node": {"correct": False},
+                    }
+                ),
+                encoding="utf-8",
+            )
+            legacy_path.with_suffix(".audit.json").write_text(
+                json.dumps(
+                    {
+                        "schema_version": "vibe.decision_calibration.audit.v3",
+                        "raw_decision": "**Rating**: Sell",
+                        "state": {
+                            "market_report": "FINAL TRANSACTION PROPOSAL: **BUY**",
+                            "final_trade_decision": "**Rating**: Sell",
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+            cache_path = main._calibration_node_cache_path(request, as_of, ("market",))
+            with patch.object(main, "run_analysis") as replay:
+                node = main._run_calibration_node(
+                    request,
+                    ordinal=1,
+                    total_nodes=1,
+                    frame_index=24,
+                    frame=frame,
+                    safe_analysts=("market",),
+                    cache_path=cache_path,
+                )
+
+        replay.assert_not_called()
+        self.assertTrue(node["reused_analysis"])
+        self.assertEqual(node["direction"], "BULLISH")
+        self.assertEqual(node["action"], "BUY")
+
+    def test_historical_statements_apply_reporting_lag(self):
+        from tradingagents.dataflows.stockstats_utils import filter_financials_by_date
+        from tradingagents.dataflows.y_finance import _historical_statement_lag
+
+        frame = pd.DataFrame(
+            {pd.Timestamp("2025-05-31"): [1.0], pd.Timestamp("2025-02-28"): [2.0]},
+            index=["Revenue"],
+        )
+        lag = _historical_statement_lag("2025-06-12", "quarterly")
+        filtered = filter_financials_by_date(frame, "2025-06-12", lag)
+        self.assertEqual(lag, 45)
+        self.assertEqual(list(filtered.columns), [pd.Timestamp("2025-02-28")])
+
+    def test_v2_node_cache_is_not_reused(self):
+        with tempfile.TemporaryDirectory() as cache_dir:
+            path = Path(cache_dir) / "old.json"
+            path.write_text(
+                json.dumps({"schema_version": "vibe.decision_calibration.node.v2", "node": {"correct": True}}),
+                encoding="utf-8",
+            )
+            self.assertIsNone(main._load_calibration_node(path))
+
+    def test_replays_ten_nodes_and_excludes_live_sentiment(self):
+        dates = pd.bdate_range("2021-01-01", periods=900)
+        stock = [100 + index * 0.20 for index in range(900)]
+        benchmark = [100 + index * 0.05 for index in range(900)]
+        frame = pd.DataFrame(
+            {
+                "stock_open": stock,
+                "stock_high": [value + 0.5 for value in stock],
+                "stock_low": [value - 0.5 for value in stock],
+                "stock_close": stock,
+                "benchmark_open": benchmark,
+                "benchmark_close": benchmark,
+                "stock": stock,
+                "benchmark": benchmark,
+            },
+            index=dates,
+        )
+        request = main.CalibrationRequest(
+            ticker="NVDA",
+            analysts=["technical", "sentiment"],
+            online_tools=False,
+            sample_count=10,
+            horizon_days=20,
+        )
+        progress = []
+
+        with tempfile.TemporaryDirectory() as cache_dir, patch.dict(
+            main.os.environ, {"AI_CALIBRATION_NODE_CACHE_DIR": cache_dir}
+        ), patch.object(main, "_calibration_price_frame", return_value=frame), patch.object(
+            main, "run_analysis", return_value=({"final_trade_decision": "BUY"}, "BUY")
+        ) as replay:
+            result = main.run_historical_calibration(request, progress_callback=progress.append)
+            audit_files = list(Path(cache_dir).glob("*.audit.json"))
+            cached_result = main.run_historical_calibration(request)
+            request.force_refresh = True
+            refreshed_result = main.run_historical_calibration(request)
+
+        self.assertEqual(result["sample_count"], 10)
+        self.assertEqual(result["correct_count"], 10)
+        self.assertEqual(result["confidence"], "LOW")
+        self.assertEqual(result["opportunity_lift_vs_best_baseline"], 0.0)
+        self.assertEqual(result["baselines"]["BUY"]["opportunity_accuracy"], 1.0)
+        self.assertEqual(result["point_in_time_analysts"], ["market"])
+        self.assertEqual(result["excluded_analysts"], ["sentiment"])
+        self.assertEqual(len(audit_files), 10)
+        self.assertEqual(replay.call_count, 20)
+        self.assertTrue(all(node["correct"] for node in result["nodes"]))
+        self.assertEqual(cached_result, result)
+        self.assertEqual(refreshed_result, result)
+        self.assertEqual(progress[-1]["completed_nodes"], 10)
+        self.assertEqual(progress[-1]["total_nodes"], 10)
+
+    def test_cached_calibration_can_only_downgrade_confidence(self):
+        context = {"model_calibration": {"sample_count": 10, "confidence": "LOW"}}
+        self.assertEqual(main.apply_historical_calibration("HIGH", context), "LOW")
+        context["model_calibration"]["confidence"] = "HIGH"
+        self.assertEqual(main.apply_historical_calibration("MEDIUM", context), "MEDIUM")
+
+    def test_transient_node_failure_reuses_checkpoint_and_retries(self):
+        dates = pd.bdate_range("2021-01-01", periods=900)
+        stock = [100 + index * 0.20 for index in range(900)]
+        benchmark = [100 + index * 0.05 for index in range(900)]
+        frame = pd.DataFrame(
+            {
+                "stock_open": stock,
+                "stock_high": [value + 0.5 for value in stock],
+                "stock_low": [value - 0.5 for value in stock],
+                "stock_close": stock,
+                "benchmark_open": benchmark,
+                "benchmark_close": benchmark,
+                "stock": stock,
+                "benchmark": benchmark,
+            },
+            index=dates,
+        )
+        request = main.CalibrationRequest(
+            ticker="MU",
+            analysts=["technical"],
+            online_tools=False,
+            sample_count=10,
+            horizon_days=20,
+        )
+        calls = []
+
+        def flaky_replay(node_request, **_kwargs):
+            calls.append((node_request.run_id, node_request.resume))
+            if len(calls) == 1:
+                raise ConnectionError("temporary gateway failure")
+            return {"final_trade_decision": "BUY"}, "BUY"
+
+        with tempfile.TemporaryDirectory() as cache_dir, patch.dict(
+            main.os.environ,
+            {"AI_CALIBRATION_NODE_CACHE_DIR": cache_dir, "AI_CALIBRATION_CONCURRENCY": "1"},
+        ), patch.object(main, "_calibration_price_frame", return_value=frame), patch.object(
+            main, "run_analysis", side_effect=flaky_replay
+        ), patch.object(main.time, "sleep"):
+            result = main.run_historical_calibration(request)
+
+        self.assertEqual(result["sample_count"], 10)
+        self.assertEqual(len(calls), 11)
+        self.assertEqual(calls[0][0], calls[1][0])
+        self.assertFalse(calls[0][1])
+        self.assertTrue(calls[1][1])
+
+    def test_calibration_concurrency_is_bounded_and_configurable(self):
+        with patch.dict(main.os.environ, {"AI_CALIBRATION_CONCURRENCY": "3"}):
+            self.assertEqual(main._calibration_concurrency(10), 3)
+        with patch.dict(main.os.environ, {"AI_CALIBRATION_CONCURRENCY": "99"}):
+            self.assertEqual(main._calibration_concurrency(10), 10)
 
 
 if __name__ == "__main__":

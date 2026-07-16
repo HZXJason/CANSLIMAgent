@@ -433,7 +433,10 @@ class TradingAgentsGraph:
             past_context=past_context,
             instrument_context=instrument_context,
         )
-        args = self.propagator.get_graph_args()
+        # Propagate run callbacks into graph/tool execution as well as the LLM
+        # constructors. Evidence callbacks de-duplicate LLM run IDs, while this
+        # graph-level path preserves exact tool inputs, outputs, and failures.
+        args = self.propagator.get_graph_args(self.callbacks)
 
         # Inject thread_id so same ticker+date+graph-shape resumes; a different
         # date or graph shape starts fresh (#1089).

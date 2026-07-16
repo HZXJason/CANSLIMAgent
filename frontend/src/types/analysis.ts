@@ -237,6 +237,82 @@ export interface AIDecision {
   summary: string;
 }
 
+export interface AICalibrationNode {
+  ordinal: number;
+  as_of_date: string;
+  outcome_date: string;
+  action: string;
+  rating?: 'BUY' | 'OVERWEIGHT' | 'HOLD' | 'UNDERWEIGHT' | 'SELL' | string;
+  outcome?: 'correct' | 'wrong' | 'neutral' | 'ambiguous' | string;
+  scoring_basis?: 'absolute' | 'relative_to_spy' | 'absolute_neutral' | string;
+  first_barrier?: string;
+  barrier_hit_day?: number | null;
+  audit_file?: string;
+  correct: boolean | null;
+  opportunity_correct?: boolean | null;
+  execution_correct?: boolean | null;
+  opportunity_outcome?: string;
+  execution_outcome?: string;
+  direction?: 'BULLISH' | 'NEUTRAL' | 'BEARISH' | string;
+  evidence_status?: 'SUFFICIENT' | 'INSUFFICIENT' | string;
+  scorable?: boolean;
+  unscorable_reason?: string | null;
+  decision_source?: string;
+  reused_analysis?: boolean;
+  raw_return: number;
+  benchmark_return: number;
+  alpha_return: number;
+}
+
+export interface AICalibrationRun {
+  id: string;
+  symbol: string;
+  config_hash: string;
+  provider: string;
+  deep_think_llm: string;
+  quick_think_llm: string;
+  strategy_version: string;
+  status: 'running' | 'complete' | 'failed';
+  total_nodes: number;
+  completed_nodes: number;
+  cached_nodes: number;
+  failed_nodes: number;
+  sample_count: number;
+  correct_count: number;
+  accuracy: number;
+  confidence: 'HIGH' | 'MEDIUM' | 'LOW' | 'INSUFFICIENT' | string;
+  horizon_days: number;
+  started_at: string;
+  completed_at?: string;
+  error?: string;
+  payload?: {
+    benchmark?: string;
+    neutral_alpha_band?: number;
+    scoring_rule?: string;
+    neutral_counts_as_correct?: boolean;
+    opportunity_correct_count?: number;
+    opportunity_accuracy?: number;
+    execution_correct_count?: number;
+    execution_accuracy?: number;
+    total_node_count?: number;
+    unscorable_count?: number;
+    coverage?: number;
+    baselines?: Record<string, {
+      sample_count: number;
+      opportunity_correct_count: number;
+      opportunity_accuracy: number;
+      execution_correct_count: number;
+      execution_accuracy: number;
+    }>;
+    opportunity_lift_vs_best_baseline?: number;
+    execution_lift_vs_best_baseline?: number;
+    requested_analysts?: string[];
+    point_in_time_analysts?: string[];
+    excluded_analysts?: string[];
+    nodes?: AICalibrationNode[];
+  };
+}
+
 export interface SymbolAnalysisState {
   stockSummary: StockSummary | null;
   companyProfile: CompanyProfile | null;
