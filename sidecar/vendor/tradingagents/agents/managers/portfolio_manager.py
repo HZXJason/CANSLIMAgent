@@ -45,7 +45,9 @@ def create_portfolio_manager(llm):
 
 ---
 
-**Rating Scale** (use exactly one):
+Return an expected **Direction** independently from the portfolio **Rating**. Risk analysts may change sizing, stops, or confidence. They may reverse Direction only when they cite affirmative contradictory evidence; uncertainty, missing valuation, high volatility, or concentration limits alone are not directional evidence.
+
+**Position Rating Scale** (use exactly one):
 - **Buy**: Strong conviction to enter or add to position
 - **Overweight**: Favorable outlook, gradually increase exposure
 - **Hold**: Maintain current position, no action needed
@@ -61,7 +63,7 @@ def create_portfolio_manager(llm):
 
 ---
 
-Be decisive and ground every conclusion in specific evidence from the analysts.{get_language_instruction()}"""
+Missing data lowers Data Quality and Confidence and normally supports a Neutral direction, not an automatic Underweight or Sell. A Bullish direction can coexist with Underweight when risk limits require a small position. Ground every directional conclusion in specific evidence from the analysts.{get_language_instruction()}"""
 
         final_trade_decision = invoke_structured_or_freetext(
             structured_llm,
