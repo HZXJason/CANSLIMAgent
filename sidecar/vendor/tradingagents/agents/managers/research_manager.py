@@ -18,9 +18,9 @@ def create_research_manager(llm):
 
     def research_manager_node(state) -> dict:
         instrument_context = get_instrument_context_from_state(state)
-        history = state["investment_debate_state"].get("history", "")
-
         investment_debate_state = state["investment_debate_state"]
+        bull_case = investment_debate_state.get("bull_history", "")
+        bear_case = investment_debate_state.get("bear_history", "")
 
         prompt = f"""As the Research Manager and debate facilitator, your role is to critically evaluate this round of debate and deliver a clear, actionable investment plan for the trader.
 
@@ -28,19 +28,31 @@ def create_research_manager(llm):
 
 ---
 
-**Rating Scale** (use exactly one):
+Produce two independent conclusions:
+
+1. **Direction** predicts price direction over the stated horizon: Bullish, Neutral, or Bearish.
+2. **Recommendation** controls portfolio exposure using the five-tier scale below.
+
+Missing or unavailable evidence lowers confidence and data quality. It is not bullish or bearish evidence. Neutral is the correct directional forecast when neither side has affirmative evidence. A cautious position size may coexist with a Bullish direction, and a large position may never be justified solely by a Bullish direction.
+
+**Position Rating Scale** (use exactly one):
 - **Buy**: Strong conviction in the bull thesis; recommend taking or growing the position
 - **Overweight**: Constructive view; recommend gradually increasing exposure
 - **Hold**: Balanced view; recommend maintaining the current position
 - **Underweight**: Cautious view; recommend trimming exposure
 - **Sell**: Strong conviction in the bear thesis; recommend exiting or avoiding the position
 
-Commit to a clear stance whenever the debate's strongest arguments warrant one; reserve Hold for situations where the evidence on both sides is genuinely balanced.
+Use Hold freely when no portfolio change is justified. Underweight and Sell must not be used as substitutes for low confidence or missing data.
+
+Evaluate the cases symmetrically. Do not privilege an argument because it appears later, is longer, or uses more forceful language. Require affirmative negative evidence for Bearish and affirmative positive evidence for Bullish.
 
 ---
 
-**Debate History:**
-{history}""" + get_language_instruction()
+**Bull Case:**
+{bull_case}
+
+**Bear Case:**
+{bear_case}""" + get_language_instruction()
 
         investment_plan = invoke_structured_or_freetext(
             structured_llm,

@@ -30,7 +30,8 @@ def create_trader(llm):
                 "role": "system",
                 "content": (
                     "You are a trading agent analyzing market data to make investment decisions. "
-                    "Based on your analysis, provide a specific recommendation to buy, sell, or hold. "
+                    "Preserve the five-tier Buy/Overweight/Hold/Underweight/Sell position action. "
+                    "Keep expected price direction separate from position sizing and risk controls. "
                     "Anchor your reasoning in the analysts' reports and the research plan."
                     + get_language_instruction()
                 ),
@@ -43,7 +44,8 @@ def create_trader(llm):
                     f"insights from current technical market trends, macroeconomic indicators, and "
                     f"social media sentiment. Use this plan as a foundation for evaluating your next "
                     f"trading decision.\n\nProposed Investment Plan: {investment_plan}\n\n"
-                    f"Leverage these insights to make an informed and strategic decision."
+                    f"Leverage these insights to make an informed and strategic decision. Missing data "
+                    f"must lower confidence rather than automatically produce Underweight or Sell."
                 ),
             },
         ]
