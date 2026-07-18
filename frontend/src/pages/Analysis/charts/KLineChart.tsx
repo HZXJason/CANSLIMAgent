@@ -77,9 +77,8 @@ export default function KLineChart({ data, status, period, onPeriodChange }: KLi
   return (
     <ChartFrame
       title="K 线与成交量"
-      subtitle="蜡烛线展示价格区间，底部柱形展示成交量"
       status={finalStatus}
-      height={400}
+      height={420}
       source={data?.source}
       dataAsOf={data?.data_as_of}
       action={

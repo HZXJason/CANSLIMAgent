@@ -38,22 +38,16 @@ function formatPercent(value: number | undefined) {
 function ReflectionCard({ reflection }: { reflection: StoredJournalReflection }) {
   const profile = reflection.payload.profile;
   const warnings = (reflection.payload.validation_warnings ?? []).map((warning) =>
-    typeof warning === 'string' ? warning : warning.message || warning.code || '日志字段已做兼容处理'
+    typeof warning === 'string' ? warning : warning.message || warning.code || '部分日志数据不完整'
   );
   return (
     <Card>
-      <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
-        <div>
-          <p className="text-sm font-semibold text-cyan-300/80">Vibe-Trading · Trade Journal Reflection</p>
-          <h2 className="mt-1 text-xl font-bold text-white">交易行为反思</h2>
-          <p className="mt-2 text-xs text-slate-500">{new Date(reflection.created_at).toLocaleString()} · {reflection.record_count} 笔成交 · {reflection.engine}</p>
-        </div>
-        <span className="rounded-full border border-cyan-400/30 bg-cyan-400/10 px-3 py-1 text-xs font-semibold text-cyan-200">
-          {reflection.payload.shadow_strategy_ready ? '可提取 Shadow 策略' : '继续积累样本'}
-        </span>
+      <div>
+        <h2 className="text-xl font-bold text-white">交易表现</h2>
+        <p className="mt-2 text-sm text-slate-400">{new Date(reflection.created_at).toLocaleString()} · {reflection.record_count} 笔成交</p>
       </div>
       {profile ? (
-        <div className="mt-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+        <div className="mt-5 grid grid-cols-2 gap-3 md:grid-cols-4">
           <Metric label="完整来回" value={String(profile.total_roundtrips ?? 0)} />
           <Metric label="胜率" value={formatPercent(profile.win_rate)} />
           <Metric label="平均持仓" value={profile.avg_holding_days === undefined ? '-' : profile.avg_holding_days.toFixed(2) + ' 天'} />
@@ -67,7 +61,7 @@ function ReflectionCard({ reflection }: { reflection: StoredJournalReflection })
 }
 
 function Metric({ label, value }: { label: string; value: string }) {
-  return <div className="rounded-2xl border border-slate-800 bg-slate-950/35 px-4 py-3"><p className="text-xs font-semibold text-slate-500">{label}</p><p className="mt-2 text-lg font-black text-white">{value}</p></div>;
+  return <div className="rounded-2xl border border-slate-800 bg-slate-950/35 px-4 py-3"><p className="text-sm font-semibold text-slate-400">{label}</p><p className="mt-1 text-lg font-black text-white">{value}</p></div>;
 }
 
 export default function JournalList() {
@@ -84,19 +78,15 @@ export default function JournalList() {
   const structuredEntries = entries.filter((entry) => entry.quantity > 0 && entry.price > 0);
 
   return (
-    <section className="mx-auto flex w-full max-w-[1240px] flex-col gap-6 px-4 py-6 lg:px-8">
-      <header className="flex flex-col gap-4 rounded-[1.25rem] border border-slate-800/90 bg-slate-900/70 p-5 md:flex-row md:items-center md:justify-between">
-        <div>
-          <p className="text-sm font-semibold text-cyan-300/80">AlphaLens · vibe.trade_record.v1</p>
-          <h1 className="mt-2 text-3xl font-black text-white">交易日志</h1>
-          <p className="mt-2 text-sm text-slate-500">逐笔成交用于 Vibe 行为分析，也会作为结构化上下文提供给 TradingAgents。</p>
-        </div>
-        <div className="flex flex-wrap gap-3">
-          <Button variant="outline" disabled={structuredEntries.length === 0 || reflectionMutation.isPending} onClick={() => reflectionMutation.mutate()}>
+    <section className="mx-auto flex w-full max-w-[1180px] flex-col gap-5 px-4 py-5 sm:px-6 lg:px-8 lg:py-7">
+      <header className="flex flex-col gap-4 border-b border-slate-800/90 pb-4 sm:flex-row sm:items-center sm:justify-between">
+        <h1 className="text-2xl font-black text-white sm:text-3xl">交易日志</h1>
+        <div className="flex flex-col-reverse gap-2 sm:flex-row sm:flex-wrap">
+          <Button className="w-full sm:w-auto" variant="outline" disabled={structuredEntries.length === 0 || reflectionMutation.isPending} onClick={() => reflectionMutation.mutate()}>
             <BrainCircuit className="h-4 w-4" />
-            {reflectionMutation.isPending ? '分析中' : '生成行为反思'}
+            {reflectionMutation.isPending ? '分析中' : '分析交易表现'}
           </Button>
-          <Button onClick={() => navigate('/journal/new')}><Plus className="h-4 w-4" />新建成交</Button>
+          <Button className="w-full sm:w-auto" onClick={() => navigate('/journal/new')}><Plus className="h-4 w-4" />新建成交</Button>
         </div>
       </header>
 
@@ -106,14 +96,14 @@ export default function JournalList() {
       {reflectionQuery.data ? <ReflectionCard reflection={reflectionQuery.data} /> : null}
       {query.isLoading ? <Card className="h-64 animate-pulse bg-slate-900/60" /> : null}
       {query.isError ? <Card className="flex min-h-64 flex-col items-center justify-center gap-4"><p className="text-red-100">交易日志读取失败</p><Button variant="outline" onClick={() => void query.refetch()}><RefreshCw className="h-4 w-4" />重试</Button></Card> : null}
-      {!query.isLoading && !query.isError && entries.length === 0 ? <Card className="flex min-h-80 flex-col items-center justify-center gap-4 text-center"><BookOpenCheck className="h-12 w-12 text-slate-600" /><p className="text-lg font-semibold text-slate-200">暂无逐笔成交记录</p><Button onClick={() => navigate('/journal/new')}><Plus className="h-4 w-4" />新建成交</Button></Card> : null}
+      {!query.isLoading && !query.isError && entries.length === 0 ? <Card className="flex min-h-[280px] flex-col items-center justify-center gap-4 text-center"><BookOpenCheck className="h-10 w-10 text-slate-600" /><p className="text-lg font-semibold text-slate-200">暂无成交记录</p></Card> : null}
       {entries.length > 0 ? (
         <Card className="overflow-hidden p-0">
-          <div className="hidden grid-cols-[1.1fr_0.7fr_1.2fr_1fr_1fr_0.8fr] gap-4 border-b border-slate-800 px-5 py-3 text-xs font-semibold text-slate-500 md:grid"><span>标的</span><span>方向</span><span>成交时间</span><span>数量 × 价格</span><span>成交额 / 费用</span><span className="text-right">复盘</span></div>
+          <div className="hidden grid-cols-[1.1fr_0.7fr_1.2fr_1fr_1fr_0.8fr] gap-4 border-b border-slate-800 px-5 py-3 text-sm font-semibold text-slate-400 md:grid"><span>标的</span><span>方向</span><span>成交时间</span><span>数量 × 价格</span><span>成交额 / 手续费</span><span className="text-right">复盘</span></div>
           <div className="divide-y divide-slate-900">
             {entries.map((entry) => (
-              <button key={entry.id} className="grid w-full gap-3 px-5 py-4 text-left transition hover:bg-slate-800/70 md:grid-cols-[1.1fr_0.7fr_1.2fr_1fr_1fr_0.8fr] md:items-center md:gap-4" onClick={() => navigate('/journal/' + entry.id)}>
-                <span><span className="block text-lg font-black text-white">{entry.symbol}</span><span className="text-xs text-slate-500">{entry.name || entry.market}</span></span>
+              <button key={entry.id} className="grid w-full gap-3 px-5 py-4 text-left transition hover:bg-slate-800/70 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-cyan-400/60 md:grid-cols-[1.1fr_0.7fr_1.2fr_1fr_1fr_0.8fr] md:items-center md:gap-4" onClick={() => navigate('/journal/' + entry.id)}>
+                <span><span className="block text-lg font-black text-white">{entry.symbol}</span><span className="text-sm text-slate-400">{entry.name || entry.market}</span></span>
                 <span><SideBadge side={entry.side} /></span>
                 <span className="text-sm text-slate-300">{new Date(entry.datetime).toLocaleString()}</span>
                 <span className="text-sm text-slate-400">{formatNumber(entry.quantity)} × {formatNumber(entry.price)}</span>

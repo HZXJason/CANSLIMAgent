@@ -4,10 +4,11 @@ import { ArrowLeft, BookOpenCheck, Clock3, FilePenLine, LockKeyhole, PlayCircle,
 import { useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { Button } from '../../components/ui/button';
 import { Card } from '../../components/ui/card';
+import { ConfirmDialog } from '../../components/ui/confirm-dialog';
 import { Input } from '../../components/ui/input';
 import { Select } from '../../components/ui/select';
 import { createTradePlan, executeTradePlan, fetchTradePlan, updateTradePlan } from '../../lib/api';
-import { cn, formatDateCN } from '../../lib/utils';
+import { cn } from '../../lib/utils';
 import type { ExecuteTradePlanInput, NewTradePlanInput, TradePlan, TradePlanDirection, TradePlanStatus, TradePlanUpdateInput } from '../../types/tradePlan';
 
 interface LocationState {
@@ -215,7 +216,7 @@ function Textarea({ className, invalid, ...props }: TextareaHTMLAttributes<HTMLT
   return (
     <textarea
       className={cn(
-        'min-h-28 w-full resize-y rounded-2xl border bg-slate-950/60 px-3 py-3 text-sm text-slate-100 outline-none transition placeholder:text-slate-500 focus:border-cyan-400/60 focus:ring-2 focus:ring-cyan-400/20',
+        'min-h-24 w-full resize-y rounded-xl border bg-slate-950/60 px-3 py-3 text-sm text-slate-100 outline-none transition placeholder:text-slate-500 focus:border-cyan-400/60 focus:ring-2 focus:ring-cyan-400/20',
         invalid ? 'border-red-500' : 'border-slate-700',
         className
       )}
@@ -226,7 +227,7 @@ function Textarea({ className, invalid, ...props }: TextareaHTMLAttributes<HTMLT
 
 function FieldError({ value }: { value?: string }) {
   if (!value) return null;
-  return <p className="mt-2 text-xs font-medium text-red-300">{value}</p>;
+  return <p className="mt-2 text-sm font-medium text-red-300">{value}</p>;
 }
 
 function StatusBadge({ status }: { status: TradePlanStatus }) {
@@ -237,7 +238,7 @@ function StatusBadge({ status }: { status: TradePlanStatus }) {
     cancelled: 'border-red-400/50 bg-red-950/50 text-red-100',
     expired: 'border-amber-400/50 bg-amber-950/40 text-amber-100'
   };
-  return <span className={cn('inline-flex h-8 items-center rounded-full border px-3 text-xs font-bold', styles[status])}>{statusLabel[status]}</span>;
+  return <span className={cn('inline-flex h-7 items-center rounded-full border px-2.5 text-xs font-bold', styles[status])}>{statusLabel[status]}</span>;
 }
 
 function PlanFormCard({ plan }: { plan?: TradePlan }) {
@@ -249,6 +250,7 @@ function PlanFormCard({ plan }: { plan?: TradePlan }) {
   const symbol = searchParams.get('symbol') ?? '';
   const [form, setForm] = useState<PlanForm>(() => (plan ? formFromPlan(plan) : initialPlanForm(symbol, locationState?.aiSummary ?? '')));
   const [errors, setErrors] = useState<PlanFormErrors>({});
+  const [pendingSaveInput, setPendingSaveInput] = useState<NewTradePlanInput | TradePlanUpdateInput | null>(null);
   const coreLocked = Boolean(plan && plan.status !== 'draft');
 
   useEffect(() => {
@@ -258,7 +260,6 @@ function PlanFormCard({ plan }: { plan?: TradePlan }) {
     }
   }, [plan]);
 
-  const isNew = !plan;
   const canSave = useMemo(() => {
     if (coreLocked) return true;
     return Boolean(form.ticker.trim() && form.direction && form.plan_date);
@@ -285,127 +286,142 @@ function PlanFormCard({ plan }: { plan?: TradePlan }) {
     const result = buildPlanInput(form, coreLocked);
     setErrors(result.errors);
     if (!result.input) return;
+    if (!coreLocked && form.status === 'waiting') {
+      setPendingSaveInput(result.input);
+      return;
+    }
     saveMutation.mutate(result.input);
   };
 
   return (
-    <Card>
-      <div className="mb-5 flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
-        <div>
-          <p className="text-sm font-semibold text-cyan-300/80">Plan</p>
-          <h2 className="mt-1 text-xl font-bold text-white">{isNew ? '新建交易计划' : form.ticker + ' 交易计划'}</h2>
-        </div>
-        {plan ? (
-          <div className="flex items-center gap-3">
+    <>
+      <Card className="overflow-hidden p-0">
+      {plan ? (
+        <div className="flex flex-col gap-3 border-b border-slate-800 px-5 py-4 sm:flex-row sm:items-center sm:justify-between sm:px-6">
+          <h2 className="text-xl font-bold text-white">{form.ticker}</h2>
+          <div className="flex flex-wrap items-center gap-3">
             {coreLocked ? (
-              <span className="inline-flex items-center gap-2 text-sm font-semibold text-slate-500">
+              <span className="inline-flex items-center gap-2 text-sm font-semibold text-slate-400">
                 <LockKeyhole className="h-4 w-4" />
                 核心字段已锁定
               </span>
             ) : null}
             <StatusBadge status={plan.status} />
           </div>
-        ) : null}
+        </div>
+      ) : null}
+
+      <div className="space-y-6 p-5 sm:p-6">
+        <div>
+          <h3 className="mb-3 font-bold text-slate-100">基本信息</h3>
+          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+            <label>
+              <span className="text-sm font-semibold text-slate-300">代码</span>
+              <Input className="mt-2" value={form.ticker} disabled={coreLocked} invalid={Boolean(errors.ticker)} onChange={(event) => updateField('ticker', event.target.value)} />
+              <FieldError value={errors.ticker} />
+            </label>
+            <label>
+              <span className="text-sm font-semibold text-slate-300">方向</span>
+              <Select className="mt-2" value={form.direction} disabled={coreLocked} onValueChange={(value) => updateField('direction', value)}>
+                {Object.entries(directionLabel).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+              </Select>
+              <FieldError value={errors.direction} />
+            </label>
+            <label>
+              <span className="text-sm font-semibold text-slate-300">状态</span>
+              <Select className="mt-2" value={form.status} disabled={coreLocked} onValueChange={(value) => updateField('status', value)}>
+                <option value="draft">草稿</option>
+                <option value="waiting">等待触发</option>
+              </Select>
+            </label>
+            <label>
+              <span className="text-sm font-semibold text-slate-300">计划日期</span>
+              <Input className="mt-2" type="date" value={form.plan_date} disabled={coreLocked} invalid={Boolean(errors.plan_date)} onChange={(event) => updateField('plan_date', event.target.value)} />
+              <FieldError value={errors.plan_date} />
+            </label>
+            <label>
+              <span className="text-sm font-semibold text-slate-300">有效期</span>
+              <Input className="mt-2" type="date" value={form.valid_until} disabled={coreLocked} onChange={(event) => updateField('valid_until', event.target.value)} />
+            </label>
+          </div>
+        </div>
+
+        <div className="border-t border-slate-800 pt-5">
+          <h3 className="mb-3 font-bold text-slate-100">价格与风险</h3>
+          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+            <label>
+              <span className="text-sm font-semibold text-slate-300">计划仓位（%）</span>
+              <Input className="mt-2" type="number" min="0" max="100" step="0.01" value={form.position_size} disabled={coreLocked} invalid={Boolean(errors.position_size)} onChange={(event) => updateField('position_size', event.target.value)} />
+              <FieldError value={errors.position_size} />
+            </label>
+            <label>
+              <span className="text-sm font-semibold text-slate-300">计划入场价</span>
+              <Input className="mt-2" type="number" min="0" step="0.0001" value={form.entry_price} disabled={coreLocked} invalid={Boolean(errors.entry_price)} onChange={(event) => updateField('entry_price', event.target.value)} />
+              <FieldError value={errors.entry_price} />
+            </label>
+            <label>
+              <span className="text-sm font-semibold text-slate-300">止损价</span>
+              <Input className="mt-2" type="number" min="0" step="0.0001" value={form.stop_loss} disabled={coreLocked} invalid={Boolean(errors.stop_loss)} onChange={(event) => updateField('stop_loss', event.target.value)} />
+              <FieldError value={errors.stop_loss} />
+            </label>
+            <label>
+              <span className="text-sm font-semibold text-slate-300">止盈价</span>
+              <Input className="mt-2" type="number" min="0" step="0.0001" value={form.take_profit} disabled={coreLocked} invalid={Boolean(errors.take_profit)} onChange={(event) => updateField('take_profit', event.target.value)} />
+              <FieldError value={errors.take_profit} />
+            </label>
+          </div>
+        </div>
+
+        <div className="grid gap-4 border-t border-slate-800 pt-5 lg:grid-cols-2">
+          <label>
+            <span className="text-sm font-semibold text-slate-300">入场触发</span>
+            <Textarea className="mt-2" value={form.entry_trigger} disabled={coreLocked} onChange={(event) => updateField('entry_trigger', event.target.value)} />
+          </label>
+          <label>
+            <span className="text-sm font-semibold text-slate-300">计划依据</span>
+            <Textarea className="mt-2" value={form.rationale} disabled={coreLocked} onChange={(event) => updateField('rationale', event.target.value)} />
+          </label>
+          <label>
+            <span className="text-sm font-semibold text-slate-300">AI 分析摘要</span>
+            <Textarea className="mt-2" value={form.ai_summary} disabled={coreLocked} onChange={(event) => updateField('ai_summary', event.target.value)} />
+          </label>
+          <label>
+            <span className="text-sm font-semibold text-slate-300">备注</span>
+            <Textarea className="mt-2" value={form.notes} onChange={(event) => updateField('notes', event.target.value)} />
+          </label>
+        </div>
+
+        {errors.submit ? <div className="rounded-2xl border border-red-800 bg-red-950/60 px-4 py-3 text-sm text-red-100">{errors.submit}</div> : null}
       </div>
 
-      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-        <label>
-          <span className="text-sm font-semibold text-slate-300">代码</span>
-          <Input className="mt-2" value={form.ticker} disabled={coreLocked} invalid={Boolean(errors.ticker)} onChange={(event) => updateField('ticker', event.target.value)} />
-          <FieldError value={errors.ticker} />
-        </label>
-
-        <label>
-          <span className="text-sm font-semibold text-slate-300">方向</span>
-          <Select className="mt-2" value={form.direction} disabled={coreLocked} onValueChange={(value) => updateField('direction', value)}>
-            {Object.entries(directionLabel).map(([value, label]) => (
-              <option key={value} value={value}>
-                {label}
-              </option>
-            ))}
-          </Select>
-          <FieldError value={errors.direction} />
-        </label>
-
-        <label>
-          <span className="text-sm font-semibold text-slate-300">状态</span>
-          <Select className="mt-2" value={form.status} disabled={coreLocked} onValueChange={(value) => updateField('status', value)}>
-            <option value="draft">草稿</option>
-            <option value="waiting">等待触发</option>
-          </Select>
-        </label>
-
-        <label>
-          <span className="text-sm font-semibold text-slate-300">计划日期</span>
-          <Input className="mt-2" type="date" value={form.plan_date} disabled={coreLocked} invalid={Boolean(errors.plan_date)} onChange={(event) => updateField('plan_date', event.target.value)} />
-          <FieldError value={errors.plan_date} />
-        </label>
-
-        <label>
-          <span className="text-sm font-semibold text-slate-300">有效期</span>
-          <Input className="mt-2" type="date" value={form.valid_until} disabled={coreLocked} onChange={(event) => updateField('valid_until', event.target.value)} />
-        </label>
-
-        <label>
-          <span className="text-sm font-semibold text-slate-300">计划仓位（%）</span>
-          <Input className="mt-2" type="number" min="0" max="100" step="0.01" value={form.position_size} disabled={coreLocked} invalid={Boolean(errors.position_size)} onChange={(event) => updateField('position_size', event.target.value)} />
-          <FieldError value={errors.position_size} />
-        </label>
-
-        <label>
-          <span className="text-sm font-semibold text-slate-300">计划入场价</span>
-          <Input className="mt-2" type="number" min="0" step="0.0001" value={form.entry_price} disabled={coreLocked} invalid={Boolean(errors.entry_price)} onChange={(event) => updateField('entry_price', event.target.value)} />
-          <FieldError value={errors.entry_price} />
-        </label>
-
-        <label>
-          <span className="text-sm font-semibold text-slate-300">止损价</span>
-          <Input className="mt-2" type="number" min="0" step="0.0001" value={form.stop_loss} disabled={coreLocked} invalid={Boolean(errors.stop_loss)} onChange={(event) => updateField('stop_loss', event.target.value)} />
-          <FieldError value={errors.stop_loss} />
-        </label>
-
-        <label>
-          <span className="text-sm font-semibold text-slate-300">止盈价</span>
-          <Input className="mt-2" type="number" min="0" step="0.0001" value={form.take_profit} disabled={coreLocked} invalid={Boolean(errors.take_profit)} onChange={(event) => updateField('take_profit', event.target.value)} />
-          <FieldError value={errors.take_profit} />
-        </label>
-      </div>
-
-      <label className="mt-4 block">
-        <span className="text-sm font-semibold text-slate-300">入场触发</span>
-        <Textarea className="mt-2" value={form.entry_trigger} disabled={coreLocked} onChange={(event) => updateField('entry_trigger', event.target.value)} />
-      </label>
-
-      <label className="mt-4 block">
-        <span className="text-sm font-semibold text-slate-300">计划依据</span>
-        <Textarea className="mt-2" value={form.rationale} disabled={coreLocked} onChange={(event) => updateField('rationale', event.target.value)} />
-      </label>
-
-      <label className="mt-4 block">
-        <span className="text-sm font-semibold text-slate-300">AI 分析摘要</span>
-        <Textarea className="mt-2" value={form.ai_summary} disabled={coreLocked} onChange={(event) => updateField('ai_summary', event.target.value)} />
-      </label>
-
-      <label className="mt-4 block">
-        <span className="text-sm font-semibold text-slate-300">备注</span>
-        <Textarea className="mt-2" value={form.notes} onChange={(event) => updateField('notes', event.target.value)} />
-      </label>
-
-      {errors.submit ? <div className="mt-5 rounded-2xl border border-red-800 bg-red-950/60 px-4 py-3 text-sm text-red-100">{errors.submit}</div> : null}
-
-      <div className="mt-6 flex justify-end">
-        <Button onClick={submit} disabled={!canSave || saveMutation.isPending}>
+      <div className="flex border-t border-slate-800 px-5 py-4 sm:justify-end sm:px-6">
+        <Button className="w-full sm:w-auto" onClick={submit} disabled={!canSave || saveMutation.isPending}>
           <Save className="h-4 w-4" />
           {saveMutation.isPending ? '保存中' : coreLocked ? '保存备注' : '保存计划'}
         </Button>
       </div>
-    </Card>
+      </Card>
+      <ConfirmDialog
+        open={pendingSaveInput !== null}
+        title="锁定交易计划"
+        description="保存为等待触发后，计划核心字段将无法修改。"
+        confirmText="保存并锁定"
+        confirmVariant="primary"
+        onConfirm={() => {
+          if (pendingSaveInput) saveMutation.mutate(pendingSaveInput);
+        }}
+        onOpenChange={(open) => {
+          if (!open) setPendingSaveInput(null);
+        }}
+      />
+    </>
   );
 }
 
 function StatusActions({ plan }: { plan: TradePlan }) {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
+  const [pendingStatus, setPendingStatus] = useState<Exclude<TradePlanStatus, 'executed'> | null>(null);
   const statusMutation = useMutation({
     mutationFn: (status: Exclude<TradePlanStatus, 'executed'>) => updateTradePlan(plan.id, { status }),
     onSuccess: async (saved) => {
@@ -413,6 +429,10 @@ function StatusActions({ plan }: { plan: TradePlan }) {
       await queryClient.invalidateQueries({ queryKey: ['trade-plans'] });
     }
   });
+
+  const updateStatus = (status: Exclude<TradePlanStatus, 'executed'>) => {
+    setPendingStatus(status);
+  };
 
   if (plan.status === 'executed') {
     return (
@@ -433,32 +453,48 @@ function StatusActions({ plan }: { plan: TradePlan }) {
 
   if (plan.status === 'cancelled' || plan.status === 'expired') return null;
 
+  const confirmTitle = pendingStatus === 'waiting' ? '锁定交易计划' : pendingStatus === 'expired' ? '标记计划过期' : '取消交易计划';
+  const confirmDescription = pendingStatus === 'waiting' ? '设为等待触发后，计划核心字段将无法修改。' : '此操作无法撤销。';
+  const confirmText = pendingStatus === 'waiting' ? '确认锁定' : pendingStatus === 'expired' ? '标记过期' : '取消计划';
+
   return (
-    <Card>
-      <div className="mb-5">
-        <p className="text-sm font-semibold text-cyan-300/80">Status</p>
-        <h2 className="mt-1 text-xl font-bold text-white">状态操作</h2>
-      </div>
-      <div className="flex flex-wrap gap-3">
-        {plan.status === 'draft' ? (
-          <Button variant="secondary" onClick={() => statusMutation.mutate('waiting')} disabled={statusMutation.isPending}>
-            <Clock3 className="h-4 w-4" />
-            设为等待触发
+    <>
+      <Card className="p-5 sm:p-6">
+        <h2 className="text-lg font-bold text-white">计划状态</h2>
+        <div className="mt-4 flex flex-col gap-2 sm:flex-row sm:flex-wrap">
+          {plan.status === 'draft' ? (
+            <Button onClick={() => updateStatus('waiting')} disabled={statusMutation.isPending}>
+              <Clock3 className="h-4 w-4" />
+              设为等待触发
+            </Button>
+          ) : null}
+          <Button variant="outline" onClick={() => updateStatus('expired')} disabled={statusMutation.isPending}>
+            <FilePenLine className="h-4 w-4" />
+            标记过期
           </Button>
+          <Button variant="danger" onClick={() => updateStatus('cancelled')} disabled={statusMutation.isPending}>
+            <XCircle className="h-4 w-4" />
+            取消计划
+          </Button>
+        </div>
+        {statusMutation.isError ? (
+          <div className="mt-5 rounded-2xl border border-red-800 bg-red-950/60 px-4 py-3 text-sm text-red-100">{statusMutation.error instanceof Error ? statusMutation.error.message : '状态更新失败'}</div>
         ) : null}
-        <Button variant="outline" onClick={() => statusMutation.mutate('expired')} disabled={statusMutation.isPending}>
-          <FilePenLine className="h-4 w-4" />
-          标记过期
-        </Button>
-        <Button variant="danger" onClick={() => statusMutation.mutate('cancelled')} disabled={statusMutation.isPending}>
-          <XCircle className="h-4 w-4" />
-          取消计划
-        </Button>
-      </div>
-      {statusMutation.isError ? (
-        <div className="mt-5 rounded-2xl border border-red-800 bg-red-950/60 px-4 py-3 text-sm text-red-100">{statusMutation.error instanceof Error ? statusMutation.error.message : '状态更新失败'}</div>
-      ) : null}
-    </Card>
+      </Card>
+      <ConfirmDialog
+        open={pendingStatus !== null}
+        title={confirmTitle}
+        description={confirmDescription}
+        confirmText={confirmText}
+        confirmVariant={pendingStatus === 'waiting' ? 'primary' : 'danger'}
+        onConfirm={() => {
+          if (pendingStatus) statusMutation.mutate(pendingStatus);
+        }}
+        onOpenChange={(open) => {
+          if (!open) setPendingStatus(null);
+        }}
+      />
+    </>
   );
 }
 
@@ -467,6 +503,7 @@ function ExecutionCard({ plan }: { plan: TradePlan }) {
   const queryClient = useQueryClient();
   const [form, setForm] = useState<ExecuteForm>(() => initialExecuteForm(plan));
   const [errors, setErrors] = useState<ExecuteFormErrors>({});
+  const [pendingExecution, setPendingExecution] = useState<ExecuteTradePlanInput | null>(null);
 
   useEffect(() => {
     setForm(initialExecuteForm(plan));
@@ -499,16 +536,16 @@ function ExecutionCard({ plan }: { plan: TradePlan }) {
     const result = buildExecuteInput(form);
     setErrors(result.errors);
     if (!result.input) return;
-    executeMutation.mutate(result.input);
+    setPendingExecution(result.input);
   };
 
   return (
-    <Card>
-      <div className="mb-5">
-        <p className="text-sm font-semibold text-cyan-300/80">Execution</p>
-        <h2 className="mt-1 text-xl font-bold text-white">转为交易日志</h2>
-      </div>
-      <div className="grid gap-4 md:grid-cols-2">
+    <>
+      <Card className="overflow-hidden p-0">
+        <div className="border-b border-slate-800 px-5 py-4 sm:px-6">
+          <h2 className="text-lg font-bold text-white">记录成交</h2>
+        </div>
+        <div className="grid gap-4 p-5 sm:grid-cols-2 sm:p-6 lg:grid-cols-3">
         <label>
           <span className="text-sm font-semibold text-slate-300">成交时间</span>
           <Input className="mt-2" type="datetime-local" value={form.datetime} invalid={Boolean(errors.datetime)} onChange={(event) => updateField('datetime', event.target.value)} />
@@ -531,9 +568,9 @@ function ExecutionCard({ plan }: { plan: TradePlan }) {
         </label>
         <label>
           <span className="text-sm font-semibold text-slate-300">市场</span>
-          <select className="mt-2 h-11 w-full rounded-2xl border border-slate-700 bg-slate-950/60 px-3 text-sm text-slate-100" value={form.market} onChange={(event) => updateField('market', event.target.value)}>
+          <Select className="mt-2" value={form.market} onValueChange={(value) => updateField('market', value)}>
             <option value="us">美股</option><option value="hk">港股</option><option value="china_a">A 股</option><option value="crypto">加密资产</option><option value="other">其他</option>
-          </select>
+          </Select>
         </label>
         <label>
           <span className="text-sm font-semibold text-slate-300">币种</span>
@@ -543,19 +580,33 @@ function ExecutionCard({ plan }: { plan: TradePlan }) {
           <span className="text-sm font-semibold text-slate-300">订单号</span>
           <Input className="mt-2" value={form.order_id} onChange={(event) => updateField('order_id', event.target.value)} />
         </label>
-      </div>
-      <label className="mt-4 block">
-        <span className="text-sm font-semibold text-slate-300">执行备注</span>
-        <Textarea className="mt-2" value={form.notes} onChange={(event) => updateField('notes', event.target.value)} />
-      </label>
-      {errors.submit ? <div className="mt-5 rounded-2xl border border-red-800 bg-red-950/60 px-4 py-3 text-sm text-red-100">{errors.submit}</div> : null}
-      <div className="mt-6 flex justify-end">
-        <Button onClick={submit} disabled={executeMutation.isPending}>
-          <PlayCircle className="h-4 w-4" />
-          {executeMutation.isPending ? '执行中' : '转为交易日志'}
-        </Button>
-      </div>
-    </Card>
+        <label className="sm:col-span-2 lg:col-span-3">
+          <span className="text-sm font-semibold text-slate-300">执行备注</span>
+          <Textarea className="mt-2" value={form.notes} onChange={(event) => updateField('notes', event.target.value)} />
+        </label>
+        {errors.submit ? <div className="rounded-2xl border border-red-800 bg-red-950/60 px-4 py-3 text-sm text-red-100 sm:col-span-2 lg:col-span-3">{errors.submit}</div> : null}
+        </div>
+        <div className="flex border-t border-slate-800 px-5 py-4 sm:justify-end sm:px-6">
+          <Button className="w-full sm:w-auto" onClick={submit} disabled={executeMutation.isPending}>
+            <PlayCircle className="h-4 w-4" />
+            {executeMutation.isPending ? '提交中' : '确认成交'}
+          </Button>
+        </div>
+      </Card>
+      <ConfirmDialog
+        open={pendingExecution !== null}
+        title="确认成交"
+        description={`${plan.ticker} 将标记为已执行，并创建交易日志。`}
+        confirmText="确认成交"
+        confirmVariant="primary"
+        onConfirm={() => {
+          if (pendingExecution) executeMutation.mutate(pendingExecution);
+        }}
+        onOpenChange={(open) => {
+          if (!open) setPendingExecution(null);
+        }}
+      />
+    </>
   );
 }
 
@@ -583,7 +634,7 @@ function DetailView({ id }: { id: string }) {
     const message = planQuery.error instanceof Error ? planQuery.error.message : '交易计划读取失败';
     return (
       <Card className="flex min-h-[320px] flex-col items-center justify-center gap-4 text-center">
-        <p className="text-lg font-semibold text-red-100">{message.includes('not found') ? 'Trade plan not found' : '交易计划读取失败'}</p>
+        <p className="text-lg font-semibold text-red-100">{message.includes('not found') ? '交易计划不存在' : '交易计划读取失败'}</p>
         <p className="text-sm text-slate-500">{message}</p>
         <Button variant="outline" onClick={() => navigate('/trade-plans')}>
           <ArrowLeft className="h-4 w-4" />
@@ -594,10 +645,10 @@ function DetailView({ id }: { id: string }) {
   }
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-5">
       <PlanFormCard plan={planQuery.data} />
-      <StatusActions plan={planQuery.data} />
       <ExecutionCard plan={planQuery.data} />
+      <StatusActions plan={planQuery.data} />
     </div>
   );
 }
@@ -608,14 +659,10 @@ export default function TradePlanEntry() {
   const isNew = !id;
 
   return (
-    <section className="mx-auto flex w-full max-w-[980px] flex-col gap-6 px-4 py-6 lg:px-8">
-      <header className="flex flex-col gap-4 rounded-[1.25rem] border border-slate-800/90 bg-slate-900/70 p-5 shadow-2xl shadow-slate-950/25 backdrop-blur md:flex-row md:items-center md:justify-between">
-        <div>
-          <p className="text-sm font-semibold text-cyan-300/80">AlphaLens · Trade Plans</p>
-          <h1 className="mt-2 text-3xl font-black tracking-tight text-white">{isNew ? '新建交易计划' : '交易计划'}</h1>
-          {!isNew && id ? <p className="mt-2 text-sm text-slate-500">计划 ID · {id}</p> : null}
-        </div>
-        <Button variant="outline" onClick={() => navigate('/trade-plans')}>
+    <section className="mx-auto flex w-full max-w-[1040px] flex-col gap-5 px-4 py-5 sm:px-6 lg:px-8 lg:py-7">
+      <header className="flex flex-col gap-4 border-b border-slate-800/90 pb-4 sm:flex-row sm:items-center sm:justify-between">
+        <h1 className="text-2xl font-black tracking-tight text-white sm:text-3xl">{isNew ? '新建交易计划' : '交易计划'}</h1>
+        <Button className="w-full sm:w-auto" variant="outline" onClick={() => navigate('/trade-plans')}>
           <ArrowLeft className="h-4 w-4" />
           返回列表
         </Button>

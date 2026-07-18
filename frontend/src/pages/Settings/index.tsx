@@ -1,13 +1,13 @@
-import { KeyRound, Loader2, RefreshCw, Save, Settings, SlidersHorizontal, Trash2 } from 'lucide-react';
+import { KeyRound, Loader2, RefreshCw, Save, SlidersHorizontal, Trash2 } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 import { Button } from '../../components/ui/button';
 import { Card } from '../../components/ui/card';
 import { Checkbox } from '../../components/ui/checkbox';
+import { ConfirmDialog } from '../../components/ui/confirm-dialog';
 import { Input } from '../../components/ui/input';
 import { Label } from '../../components/ui/label';
 import { Select } from '../../components/ui/select';
 import {
-  API_BASE_URL,
   deleteLLMCredential,
   discoverAIModels,
   fetchAIAnalysisConfig,
@@ -32,7 +32,6 @@ export default function SettingsPage() {
   const [loadError, setLoadError] = useState<string | null>(null);
   const [configReady, setConfigReady] = useState(false);
   const [discoveredModels, setDiscoveredModels] = useState<string[]>([]);
-  const [modelSource, setModelSource] = useState('');
   const [modelError, setModelError] = useState<string | null>(null);
   const [modelLoading, setModelLoading] = useState(false);
   const [modelRefreshVersion, setModelRefreshVersion] = useState(0);
@@ -41,6 +40,7 @@ export default function SettingsPage() {
   const [credentialLoading, setCredentialLoading] = useState(false);
   const [credentialSaving, setCredentialSaving] = useState(false);
   const [credentialError, setCredentialError] = useState<string | null>(null);
+  const [deleteKeyConfirmOpen, setDeleteKeyConfirmOpen] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -110,9 +110,8 @@ export default function SettingsPage() {
     const backendURL = config.backend_url.trim();
     if (customProvider && !backendURL) {
       setDiscoveredModels([]);
-      setModelSource('');
       setModelLoading(false);
-      setModelError('填写自定义 API 地址后会自动获取模型列表');
+      setModelError(null);
       return;
     }
 
@@ -127,7 +126,6 @@ export default function SettingsPage() {
         .then((result) => {
           if (cancelled) return;
           setDiscoveredModels(result.models);
-          setModelSource(result.source);
           setConfig((current) => ({
             ...current,
             deep_think_llm: result.models.includes(current.deep_think_llm)
@@ -141,7 +139,6 @@ export default function SettingsPage() {
         .catch((error) => {
           if (cancelled) return;
           setDiscoveredModels([]);
-          setModelSource('');
           setModelError(error instanceof Error ? error.message : '获取模型列表失败');
         })
         .finally(() => {
@@ -165,14 +162,12 @@ export default function SettingsPage() {
       backend_url: nextProvider.default_backend_url ?? ''
     }));
     setDiscoveredModels([]);
-    setModelSource('');
     setModelError(null);
   };
 
   const updateBackendURL = (value: string) => {
     setConfig((current) => ({ ...current, backend_url: value }));
     setDiscoveredModels([]);
-    setModelSource('');
     setModelError(null);
   };
 
@@ -218,40 +213,25 @@ export default function SettingsPage() {
   };
 
   return (
-    <section className="mx-auto w-full max-w-[1180px] px-4 py-6 sm:px-6 lg:px-8">
-      <header className="rounded-lg border border-slate-800/90 bg-slate-900/70 p-5 shadow-2xl shadow-slate-950/25 backdrop-blur">
-        <p className="text-sm font-semibold text-cyan-300/80">AlphaLens</p>
-        <h1 className="mt-2 text-3xl font-black tracking-tight text-white">设置</h1>
+    <section className="mx-auto w-full max-w-[1040px] px-4 py-5 sm:px-6 lg:px-8 lg:py-7">
+      <header className="border-b border-slate-800/90 pb-4">
+        <h1 className="text-2xl font-black tracking-tight text-white sm:text-3xl">设置</h1>
       </header>
 
-      <Card className="mt-6 rounded-lg">
-        <div className="flex items-start gap-3">
-          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-slate-950/70 text-cyan-300">
-            <Settings className="h-5 w-5" />
+      <Card className="mt-5 overflow-hidden p-0">
+        <div className="flex items-center gap-3 border-b border-slate-800 px-5 py-4 sm:px-6">
+          <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-cyan-400/10 text-cyan-300">
+            <SlidersHorizontal className="h-5 w-5" />
           </div>
-          <div>
-            <h2 className="text-lg font-bold text-white">本地运行配置</h2>
-            <p className="mt-3 text-sm leading-6 text-slate-400">当前 API 地址：{API_BASE_URL}</p>
-          </div>
+          <h2 className="text-lg font-bold text-white">AI 分析</h2>
         </div>
-      </Card>
 
-      <Card className="mt-6 rounded-lg">
-        <div className="flex flex-col gap-5">
-          <div className="flex items-start gap-3">
-            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-slate-950/70 text-cyan-300">
-              <SlidersHorizontal className="h-5 w-5" />
-            </div>
-            <div>
-              <h2 className="text-lg font-bold text-white">AI 分析连接</h2>
-              <p className="mt-2 text-sm leading-6 text-slate-500">模型与网关选择会应用到个股 AI 分析；密钥可加密保存在后端，并仅在本次分析时转发给 sidecar。</p>
-              {loadError ? <p className="mt-2 text-sm text-amber-300">{loadError}</p> : null}
-            </div>
-          </div>
+        <div className="space-y-6 p-5 sm:p-6">
+          {loadError ? <p className="rounded-xl border border-amber-700/60 bg-amber-950/30 px-4 py-3 text-sm text-amber-200">{loadError}</p> : null}
 
-          <div className="grid gap-4 md:grid-cols-2">
+          <div className="grid gap-4 sm:grid-cols-2">
             <div className="space-y-2">
-              <Label htmlFor="settings-ai-provider">LLM 提供商</Label>
+              <Label htmlFor="settings-ai-provider">模型服务</Label>
               <Select id="settings-ai-provider" value={config.llm_provider} onValueChange={updateProvider}>
                 {options.providers.map((item) => (
                   <option key={item.id} value={item.id}>
@@ -261,150 +241,138 @@ export default function SettingsPage() {
               </Select>
             </div>
 
-            <div className="space-y-2">
-              <Label htmlFor="settings-ai-provider-key">{provider.name} API Key</Label>
-              <div className="relative">
+            {customProvider ? (
+              <div className="space-y-2">
+                <Label htmlFor="settings-ai-backend-url">自定义 API 地址</Label>
+                <Input
+                  id="settings-ai-backend-url"
+                  value={config.backend_url}
+                  placeholder="https://ai-gateway.vercel.sh/v1"
+                  onChange={(event) => updateBackendURL(event.target.value)}
+                />
+              </div>
+            ) : null}
+          </div>
+
+          <div className="rounded-2xl border border-slate-800 bg-slate-950/25 p-4">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+              <div className="flex min-w-0 items-center gap-3">
+                <h3 className="font-bold text-slate-100">API Key</h3>
+                <span className={credentialStatus?.configured ? 'rounded-full bg-emerald-400/10 px-2.5 py-1 text-xs font-semibold text-emerald-300' : 'rounded-full bg-slate-800 px-2.5 py-1 text-xs font-semibold text-slate-400'}>
+                  {credentialLoading
+                    ? '读取中'
+                    : credentialStatus?.configured
+                      ? '已加密保存在后端'
+                      : credentialStatus?.storage_ready === false
+                        ? '安全存储未配置'
+                        : '未配置'}
+                </span>
+              </div>
+              {credentialStatus?.configured ? (
+                <Button className="self-start px-3 py-2 sm:self-auto" type="button" variant="danger" disabled={credentialSaving} onClick={() => setDeleteKeyConfirmOpen(true)}>
+                  <Trash2 className="h-4 w-4" />
+                  删除 Key
+                </Button>
+              ) : null}
+            </div>
+            <Label className="sr-only" htmlFor="settings-ai-provider-key">{provider.name} API Key</Label>
+            <div className="mt-3 flex flex-col gap-2 sm:flex-row">
+              <div className="relative min-w-0 flex-1">
                 <Input
                   id="settings-ai-provider-key"
                   type="password"
                   autoComplete="new-password"
                   value={apiKey}
                   className="pl-10"
-                  placeholder={credentialStatus?.configured ? '已安全保存；输入新 Key 可覆盖' : '输入 API Key 后保存到后端'}
+                  placeholder={credentialStatus?.configured ? '输入新 Key 进行更新' : `输入 ${provider.name} API Key`}
                   onChange={(event) => setAPIKey(event.target.value)}
                 />
                 <KeyRound className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-500" />
               </div>
-              <div className="flex flex-wrap items-center gap-2">
-                <Button
-                  type="button"
-                  disabled={credentialSaving || credentialLoading || !apiKey.trim() || (customProvider && !credentialBackendURL)}
-                  onClick={() => void saveAPIKey()}
-                >
-                  {credentialSaving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
-                  {credentialStatus?.configured ? '更新 Key' : '保存 Key'}
-                </Button>
-                {credentialStatus?.configured ? (
-                  <Button type="button" variant="outline" disabled={credentialSaving} onClick={() => void deleteAPIKey()}>
-                    <Trash2 className="h-4 w-4" />
-                    删除 Key
-                  </Button>
-                ) : null}
-                <span className={credentialStatus?.configured ? 'text-xs text-emerald-300' : 'text-xs text-slate-500'}>
-                  {credentialLoading
-                    ? '正在读取状态...'
-                    : credentialStatus?.configured
-                      ? '已加密保存在后端'
-                      : credentialStatus?.storage_ready === false
-                        ? '后端安全存储尚未配置'
-                        : '尚未保存'}
-                </span>
+              <Button
+                className="shrink-0"
+                type="button"
+                disabled={credentialSaving || credentialLoading || credentialStatus?.storage_ready === false || !apiKey.trim() || (customProvider && !credentialBackendURL)}
+                onClick={() => void saveAPIKey()}
+              >
+                {credentialSaving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
+                {credentialStatus?.configured ? '更新 Key' : '保存 Key'}
+              </Button>
+            </div>
+            {credentialError ? <p className="mt-3 text-sm text-red-300">{credentialError}</p> : null}
+          </div>
+
+          <div>
+            <div className="mb-3 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+              <div className="flex items-center gap-3">
+                <h3 className="font-bold text-slate-100">模型</h3>
+                {modelLoading ? <span className="text-sm text-slate-400">获取中</span> : null}
+                {!modelLoading && discoveredModels.length > 0 ? <span className="text-sm text-slate-400">{discoveredModels.length} 个可用模型</span> : null}
               </div>
-              <p className="text-xs text-slate-500">保存后前端会立即清空输入框，后端不会回显原始 Key。</p>
-              {credentialError ? <p className="text-xs text-red-300">{credentialError}</p> : null}
+              <Button
+                className="self-start px-3 py-2 sm:self-auto"
+                type="button"
+                variant="outline"
+                disabled={modelLoading || (customProvider && !config.backend_url.trim())}
+                onClick={() => setModelRefreshVersion((current) => current + 1)}
+              >
+                {modelLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
+                刷新模型
+              </Button>
             </div>
+            <div className="grid gap-4 sm:grid-cols-2">
+              <div className="space-y-2">
+                <Label htmlFor="settings-ai-deep-model">深度思考模型</Label>
+                {customProvider && discoveredModels.length === 0 ? (
+                  <Input
+                    id="settings-ai-deep-model"
+                    value={config.deep_think_llm}
+                    placeholder="输入模型名称"
+                    onChange={(event) => setConfig((current) => ({ ...current, deep_think_llm: event.target.value }))}
+                  />
+                ) : (
+                  <Select id="settings-ai-deep-model" value={config.deep_think_llm} onValueChange={(value) => setConfig((current) => ({ ...current, deep_think_llm: value }))}>
+                    {availableDeepModels.map((model) => <option key={model} value={model}>{model}</option>)}
+                  </Select>
+                )}
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="settings-ai-quick-model">快速响应模型</Label>
+                {customProvider && discoveredModels.length === 0 ? (
+                  <Input
+                    id="settings-ai-quick-model"
+                    value={config.quick_think_llm}
+                    placeholder="输入模型名称"
+                    onChange={(event) => setConfig((current) => ({ ...current, quick_think_llm: event.target.value }))}
+                  />
+                ) : (
+                  <Select id="settings-ai-quick-model" value={config.quick_think_llm} onValueChange={(value) => setConfig((current) => ({ ...current, quick_think_llm: value }))}>
+                    {availableQuickModels.map((model) => <option key={model} value={model}>{model}</option>)}
+                  </Select>
+                )}
+              </div>
+            </div>
+            {modelError ? <p className="mt-3 text-sm text-amber-300">{modelError}</p> : null}
           </div>
 
-          <div className="grid gap-4 md:grid-cols-2">
-            <div className="space-y-2">
-              <Label htmlFor="settings-ai-deep-model">深度思考模型</Label>
-              {customProvider && discoveredModels.length === 0 ? (
-                <Input
-                  id="settings-ai-deep-model"
-                  value={config.deep_think_llm}
-                  placeholder="例如 anthropic/claude-haiku-4.5"
-                  onChange={(event) => setConfig((current) => ({ ...current, deep_think_llm: event.target.value }))}
-                />
-              ) : (
-                <Select
-                  id="settings-ai-deep-model"
-                  value={config.deep_think_llm}
-                  onValueChange={(value) => setConfig((current) => ({ ...current, deep_think_llm: value }))}
-                >
-                  {availableDeepModels.map((model) => (
-                    <option key={model} value={model}>
-                      {model}
-                    </option>
-                  ))}
-                </Select>
-              )}
-            </div>
-
-            <div className="space-y-2">
-              <Label htmlFor="settings-ai-quick-model">快速响应模型</Label>
-              {customProvider && discoveredModels.length === 0 ? (
-                <Input
-                  id="settings-ai-quick-model"
-                  value={config.quick_think_llm}
-                  placeholder="例如 google/gemini-3.1-flash-lite-preview"
-                  onChange={(event) => setConfig((current) => ({ ...current, quick_think_llm: event.target.value }))}
-                />
-              ) : (
-                <Select
-                  id="settings-ai-quick-model"
-                  value={config.quick_think_llm}
-                  onValueChange={(value) => setConfig((current) => ({ ...current, quick_think_llm: value }))}
-                >
-                  {availableQuickModels.map((model) => (
-                    <option key={model} value={model}>
-                      {model}
-                    </option>
-                  ))}
-                </Select>
-              )}
-            </div>
-          </div>
-
-          {customProvider ? (
-            <div className="space-y-2">
-              <Label htmlFor="settings-ai-backend-url">自定义 API 地址</Label>
-              <Input
-                id="settings-ai-backend-url"
-                value={config.backend_url}
-                placeholder="https://ai-gateway.vercel.sh/v1"
-                onChange={(event) => updateBackendURL(event.target.value)}
-              />
-              <p className="text-xs text-slate-500">支持 OpenAI Chat Completions 兼容的 /v1 网关</p>
-              <p className="text-xs text-amber-300">Vercel 免费层建议使用 anthropic/claude-haiku-4.5；Sonnet/Opus 常会返回 403</p>
-            </div>
-          ) : null}
-
-          <div className="flex flex-col gap-3 rounded-lg border border-slate-800 bg-slate-950/35 p-3 sm:flex-row sm:items-center sm:justify-between">
-            <div>
-              <p className="text-sm font-semibold text-slate-200">可用模型列表</p>
-              <p className="mt-1 text-xs text-slate-500">
-                {modelLoading
-                  ? '正在从模型服务自动获取...'
-                  : discoveredModels.length > 0
-                    ? `已从 ${modelSource} 获取 ${discoveredModels.length} 个可用模型`
-                    : '会使用已保存的 Key 或 sidecar 服务端密钥自动获取；失败时保留内置模型列表'}
-              </p>
-              {modelError ? <p className="mt-2 text-xs text-amber-300">{modelError}</p> : null}
-            </div>
-            <Button
-              type="button"
-              variant="outline"
-              disabled={modelLoading || (customProvider && !config.backend_url.trim())}
-              onClick={() => setModelRefreshVersion((current) => current + 1)}
-            >
-              {modelLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
-              {modelLoading ? '获取中' : '重新获取'}
-            </Button>
-          </div>
-
-          <label className="flex cursor-pointer items-start gap-3 rounded-lg border border-slate-800 bg-slate-950/35 p-3 transition hover:border-cyan-400/40">
+          <label className="flex cursor-pointer items-center gap-3 rounded-2xl border border-slate-800 bg-slate-950/25 px-4 py-3 transition hover:border-cyan-400/40">
             <Checkbox
               checked={config.online_tools}
               onCheckedChange={(checked) => setConfig((current) => ({ ...current, online_tools: checked }))}
             />
-            <span>
-              <span className="block text-sm font-bold text-slate-100">启用在线工具</span>
-              <span className="mt-1 block text-xs leading-5 text-slate-500">允许分析流程使用联网检索和外部数据工具</span>
-            </span>
+            <span className="text-sm font-bold text-slate-100">启用联网工具</span>
           </label>
         </div>
       </Card>
       <BrokerConnections />
+      <ConfirmDialog
+        open={deleteKeyConfirmOpen}
+        title="删除 API Key"
+        description={`删除 ${provider.name} API Key 后，AI 分析将无法使用该密钥。`}
+        confirmText="删除 Key"
+        onConfirm={() => void deleteAPIKey()}
+        onOpenChange={setDeleteKeyConfirmOpen}
+      />
     </section>
   );
 }

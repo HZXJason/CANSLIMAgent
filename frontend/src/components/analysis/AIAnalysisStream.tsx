@@ -140,14 +140,6 @@ function StatusIcon({ status }: { status?: AIProgressStatus }) {
   return <CircleDashed className="h-4 w-4" />;
 }
 
-function messageForStatus(progress: AIAgentProgress | undefined, isStreaming: boolean) {
-  if (progress?.message) return progress.message;
-  if (progress?.status === 'done') return '分析完成';
-  if (progress?.status === 'paused') return '已暂停';
-  if (isStreaming) return '等待执行';
-  return '尚未开始';
-}
-
 function resultSections(results: AIAnalysisStreamProps['results']): ReportSection[] {
   return results.map((result, index) => ({
     key: result.agent + '-' + result.timestamp + '-' + index,
@@ -231,6 +223,22 @@ function decisionClass(action: string) {
   return 'border-amber-300/40 bg-amber-300/10 text-amber-100';
 }
 
+function decisionLabel(action: string) {
+  const normalized = action.toUpperCase();
+  if (normalized === 'BUY') return '买入';
+  if (normalized === 'SELL') return '卖出';
+  if (normalized === 'HOLD') return '观望';
+  return action;
+}
+
+function confidenceLabel(confidence: string) {
+  const normalized = confidence.toUpperCase();
+  if (normalized === 'HIGH') return '高';
+  if (normalized === 'MEDIUM') return '中';
+  if (normalized === 'LOW') return '低';
+  return confidence;
+}
+
 export default function AIAnalysisStream({
   status,
   progress,
@@ -254,13 +262,17 @@ export default function AIAnalysisStream({
   const outputSections = roleOutputSections(reportSections, liveOutputByAgent);
   const showOutputSections = outputSections.length > 0;
   const showFallbackReport = !showOutputSections && !hasStructuredResults && fallbackReport;
+  const displayError = error || (status === 'error' ? '分析中断' : null);
   const completedProgress = progressItems.filter((item) => item.status === 'done').length;
+  const showProgress = isStreaming || status === 'paused' || (status === 'error' && progressItems.length > 0);
   const progressSummary =
     status === 'paused'
       ? '已暂停'
-      : progressItems.length > 0
-        ? completedProgress + '/' + progressItems.length + ' 已完成'
-        : '等待连接';
+      : status === 'error'
+        ? '已中断'
+        : progressItems.length > 0
+          ? completedProgress + '/' + progressItems.length + ' 已完成'
+          : '等待连接';
 
   if (status === 'idle' && !hasStructuredResults && !fallbackReport && !liveNarration && !decision) {
     return (
@@ -270,9 +282,40 @@ export default function AIAnalysisStream({
     );
   }
 
+  if (status === 'done' && !showOutputSections && !decision && !displayError) {
+    return (
+      <div className="flex items-center gap-2 rounded-xl border border-amber-700/60 bg-amber-950/30 px-4 py-3 text-sm text-amber-100">
+        <AlertCircle className="h-4 w-4 shrink-0" />
+        未收到分析结果
+      </div>
+    );
+  }
+
   return (
-    <div className="space-y-5">
-      {isStreaming || progress.length > 0 ? (
+    <div className="space-y-4">
+      {displayError ? (
+        <div className="flex items-center gap-2 rounded-xl border border-red-800 bg-red-950/60 px-4 py-3 text-sm text-red-100">
+          <AlertCircle className="h-4 w-4 shrink-0" />
+          {displayError}
+        </div>
+      ) : null}
+
+      {decision ? (
+        <section className={'rounded-xl border p-4 sm:p-5 ' + decisionClass(decision.action)}>
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div className="flex items-baseline gap-3">
+              <span className="text-sm font-bold opacity-80">操作建议</span>
+              <h3 className="text-3xl font-black">{decisionLabel(decision.action)}</h3>
+            </div>
+            <span className="inline-flex rounded-full border border-current/30 px-3 py-1 text-sm font-bold">
+              置信度 {confidenceLabel(decision.confidence)}
+            </span>
+          </div>
+          {decision.summary ? <p className="mt-3 text-sm leading-7 opacity-90">{decision.summary}</p> : null}
+        </section>
+      ) : null}
+
+      {showProgress ? (
         <section className="rounded-xl border border-slate-800 bg-slate-950/35">
           <div className="flex items-center justify-between gap-3 border-b border-slate-800 px-4 py-3">
             <span className="text-sm font-bold text-slate-100">分析进度</span>
@@ -280,20 +323,21 @@ export default function AIAnalysisStream({
               {progressSummary}
             </span>
           </div>
-          <div className="grid gap-2 p-3 sm:grid-cols-2 xl:grid-cols-3">
+          <div className="grid gap-2 p-3 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4">
             {progressItems.length > 0 ? (
               progressItems.map((item) => {
                 return (
                   <div
                     key={item.agent}
-                    className={'flex min-h-14 items-start gap-3 rounded-lg border px-3 py-2.5 text-sm transition ' + statusStyles(item.status)}
+                    className={'flex min-h-11 items-center gap-2.5 rounded-lg border px-3 py-2 text-sm transition ' + statusStyles(item.status)}
+                    title={item.message || undefined}
                   >
-                    <span className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-current/10" aria-hidden="true">
+                    <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-current/10" aria-hidden="true">
                       <StatusIcon status={item.status} />
                     </span>
                     <span className="min-w-0 flex-1">
-                      <span className="block break-words font-bold text-slate-100">{titleForAgent(item.agent)}</span>
-                      <span className="mt-1 block break-words text-xs leading-5 text-slate-400">{messageForStatus(item, isStreaming)}</span>
+                      <span className="block truncate font-bold text-slate-100">{titleForAgent(item.agent)}</span>
+                      {item.status === 'error' && item.message ? <span className="mt-0.5 block text-xs text-red-100">{item.message}</span> : null}
                     </span>
                   </div>
                 );
@@ -313,6 +357,7 @@ export default function AIAnalysisStream({
             const progressItem = section.agent ? progressByAgent.get(section.agent) : undefined;
             const isActiveSection = status === 'streaming' && section.source !== 'report' && progressItem?.status === 'running';
             const content = status === 'streaming' ? balanceStreamingMarkdown(section.content) : section.content;
+            const showSectionStatus = isActiveSection || (!content && progressItem?.status !== 'done');
             return (
               <Collapsible
                 key={section.key}
@@ -320,12 +365,14 @@ export default function AIAnalysisStream({
                 title={
                   <span className="flex items-center justify-between gap-3">
                     <span className="min-w-0 break-words">{section.title}</span>
-                    <span className="shrink-0 text-xs font-semibold text-cyan-300">
-                      {sectionStatusLabel(section, progressItem, status)}
-                    </span>
+                    {showSectionStatus ? (
+                      <span className="shrink-0 text-xs font-semibold text-cyan-300">
+                        {sectionStatusLabel(section, progressItem, status)}
+                      </span>
+                    ) : null}
                   </span>
                 }
-                defaultOpen={Boolean(section.content) || isActiveSection || index === outputSections.length - 1}
+                defaultOpen={isActiveSection || index === 0}
               >
                 {content ? (
                   <MarkdownContent content={content} className="leading-8" />
@@ -346,28 +393,6 @@ export default function AIAnalysisStream({
           <MarkdownContent content={fallbackReport} />
           {status === 'streaming' ? <span className="analysis-cursor ml-1 inline-block h-4 w-2 translate-y-0.5 bg-cyan-300" /> : null}
         </Collapsible>
-      ) : null}
-
-      {decision ? (
-        <section className={'rounded-xl border p-4 ' + decisionClass(decision.action)}>
-          <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-            <div>
-              <p className="text-xs font-bold uppercase opacity-80">最终操作建议</p>
-              <h3 className="mt-1 text-3xl font-black">{decision.action}</h3>
-            </div>
-            <span className="inline-flex w-fit rounded-full border border-current/30 px-3 py-1 text-xs font-bold">
-              置信度：{decision.confidence}
-            </span>
-          </div>
-          {decision.summary ? <p className="mt-4 text-sm leading-7 opacity-90">{decision.summary}</p> : null}
-        </section>
-      ) : null}
-
-      {error ? (
-        <div className="flex items-center gap-2 rounded-xl border border-red-800 bg-red-950/60 px-4 py-3 text-sm text-red-100">
-          <AlertCircle className="h-4 w-4" />
-          {error}
-        </div>
       ) : null}
     </div>
   );

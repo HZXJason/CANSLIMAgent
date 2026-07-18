@@ -184,20 +184,24 @@ export default function AnalysisPage({ symbol, tabName }: AnalysisPageProps) {
   }, [normalized, updateChartStatus, updateState]);
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-4">
       <StockHeader symbol={normalized} tabName={tabName} summary={state.stockSummary} />
-      <section className="space-y-6">
-        <CompanyProfileCard data={state.companyProfile} status={state.chartStatus.profile} />
+      <section className="grid items-start gap-4 xl:grid-cols-[minmax(0,1.8fr)_minmax(340px,0.9fr)]">
         <KLineChart data={state.klineData} status={state.chartStatus.kline} period={state.klinePeriod} onPeriodChange={(period) => setKLinePeriod(normalized, period)} />
-        <RSChart data={state.rsData} status={state.chartStatus.rs} period={state.klinePeriod} />
-        <div className="grid gap-6 xl:grid-cols-3">
-          <EPSChart data={state.epsData} status={state.chartStatus.eps} />
-          <RevenueChart data={state.revenueData} status={state.chartStatus.revenue} />
+        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-1">
+          <CompanyProfileCard data={state.companyProfile} status={state.chartStatus.profile} />
+          <RSChart data={state.rsData} status={state.chartStatus.rs} period={state.klinePeriod} />
+        </div>
+      </section>
+      <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+        <EPSChart data={state.epsData} status={state.chartStatus.eps} />
+        <RevenueChart data={state.revenueData} status={state.chartStatus.revenue} />
+        <div className="md:col-span-2 xl:col-span-1">
           <GrossMarginChart data={state.grossMarginData} status={state.chartStatus.grossMargin} />
         </div>
       </section>
-      <TradePlanPanel symbol={normalized} aiSummary={state.aiDecision?.summary ?? undefined} />
       <AISection symbol={normalized} state={state} />
+      <TradePlanPanel symbol={normalized} aiSummary={state.aiDecision?.summary ?? undefined} />
     </div>
   );
 }

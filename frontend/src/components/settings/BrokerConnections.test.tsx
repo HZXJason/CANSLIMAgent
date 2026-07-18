@@ -177,6 +177,7 @@ describe('BrokerConnections', () => {
     expect(screen.queryByRole('button', { name: '同步预览' })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: '确认导入成交' })).not.toBeInTheDocument();
     fireEvent.click(screen.getAllByRole('button', { name: '断开' })[0]);
+    fireEvent.click(screen.getByRole('button', { name: '确认断开' }));
     await waitFor(() => expect(mockDeleteBrokerConnection).toHaveBeenCalledWith('longport-1'));
   });
 });

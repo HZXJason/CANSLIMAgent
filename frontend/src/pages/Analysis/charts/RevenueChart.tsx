@@ -25,7 +25,7 @@ export default function RevenueChart({ data, status }: RevenueChartProps) {
   const finalStatus = statusFromLength(status, items.length);
 
   return (
-    <ChartFrame title="年度营收趋势" subtitle="柱形显示营收规模，折线显示同比增长" status={finalStatus} height={250} source={data?.source} dataAsOf={data?.data_as_of}>
+    <ChartFrame title="年度营收" status={finalStatus} height={240} source={data?.source} dataAsOf={data?.data_as_of}>
       <ResponsiveContainer width="100%" height="100%">
         <ComposedChart data={items} margin={{ top: 8, right: 12, bottom: 0, left: 0 }}>
           <CartesianGrid stroke={chartGridColor} vertical={false} />

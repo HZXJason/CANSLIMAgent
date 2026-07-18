@@ -15,13 +15,12 @@ import {
 import type { AIAnalysisConfigResponse, AnalysisConfig } from '../../types/analysis';
 
 interface AIAnalysisConfigProps {
-  symbol: string;
   onStartAnalysis: (config: AnalysisConfig) => void;
   isAnalyzing: boolean;
 }
 
-export default function AIAnalysisConfig({ symbol, onStartAnalysis, isAnalyzing }: AIAnalysisConfigProps) {
-  const [expanded, setExpanded] = useState(true);
+export default function AIAnalysisConfig({ onStartAnalysis, isAnalyzing }: AIAnalysisConfigProps) {
+  const [expanded, setExpanded] = useState(false);
   const [options, setOptions] = useState<AIAnalysisConfigResponse>(FALLBACK_AI_ANALYSIS_OPTIONS);
   const [config, setConfig] = useState<AnalysisConfig>(() =>
     normalizeAIAnalysisConfig(readStoredAIAnalysisConfig(), FALLBACK_AI_ANALYSIS_OPTIONS)
@@ -73,51 +72,49 @@ export default function AIAnalysisConfig({ symbol, onStartAnalysis, isAnalyzing 
   const hasAnalyst = config.analysts.length > 0;
 
   return (
-    <Card className="space-y-5 border-cyan-400/20 bg-slate-950/70">
+    <Card className="space-y-4 border-cyan-400/20 bg-slate-950/70 p-4 sm:p-5">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div className="flex items-center gap-3">
-          <span className="flex h-10 w-10 items-center justify-center rounded-xl border border-cyan-400/25 bg-cyan-400/10 text-cyan-200">
-            <Settings2 className="h-5 w-5" />
+          <span className="flex h-9 w-9 items-center justify-center rounded-xl border border-cyan-400/25 bg-cyan-400/10 text-cyan-200">
+            <Sparkles className="h-4 w-4" />
           </span>
-          <div>
-            <h2 className="text-lg font-black text-white">AI 多智能体分析</h2>
-            <p className="mt-1 text-sm text-slate-500">{symbol} · 分析师与深度</p>
-          </div>
+          <h2 className="text-lg font-black text-white">AI 分析</h2>
         </div>
-        <Button
-          variant="outline"
-          className="h-10 w-10 rounded-xl px-0"
-          disabled={disabled}
-          onClick={() => setExpanded((value) => !value)}
-          aria-label={expanded ? '折叠配置' : '展开配置'}
-        >
-          {expanded ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
-        </Button>
+        <div className="flex items-center gap-2">
+          <Button
+            variant="outline"
+            className="h-10 rounded-xl px-3"
+            onClick={() => setExpanded((value) => !value)}
+            aria-expanded={expanded}
+          >
+            <Settings2 className="h-4 w-4" />
+            参数
+            {expanded ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
+          </Button>
+          <Button className="h-10 min-w-32 rounded-xl" disabled={disabled || !hasAnalyst} onClick={() => onStartAnalysis(config)}>
+            {isAnalyzing ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
+            {isAnalyzing ? '分析中' : '开始分析'}
+          </Button>
+        </div>
       </div>
 
       {expanded ? (
         <>
-          <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_220px]">
+          <div className="grid gap-4 border-t border-slate-800 pt-4 lg:grid-cols-[minmax(0,1fr)_200px]">
             <div className="space-y-3">
-              <div>
-                <h3 className="text-sm font-bold text-slate-100">启用的分析师角色</h3>
-                <p className="mt-1 text-xs text-slate-500">至少选择一名分析师</p>
-              </div>
+              <h3 className="text-sm font-bold text-slate-100">分析角色</h3>
               <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
                 {options.analysts.map((analyst) => (
                   <label
                     key={analyst.id}
-                    className="flex min-h-16 cursor-pointer items-start gap-3 rounded-xl border border-slate-800 bg-slate-900/45 px-3 py-3 transition hover:border-cyan-400/40"
+                    className="flex min-h-11 cursor-pointer items-center gap-3 rounded-xl border border-slate-800 bg-slate-900/45 px-3 py-2.5 transition hover:border-cyan-400/40"
                   >
                     <Checkbox
                       checked={config.analysts.includes(analyst.id)}
                       disabled={disabled}
                       onCheckedChange={(checked) => toggleAnalyst(analyst.id, checked)}
                     />
-                    <span>
-                      <span className="block text-sm font-bold text-slate-100">{analyst.name}</span>
-                      <span className="mt-1 block text-xs leading-5 text-slate-500">{analyst.description}</span>
-                    </span>
+                    <span className="text-sm font-bold text-slate-100">{analyst.name}</span>
                   </label>
                 ))}
               </div>
@@ -132,18 +129,10 @@ export default function AIAnalysisConfig({ symbol, onStartAnalysis, isAnalyzing 
             </div>
           </div>
 
-          <div className="flex flex-col gap-3 border-t border-slate-800 pt-4 sm:flex-row sm:items-center sm:justify-between">
-            <div className="text-sm text-slate-500">
-              {depthValue === 'deep' ? '深度模式约需 5-15 分钟' : '标准模式约需 3-8 分钟'}
-              {loadError ? <span className="ml-2 text-amber-300">{loadError}</span> : null}
-            </div>
-            <Button className="w-full sm:w-40" disabled={disabled || !hasAnalyst} onClick={() => onStartAnalysis(config)}>
-              {isAnalyzing ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
-              {isAnalyzing ? '分析中' : '开始 AI 分析'}
-            </Button>
-          </div>
+          {!hasAnalyst ? <p className="text-sm font-medium text-amber-300">请至少选择一个分析角色</p> : null}
         </>
       ) : null}
+      {loadError ? <p className="text-sm font-medium text-amber-300">{loadError}</p> : null}
     </Card>
   );
 }

@@ -8,7 +8,7 @@ interface MarkdownContentProps {
 }
 
 export default function MarkdownContent({ content, className = '' }: MarkdownContentProps) {
-  const wrapperClassName = ['text-sm leading-7 text-slate-300', className].filter(Boolean).join(' ');
+  const wrapperClassName = ['text-[15px] leading-7 text-slate-300', className].filter(Boolean).join(' ');
 
   return (
     <div className={wrapperClassName}>

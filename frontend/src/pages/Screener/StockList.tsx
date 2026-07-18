@@ -85,12 +85,9 @@ function AIAnalysisBadge() {
 
 function EmptyState({ filtered }: { filtered: boolean }) {
   return (
-    <Card className="flex flex-col items-center justify-center gap-3 py-16 text-center">
-      <SearchX className="h-12 w-12 text-slate-600" />
-      <p className="text-lg font-medium text-slate-200">
-        {filtered ? '没有同时满足所选条件的股票，可尝试减少选中标签' : '当前市场暂无符合条件的股票'}
-      </p>
-      <p className="max-w-lg text-sm text-slate-500">请尝试刷新数据、切换市场，或调整 CANSLIM 阈值方案。</p>
+    <Card className="flex flex-col items-center justify-center gap-3 py-14 text-center">
+      <SearchX className="h-10 w-10 text-slate-600" />
+      <p className="text-base font-medium text-slate-300">{filtered ? '没有符合当前标签的股票' : '当前市场暂无数据'}</p>
     </Card>
   );
 }
@@ -120,26 +117,31 @@ const StockRow = memo(function StockRow({ stock, index, hasAIAnalysis, onOpen }:
 
   return (
     <button
+      type="button"
       className={cn(
-        'grid w-full grid-cols-[1fr_1.5fr_2fr_1fr_0.8fr] items-center gap-4 px-5 py-4 text-left transition hover:bg-slate-800/70',
+        'grid w-full grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 gap-y-2.5 px-4 py-3.5 text-left transition hover:bg-slate-800/70 sm:px-5 md:grid-cols-[0.9fr_1.4fr_2fr_0.9fr_0.7fr] md:gap-4',
         animated ? 'animate-fade-in opacity-0' : 'opacity-100'
       )}
       style={animated ? { animationDelay: index * 16 + 'ms' } : undefined}
       onClick={() => onOpen(stock)}
+      aria-label={`打开 ${stock.symbol} ${stock.name}`}
     >
       <span className="flex min-w-0 items-center gap-2 font-semibold text-white">
         <BarChart3 className="h-4 w-4 text-finance-blue" />
         <span className="truncate">{stock.symbol}</span>
         {hasAIAnalysis ? <AIAnalysisBadge /> : null}
       </span>
-      <span className="truncate text-slate-300">{stock.name}</span>
-      <span className="flex flex-wrap gap-2">
+      <span className="col-span-2 row-start-2 flex min-w-0 items-center gap-2 truncate text-sm text-slate-400 md:col-span-1 md:row-auto md:block md:text-base md:text-slate-300">
+        <span className="truncate">{stock.name}</span>
+        <span className="shrink-0 text-slate-600 md:hidden">· {marketLabel[stock.market]}</span>
+      </span>
+      <span className="col-span-2 row-start-3 flex flex-wrap gap-1.5 md:col-span-1 md:row-auto md:gap-2">
         {tagOrder.map((tag) => (
           <FilterBadge key={tag} stock={stock} tag={tag} />
         ))}
       </span>
-      <span className="text-sm text-slate-400">{marketLabel[stock.market]}</span>
-      <span className="text-right text-sm text-slate-300">
+      <span className="hidden text-sm text-slate-400 md:block">{marketLabel[stock.market]}</span>
+      <span className="col-start-2 row-start-1 text-right text-sm tabular-nums text-slate-300 md:col-auto md:row-auto">
         {stock.passCount}/{scoreDenominator} · {stock.weightSum}
       </span>
     </button>
@@ -182,15 +184,10 @@ export default function StockList({ stocks, hasRawData, filtered }: StockListPro
   return (
     <Card className="overflow-hidden p-0">
       <div className="flex items-center justify-between border-b border-slate-800 px-5 py-4">
-        <div>
-          <p className="text-xs font-semibold uppercase tracking-[0.22em] text-cyan-300/70">Results</p>
-          <h2 className="mt-1 text-lg font-bold text-white">候选股票结果</h2>
-        </div>
-        <span className="rounded-full border border-slate-700 bg-slate-950/50 px-3 py-1 text-xs text-slate-400">
-          已显示 {visibleStocks.length}/{stocks.length} 支
-        </span>
+        <h2 className="text-base font-semibold text-white">候选股票</h2>
+        <span className="text-sm tabular-nums text-slate-400">{visibleStocks.length} / {stocks.length}</span>
       </div>
-      <div className="hidden grid-cols-[1fr_1.4fr_2fr_1fr_0.8fr] gap-4 border-b border-slate-800 px-5 py-3 text-xs font-semibold uppercase tracking-wide text-slate-500 md:grid">
+      <div className="hidden grid-cols-[0.9fr_1.4fr_2fr_0.9fr_0.7fr] gap-4 border-b border-slate-800 px-5 py-2.5 text-xs font-semibold text-slate-500 md:grid">
         <span>代码</span>
         <span>名称</span>
         <span>标签</span>

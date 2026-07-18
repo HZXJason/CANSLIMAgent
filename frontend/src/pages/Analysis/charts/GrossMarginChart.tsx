@@ -24,7 +24,7 @@ export default function GrossMarginChart({ data, status }: GrossMarginChartProps
   const finalStatus = statusFromLength(status, items.length);
 
   return (
-    <ChartFrame title="季度毛利率走势" subtitle="观察盈利质量与产品结构变化" status={finalStatus} height={250} source={data?.source} dataAsOf={data?.data_as_of}>
+    <ChartFrame title="季度毛利率" status={finalStatus} height={240} source={data?.source} dataAsOf={data?.data_as_of}>
       <ResponsiveContainer width="100%" height="100%">
         <LineChart data={items} margin={{ top: 8, right: 12, bottom: 0, left: 0 }}>
           <CartesianGrid stroke={chartGridColor} vertical={false} />

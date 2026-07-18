@@ -25,7 +25,7 @@ export default function RSChart({ data, status, period }: RSChartProps) {
   const finalStatus = statusFromLength(status, items.length);
 
   return (
-    <ChartFrame title="RS 相对强度线" subtitle="相对标普 500 的 12 个月动量评分" status={finalStatus} height={120} source={data?.source} dataAsOf={data?.data_as_of}>
+    <ChartFrame title="RS 相对强度" status={finalStatus} height={180} source={data?.source} dataAsOf={data?.data_as_of}>
       <ResponsiveContainer width="100%" height="100%">
         <LineChart data={items} margin={{ top: 8, right: 12, bottom: 0, left: 0 }}>
           <CartesianGrid stroke={chartGridColor} vertical={false} />

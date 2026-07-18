@@ -53,16 +53,15 @@ export default function TradePlanPanel({ symbol, aiSummary }: { symbol: string; 
   };
 
   return (
-    <Card>
-      <div className="mb-5 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-        <div>
-          <p className="text-sm font-semibold text-cyan-300/80">Trade Plan</p>
-          <h2 className="mt-1 text-xl font-bold text-white">交易计划</h2>
-        </div>
-        <Button onClick={createPlan}>
-          <Plus className="h-4 w-4" />
-          新建计划
-        </Button>
+    <Card className="p-4 sm:p-5">
+      <div className="mb-4 flex items-center justify-between gap-3">
+        <h2 className="text-lg font-black text-white">交易计划</h2>
+        {activePlans.length > 0 ? (
+          <Button className="h-10 rounded-xl" onClick={createPlan}>
+            <Plus className="h-4 w-4" />
+            新建计划
+          </Button>
+        ) : null}
       </div>
 
       {plansQuery.isLoading ? (
@@ -76,9 +75,9 @@ export default function TradePlanPanel({ symbol, aiSummary }: { symbol: string; 
       {plansQuery.isError ? <div className="rounded-2xl border border-red-800 bg-red-950/60 px-4 py-3 text-sm text-red-100">交易计划读取失败</div> : null}
 
       {!plansQuery.isLoading && !plansQuery.isError && activePlans.length === 0 ? (
-        <button className="flex min-h-28 w-full items-center justify-center gap-3 rounded-2xl border border-dashed border-slate-700 bg-slate-950/25 text-sm font-semibold text-slate-500 transition hover:border-cyan-400/50 hover:text-cyan-200" onClick={createPlan}>
+        <button className="flex min-h-24 w-full items-center justify-center gap-3 rounded-xl border border-dashed border-slate-700 bg-slate-950/25 text-sm font-semibold text-slate-400 transition hover:border-cyan-400/50 hover:text-cyan-200" onClick={createPlan}>
           <ClipboardList className="h-5 w-5" />
-          为 {symbol} 新建交易计划
+          新建 {symbol} 交易计划
         </button>
       ) : null}
 
@@ -87,18 +86,15 @@ export default function TradePlanPanel({ symbol, aiSummary }: { symbol: string; 
           {activePlans.map((plan) => (
             <button
               key={plan.id}
-              className="min-h-32 rounded-2xl border border-slate-800 bg-slate-950/35 p-4 text-left transition hover:border-cyan-400/40 hover:bg-slate-900"
+              className="min-h-28 rounded-xl border border-slate-800 bg-slate-950/35 p-4 text-left transition hover:border-cyan-400/40 hover:bg-slate-900"
               onClick={() => navigate('/trade-plans/' + plan.id)}
             >
               <div className="flex items-start justify-between gap-3">
-                <div>
-                  <p className="text-xs font-semibold text-slate-500">{directionLabel[plan.direction]}</p>
-                  <p className="mt-1 text-lg font-black text-white">{plan.ticker}</p>
-                </div>
+                <p className="text-base font-black text-white">{directionLabel[plan.direction]}</p>
                 <StatusBadge status={plan.status} />
               </div>
               <p className="mt-3 line-clamp-2 text-sm leading-6 text-slate-300">{plan.entry_trigger || '未填写触发条件'}</p>
-              <div className="mt-4 flex flex-wrap items-center gap-3 text-xs font-semibold text-slate-500">
+              <div className="mt-3 flex flex-wrap items-center gap-3 text-xs font-semibold text-slate-500">
                 <span className="inline-flex items-center gap-1">
                   <Clock3 className="h-3.5 w-3.5 text-cyan-300" />
                   {formatDateCN(plan.plan_date)}

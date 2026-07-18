@@ -2,7 +2,6 @@ import { Check, Download, RefreshCw, Tag } from 'lucide-react';
 import { useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { Button } from '../../../components/ui/button';
-import { ConfirmDialog } from '../../../components/ui/confirm-dialog';
 import { updateNLabel } from '../../../lib/api';
 import { useAnalysisStore } from '../../../stores/analysisStore';
 
@@ -10,12 +9,12 @@ interface AIActionsProps {
   symbol: string;
   reportContent: string;
   nLabelWritten: boolean;
+  analysisComplete: boolean;
   onRegenerate: () => void;
 }
 
-export default function AIActions({ symbol, reportContent, nLabelWritten, onRegenerate }: AIActionsProps) {
+export default function AIActions({ symbol, reportContent, nLabelWritten, analysisComplete, onRegenerate }: AIActionsProps) {
   const queryClient = useQueryClient();
-  const [confirmOpen, setConfirmOpen] = useState(false);
   const [writing, setWriting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const setNLabelWritten = useAnalysisStore((store) => store.setNLabelWritten);
@@ -70,35 +69,28 @@ export default function AIActions({ symbol, reportContent, nLabelWritten, onRege
 
   return (
     <div className="space-y-3">
-      <div className="flex flex-wrap gap-3">
-        <Button variant="outline" onClick={() => setConfirmOpen(true)}>
+      <div className="flex flex-wrap justify-end gap-2">
+        <Button variant="outline" className="h-9 rounded-xl px-3" onClick={onRegenerate}>
           <RefreshCw className="h-4 w-4" />
           重新生成
         </Button>
-        <Button variant="outline" disabled={!reportContent.trim()} onClick={handleExportMarkdown}>
+        <Button variant="outline" className="h-9 rounded-xl px-3" disabled={!reportContent.trim()} onClick={handleExportMarkdown}>
           <Download className="h-4 w-4" />
-          另存为 Markdown
+          导出报告
         </Button>
-        <Button
-          variant="outline"
-          disabled={writing || nLabelWritten}
-          onClick={handleWriteNLabel}
-          className={nLabelWritten ? 'border-emerald-400 bg-emerald-400 text-slate-950 opacity-100 hover:bg-emerald-400 disabled:opacity-100' : ''}
-        >
-          {nLabelWritten ? <Check className="h-4 w-4" /> : <Tag className="h-4 w-4" />}
-          {nLabelWritten ? '已标记 N ✓' : writing ? '写回中' : '将 N 标签写回选股器'}
-        </Button>
+        {nLabelWritten || (analysisComplete && Boolean(reportContent.trim())) ? (
+          <Button
+            variant="outline"
+            disabled={writing || nLabelWritten}
+            onClick={handleWriteNLabel}
+            className={'h-9 rounded-xl px-3 ' + (nLabelWritten ? 'border-emerald-400 bg-emerald-400 text-slate-950 opacity-100 hover:bg-emerald-400 disabled:opacity-100' : '')}
+          >
+            {nLabelWritten ? <Check className="h-4 w-4" /> : <Tag className="h-4 w-4" />}
+            {nLabelWritten ? 'N 已写回' : writing ? '写回中' : '写回 N 标签'}
+          </Button>
+        ) : null}
       </div>
       {error ? <div className="rounded-xl border border-red-800 bg-red-950/60 px-3 py-2 text-sm text-red-100">{error}</div> : null}
-      <ConfirmDialog
-        open={confirmOpen}
-        title="确认重新生成"
-        description="重新生成将覆盖当前分析结果，是否继续？"
-        cancelText="取消"
-        confirmText="确认重新生成"
-        onConfirm={onRegenerate}
-        onOpenChange={setConfirmOpen}
-      />
     </div>
   );
 }

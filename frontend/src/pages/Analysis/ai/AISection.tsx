@@ -1,4 +1,4 @@
-import { PauseCircle, PlayCircle, Sparkles } from 'lucide-react';
+import { CheckCircle2, PauseCircle, PlayCircle } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import AIAnalysisConfig, { type AnalysisConfig } from '../../../components/analysis/AIAnalysisConfig';
@@ -36,7 +36,30 @@ export default function AISection({ symbol, state }: AISectionProps) {
     state.aiProgress.length > 0 ||
     state.aiResults.length > 0 ||
     Boolean(state.aiDecision);
-	const canResume = Boolean(state.aiRunId) && (state.aiStatus === 'paused' || state.aiStatus === 'error');
+  const canResume = Boolean(state.aiRunId) && (state.aiStatus === 'paused' || state.aiStatus === 'error');
+  const showResults = hasOutput || state.aiStatus !== 'idle';
+
+  const statusBadge = (() => {
+    if (state.aiStatus === 'streaming') {
+      return (
+        <span className="inline-flex items-center gap-2 rounded-full border border-cyan-400/30 bg-cyan-400/10 px-3 py-1.5 text-xs font-bold text-cyan-200">
+          <span className="h-2 w-2 animate-pulse rounded-full bg-cyan-300" />
+          生成中
+        </span>
+      );
+    }
+    if (state.aiStatus === 'done') {
+      return (
+        <span className="inline-flex items-center gap-1.5 rounded-full border border-emerald-400/30 bg-emerald-400/10 px-3 py-1.5 text-xs font-bold text-emerald-200">
+          <CheckCircle2 className="h-3.5 w-3.5" />
+          已完成
+        </span>
+      );
+    }
+    if (state.aiStatus === 'paused') return <span className="rounded-full border border-amber-300/30 bg-amber-300/10 px-3 py-1.5 text-xs font-bold text-amber-100">已暂停</span>;
+    if (state.aiStatus === 'error') return <span className="rounded-full border border-red-400/30 bg-red-400/10 px-3 py-1.5 text-xs font-bold text-red-200">已中断</span>;
+    return null;
+  })();
 
 	useEffect(() => {
 		if (state.aiStatus !== 'done' || !state.aiRunId || state.stockSummary?.ai_analyzed || markedRunRef.current === state.aiRunId) return;
@@ -82,62 +105,50 @@ export default function AISection({ symbol, state }: AISectionProps) {
   };
 
   return (
-    <section className="space-y-5">
-      <AIAnalysisConfig symbol={symbol} onStartAnalysis={requestAnalysis} isAnalyzing={isAnalyzing} />
+    <section className="space-y-4">
+      <AIAnalysisConfig onStartAnalysis={requestAnalysis} isAnalyzing={isAnalyzing} />
 
-      <Card className="space-y-5 border-cyan-400/20 bg-slate-950/70">
+      {showResults ? <Card className="space-y-4 border-cyan-400/20 bg-slate-950/70 p-4 sm:p-5">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-          <div>
-            <h2 className="text-lg font-black text-white">多智能体 AI 分析</h2>
-            <p className="mt-1 text-sm text-slate-500">流式输出研究过程、分角色报告和最终建议</p>
-          </div>
-          {isAnalyzing ? (
-            <div className="flex flex-wrap items-center gap-2">
-              <span className="inline-flex items-center gap-2 rounded-full border border-cyan-400/30 bg-cyan-400/10 px-3 py-1 text-xs font-bold text-cyan-200">
-                <span className="h-2 w-2 rounded-full bg-cyan-300" />
-                生成中
-              </span>
+          <h2 className="text-lg font-black text-white">分析结果</h2>
+          <div className="flex flex-wrap items-center gap-2">
+            {statusBadge}
+            {isAnalyzing ? (
               <Button variant="outline" className="h-9 rounded-xl px-3 text-xs" onClick={abort}>
                 <PauseCircle className="h-4 w-4" />
-                暂停接收
+                暂停
               </Button>
-            </div>
-          ) : canResume ? (
-            <Button variant="outline" className="h-9 rounded-xl px-3 text-xs" onClick={resumeAnalysis}>
-              <PlayCircle className="h-4 w-4" />
-              继续上次分析
-            </Button>
-          ) : null}
+            ) : canResume ? (
+              <Button variant="outline" className="h-9 rounded-xl px-3 text-xs" onClick={resumeAnalysis}>
+                <PlayCircle className="h-4 w-4" />
+                继续分析
+              </Button>
+            ) : null}
+          </div>
         </div>
 
-        {!hasOutput && state.aiStatus === 'idle' ? (
-          <div className="flex min-h-40 flex-col items-center justify-center gap-4 rounded-xl border border-slate-800 bg-slate-900/45 text-center">
-            <Sparkles className="h-10 w-10 text-cyan-300" />
-            <p className="text-sm text-slate-500">调整上方参数后启动分析</p>
-          </div>
-        ) : (
-          <>
-            <AIAnalysisStream
-              status={state.aiStatus}
-              progress={state.aiProgress}
-              results={state.aiResults}
-              decision={state.aiDecision}
-              error={state.aiError}
-              liveNarration={state.liveNarration}
-              liveNarrationByAgent={state.liveNarrationByAgent}
-              fallbackReport={state.reportContent}
+        <AIAnalysisStream
+          status={state.aiStatus}
+          progress={state.aiProgress}
+          results={state.aiResults}
+          decision={state.aiDecision}
+          error={state.aiError}
+          liveNarration={state.liveNarration}
+          liveNarrationByAgent={state.liveNarrationByAgent}
+          fallbackReport={state.reportContent}
+        />
+        {state.aiStatus === 'done' || state.aiStatus === 'error' || state.aiStatus === 'paused' ? (
+          <div className="border-t border-slate-800 pt-4">
+            <AIActions
+              symbol={symbol}
+              reportContent={state.reportContent}
+              nLabelWritten={state.nLabelWritten}
+              analysisComplete={state.aiStatus === 'done'}
+              onRegenerate={requestRegenerate}
             />
-            {state.aiStatus === 'paused' && state.aiRunId ? (
-              <p className="rounded-xl border border-amber-300/20 bg-amber-400/5 px-3 py-2 text-xs text-amber-100">
-                流式接收已暂停；sidecar 会保留运行和事件游标，点击“继续上次分析”只补发缺失内容。
-              </p>
-            ) : null}
-            {state.aiStatus === 'done' || state.aiStatus === 'error' || state.aiStatus === 'paused' ? (
-              <AIActions symbol={symbol} reportContent={state.reportContent} nLabelWritten={state.nLabelWritten} onRegenerate={requestRegenerate} />
-            ) : null}
-          </>
-        )}
-      </Card>
+          </div>
+        ) : null}
+      </Card> : null}
 
       <ConfirmDialog
         open={confirmOpen}

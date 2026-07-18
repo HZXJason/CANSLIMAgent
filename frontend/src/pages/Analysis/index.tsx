@@ -46,18 +46,19 @@ export default function AnalysisPage() {
     navigate('/analysis/' + normalized);
   };
 
-  const handleAdd = () => {
-    const nextSymbol = window.prompt('请输入股票代码');
-    if (!nextSymbol?.trim()) return;
+  const handleAdd = (nextSymbol: string) => {
     const normalized = nextSymbol.trim().toUpperCase();
+    if (!normalized) return;
     openTab(normalized, normalized);
     navigate('/analysis/' + normalized);
   };
 
   const handleClose = (targetSymbol: string) => {
     const normalized = targetSymbol.trim().toUpperCase();
+    const closedIndex = tabs.findIndex((tab) => tab.symbol === normalized);
     const remainingTabs = tabs.filter((tab) => tab.symbol !== normalized);
-    const nextActiveTabId = displayedTabId === normalized ? remainingTabs[remainingTabs.length - 1]?.symbol ?? null : displayedTabId;
+    const adjacentTab = remainingTabs[Math.min(Math.max(closedIndex, 0), remainingTabs.length - 1)];
+    const nextActiveTabId = displayedTabId === normalized ? adjacentTab?.symbol ?? null : displayedTabId;
     closeAIStream(normalized);
     removeAnalysisState(normalized);
     closeTab(normalized);
@@ -67,14 +68,8 @@ export default function AnalysisPage() {
   };
 
   return (
-    <section className="mx-auto flex w-full max-w-[1440px] flex-col gap-6 px-4 py-6 lg:px-8">
-      <header className="rounded-[1.25rem] border border-slate-800/90 bg-slate-900/70 p-5 shadow-2xl shadow-slate-950/25 backdrop-blur">
-        <div className="mb-5">
-          <div>
-            <p className="text-sm font-semibold text-cyan-300/80">AlphaLens · 个股深度分析</p>
-            <h1 className="mt-2 text-3xl font-black tracking-tight text-white">个股分析工作台</h1>
-          </div>
-        </div>
+    <section className="mx-auto flex w-full max-w-[1600px] flex-col gap-4 px-3 py-4 sm:px-5 lg:px-6">
+      <header className="rounded-2xl border border-slate-800/90 bg-slate-900/70 p-2.5 shadow-xl shadow-slate-950/20 backdrop-blur">
         <TabBar
           tabs={tabs}
           activeTabId={displayedTabId}
@@ -87,8 +82,8 @@ export default function AnalysisPage() {
       {activeTab ? (
         <AnalysisContent symbol={activeTab.symbol} tabName={activeTab.name} />
       ) : (
-        <section className="flex min-h-[420px] items-center justify-center rounded-[1.25rem] border border-slate-800/90 bg-slate-900/70 text-center text-slate-400">
-          <p>暂无打开的股票标签页，请从选股器列表进入或点击 “+” 添加。</p>
+        <section className="flex min-h-72 items-center justify-center rounded-[1.25rem] border border-dashed border-slate-800 bg-slate-900/40 text-center text-slate-400">
+          <p className="text-sm font-semibold">添加股票开始分析</p>
         </section>
       )}
     </section>

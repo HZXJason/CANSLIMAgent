@@ -8,13 +8,12 @@ interface ButtonProps extends React.ButtonHTMLAttributes<HTMLButtonElement> {
 }
 
 const variantClass: Record<ButtonVariant, string> = {
-  primary:
-    'border-cyan-400/40 bg-gradient-to-r from-finance-blue to-cyan-500 text-white shadow-glow hover:brightness-110',
-  secondary: 'border-slate-700/80 bg-slate-800/80 text-slate-100 hover:bg-slate-700',
+  primary: 'border-cyan-300 bg-cyan-400 text-slate-950 hover:border-cyan-200 hover:bg-cyan-300',
+  secondary: 'border-slate-700 bg-slate-800 text-slate-100 hover:bg-slate-700',
   outline:
-    'border-slate-700/80 bg-slate-950/20 text-slate-300 hover:border-cyan-400/50 hover:bg-slate-800/80 hover:text-white',
+    'border-slate-700 bg-transparent text-slate-300 hover:border-slate-600 hover:bg-slate-800/70 hover:text-white',
   ghost: 'border-transparent bg-transparent text-slate-300 hover:bg-slate-800/70 hover:text-white',
-  danger: 'border-red-800/80 bg-red-950/70 text-red-100 hover:bg-red-900/80'
+  danger: 'border-red-700 bg-red-950/70 text-red-100 hover:bg-red-900/80'
 };
 
 export const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(
@@ -22,7 +21,7 @@ export const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(
     <button
       ref={ref}
       className={cn(
-        'inline-flex items-center justify-center gap-2 rounded-2xl border px-4 py-2.5 text-sm font-semibold transition duration-200 disabled:cursor-not-allowed disabled:opacity-50',
+        'inline-flex h-10 items-center justify-center gap-2 rounded-xl border px-4 text-sm font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300/60 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-950 disabled:cursor-not-allowed disabled:opacity-50',
         variantClass[variant],
         className
       )}

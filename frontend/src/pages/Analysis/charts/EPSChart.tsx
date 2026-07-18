@@ -26,7 +26,7 @@ export default function EPSChart({ data, status }: EPSChartProps) {
   const finalStatus = statusFromLength(status, items.length);
 
   return (
-    <ChartFrame title="季度 EPS 趋势" subtitle="柱形显示 EPS 同比增长率" status={finalStatus} height={250} source={data?.source} dataAsOf={data?.data_as_of}>
+    <ChartFrame title="季度 EPS 增长" status={finalStatus} height={240} source={data?.source} dataAsOf={data?.data_as_of}>
       <ResponsiveContainer width="100%" height="100%">
         <BarChart data={items} margin={{ top: 8, right: 12, bottom: 0, left: 0 }}>
           <CartesianGrid stroke={chartGridColor} vertical={false} />

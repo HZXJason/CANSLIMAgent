@@ -1,6 +1,8 @@
 import { AlertCircle, Building2, ExternalLink } from 'lucide-react';
+import { useCallback, useLayoutEffect, useRef, useState } from 'react';
 import { Card } from '../../components/ui/card';
 import { Skeleton } from '../../components/ui/skeleton';
+import { formatDateCN } from '../../lib/utils';
 import type { ChartStatus, CompanyProfile } from '../../types/analysis';
 
 interface CompanyProfileCardProps {
@@ -15,22 +17,50 @@ function metaItems(data: CompanyProfile) {
 export default function CompanyProfileCard({ data, status }: CompanyProfileCardProps) {
   const items = data ? metaItems(data) : [];
   const finalStatus = status === 'success' && !data?.description ? 'insufficient' : status;
+  const [expanded, setExpanded] = useState(false);
+  const [canExpand, setCanExpand] = useState(false);
+  const descriptionRef = useRef<HTMLParagraphElement | null>(null);
+
+  const measureOverflow = useCallback(() => {
+    const element = descriptionRef.current;
+    if (!element || expanded) return;
+    setCanExpand(element.scrollHeight > element.clientHeight + 1);
+  }, [expanded]);
+
+  useLayoutEffect(() => {
+    setExpanded(false);
+    setCanExpand(false);
+  }, [data?.symbol]);
+
+  useLayoutEffect(() => {
+    if (finalStatus !== 'success' || !data) {
+      setCanExpand(false);
+      return;
+    }
+
+    measureOverflow();
+    window.addEventListener('resize', measureOverflow);
+    const observer = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(measureOverflow);
+    if (descriptionRef.current) observer?.observe(descriptionRef.current);
+
+    return () => {
+      window.removeEventListener('resize', measureOverflow);
+      observer?.disconnect();
+    };
+  }, [data, finalStatus, measureOverflow]);
 
   return (
-    <Card className="space-y-4 rounded-[1rem] p-4">
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-        <div className="flex items-start gap-3">
-          <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-cyan-400/25 bg-cyan-400/10 text-cyan-200">
-            <Building2 className="h-5 w-5" />
+    <Card className="h-full space-y-4 rounded-2xl p-4 sm:p-5">
+      <div className="flex items-center justify-between gap-3">
+        <div className="flex items-center gap-2.5">
+          <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-cyan-400/20 bg-cyan-400/10 text-cyan-200">
+            <Building2 className="h-4 w-4" />
           </span>
-          <div>
-            <h2 className="text-base font-bold text-white">公司简介</h2>
-            <p className="mt-1 text-xs text-slate-500">{data?.name || data?.symbol || '基础业务概况'}</p>
-          </div>
+          <h2 className="text-base font-bold text-white">公司简介</h2>
         </div>
         {data?.website ? (
           <a
-            className="inline-flex items-center gap-1 text-xs font-semibold text-cyan-200 transition hover:text-cyan-100"
+            className="inline-flex h-9 items-center gap-1.5 rounded-xl px-2.5 text-sm font-semibold text-cyan-200 transition hover:bg-cyan-400/10 hover:text-cyan-100"
             href={data.website}
             target="_blank"
             rel="noreferrer"
@@ -49,16 +79,16 @@ export default function CompanyProfileCard({ data, status }: CompanyProfileCardP
       ) : null}
 
       {finalStatus === 'error' ? (
-        <div className="flex min-h-28 items-center justify-center rounded-2xl border border-slate-800 bg-slate-950/25 text-sm text-slate-400">
-          <div className="flex flex-col items-center gap-3 text-center">
-            <AlertCircle className="h-8 w-8 text-red-300" />
-            <span>公司简介加载失败，请检查 Alpha Vantage key 或本地 yfinance 环境</span>
+        <div className="flex min-h-28 items-center justify-center rounded-xl border border-slate-800 bg-slate-950/25 text-sm text-slate-400">
+          <div className="flex items-center gap-2 text-center">
+            <AlertCircle className="h-5 w-5 text-red-300" />
+            <span>公司简介加载失败</span>
           </div>
         </div>
       ) : null}
 
       {finalStatus === 'insufficient' ? (
-        <div className="flex min-h-28 items-center justify-center rounded-2xl border border-slate-800 bg-slate-950/25 text-sm text-slate-400">
+        <div className="flex min-h-28 items-center justify-center rounded-xl border border-slate-800 bg-slate-950/25 text-sm text-slate-400">
           暂无可用公司简介
         </div>
       ) : null}
@@ -74,13 +104,26 @@ export default function CompanyProfileCard({ data, status }: CompanyProfileCardP
               ))}
             </div>
           ) : null}
-          <p className="text-sm leading-7 text-slate-300">{data.description}</p>
+          <div>
+            <p ref={descriptionRef} className={expanded ? 'text-sm leading-7 text-slate-300' : 'line-clamp-5 text-sm leading-7 text-slate-300'}>{data.description}</p>
+            {canExpand ? (
+              <button
+                type="button"
+                className="mt-2 text-sm font-semibold text-cyan-300 transition hover:text-cyan-200"
+                onClick={() => setExpanded((value) => !value)}
+              >
+                {expanded ? '收起' : '展开'}
+              </button>
+            ) : null}
+          </div>
         </div>
       ) : null}
 
-      <div className="min-h-4 text-right text-xs text-slate-500">
-        {data?.source ? [data.source, data.updated_at ? '更新 ' + data.updated_at : ''].filter(Boolean).join(' · ') : ''}
-      </div>
+      {data?.source ? (
+        <div className="text-xs font-medium text-slate-500">
+          {[data.source, data.updated_at ? '更新 ' + formatDateCN(data.updated_at) : ''].filter(Boolean).join(' · ')}
+        </div>
+      ) : null}
     </Card>
   );
 }
