@@ -12,7 +12,7 @@ export const Select = React.forwardRef<HTMLSelectElement, SelectProps>(
       <select
         ref={ref}
         className={cn(
-          'min-h-11 w-full appearance-none rounded-xl border border-slate-700/80 bg-slate-950/55 px-3.5 pr-10 text-sm font-semibold text-slate-100 outline-none transition-[border-color,background-color,box-shadow] duration-150 ease-out hover:bg-slate-950/75 focus:border-cyan-300/60 focus:bg-slate-950/80 focus:ring-2 focus:ring-cyan-300/15 disabled:cursor-not-allowed disabled:opacity-50 sm:min-h-10',
+          'min-h-11 w-full appearance-none rounded-xl border border-slate-700/80 bg-slate-950/55 px-3.5 pr-10 text-sm font-semibold text-slate-100 outline-none transition-[border-color,background-color,box-shadow] duration-150 ease-out hover:bg-slate-950/75 focus:border-brand-300/60 focus:bg-slate-950/80 focus:ring-2 focus:ring-brand-300/15 disabled:cursor-not-allowed disabled:opacity-50 sm:min-h-10',
           className
         )}
         onChange={(event) => onValueChange?.(event.target.value)}

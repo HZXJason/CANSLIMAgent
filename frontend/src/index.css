@@ -4,11 +4,25 @@
 
 :root {
   color-scheme: dark;
+  --brand-50: 236 254 255;
+  --brand-100: 207 250 254;
+  --brand-200: 165 243 252;
+  --brand-300: 103 232 249;
+  --brand-400: 34 211 238;
+  --brand-500: 6 182 212;
+  --brand-600: 8 145 178;
+  --brand-700: 14 116 144;
+  --brand-800: 21 94 117;
+  --brand-900: 22 78 99;
+  --brand-950: 8 51 68;
   --canvas: #070a12;
   --canvas-raised: #0a0f1b;
   --surface: #0d1421;
   --surface-elevated: #111b2b;
   --surface-muted: #0a111d;
+  --chrome-rgb: 7 10 18;
+  --ambient-primary: 34 184 221;
+  --ambient-secondary: 59 130 246;
   --border: rgba(148, 163, 184, 0.14);
   --border-strong: rgba(148, 163, 184, 0.24);
   --text-primary: #f7fafc;
@@ -19,6 +33,11 @@
   --positive: #5dd6a1;
   --negative: #fb7185;
   --warning: #f6c85f;
+  --market-up: #26a69a;
+  --market-down: #ef5350;
+  --market-up-rgb: 38 166 154;
+  --market-down-rgb: 239 83 80;
+  --shadow-glow: 0 0 32px rgb(var(--brand-500) / 0.16);
   --ease-out-ui: cubic-bezier(0.23, 1, 0.32, 1);
   --ease-in-out-ui: cubic-bezier(0.77, 0, 0.175, 1);
   --mobile-nav-height: 4.25rem;
@@ -29,6 +48,36 @@
   font-synthesis: none;
   background: var(--canvas);
   color: var(--text-primary);
+}
+
+:root[data-market='CN'] {
+  --brand-50: 255 247 237;
+  --brand-100: 255 237 213;
+  --brand-200: 254 215 170;
+  --brand-300: 253 186 116;
+  --brand-400: 251 146 60;
+  --brand-500: 249 115 22;
+  --brand-600: 234 88 12;
+  --brand-700: 194 65 12;
+  --brand-800: 154 52 18;
+  --brand-900: 124 45 18;
+  --brand-950: 67 20 7;
+  --canvas: #100806;
+  --canvas-raised: #170c09;
+  --surface: #1d100c;
+  --surface-elevated: #291713;
+  --surface-muted: #160c09;
+  --chrome-rgb: 16 8 6;
+  --ambient-primary: 234 88 12;
+  --ambient-secondary: 180 83 9;
+  --border: rgba(214, 150, 118, 0.15);
+  --border-strong: rgba(226, 163, 128, 0.26);
+  --accent: #fdba74;
+  --accent-strong: #f97316;
+  --market-up: #ef5350;
+  --market-down: #26a69a;
+  --market-up-rgb: 239 83 80;
+  --market-down-rgb: 38 166 154;
 }
 
 html {
@@ -43,8 +92,8 @@ body {
   min-width: 320px;
   min-height: 100vh;
   background:
-    radial-gradient(circle at 78% -10%, rgba(34, 184, 221, 0.12), transparent 34rem),
-    radial-gradient(circle at 20% 110%, rgba(59, 130, 246, 0.08), transparent 30rem),
+    radial-gradient(circle at 78% -10%, rgb(var(--ambient-primary) / 0.12), transparent 34rem),
+    radial-gradient(circle at 20% 110%, rgb(var(--ambient-secondary) / 0.08), transparent 30rem),
     linear-gradient(180deg, var(--canvas-raised) 0%, var(--canvas) 100%);
   color: var(--text-primary);
   overscroll-behavior-y: none;
@@ -96,12 +145,12 @@ textarea {
 }
 
 ::selection {
-  background: rgba(103, 216, 243, 0.28);
+  background: rgb(var(--brand-300) / 0.28);
   color: white;
 }
 
 :focus-visible {
-  outline: 2px solid rgba(103, 216, 243, 0.78);
+  outline: 2px solid rgb(var(--brand-300) / 0.78);
   outline-offset: 3px;
 }
 
@@ -137,7 +186,7 @@ textarea {
 }
 
 .glass-chrome {
-  background: rgba(7, 10, 18, 0.78);
+  background: rgb(var(--chrome-rgb) / 0.8);
   -webkit-backdrop-filter: blur(22px) saturate(150%);
   backdrop-filter: blur(22px) saturate(150%);
 }

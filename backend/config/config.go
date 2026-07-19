@@ -23,6 +23,7 @@ type Config struct {
 	FMPAPIKey               string
 	PolygonAPIKey           string
 	EnableFreeUniverse      bool
+	EnableAshareData        bool
 	EnableSECData           bool
 	EnableInstitutionalData bool
 	SECUserAgent            string
@@ -100,6 +101,7 @@ func Load() Config {
 		FMPAPIKey:               os.Getenv("FMP_API_KEY"),
 		PolygonAPIKey:           os.Getenv("POLYGON_API_KEY"),
 		EnableFreeUniverse:      getEnvBool("ENABLE_FREE_UNIVERSE", true),
+		EnableAshareData:        getEnvBool("ENABLE_ASHARE_DATA", true),
 		EnableSECData:           getEnvBool("ENABLE_SEC_DATA", true),
 		EnableInstitutionalData: getEnvBool("ENABLE_INSTITUTIONAL_DATA", true),
 		SECUserAgent:            getEnv("SEC_USER_AGENT", "CANSLIMAgent/1.0 (local research; set SEC_USER_AGENT for contact)"),

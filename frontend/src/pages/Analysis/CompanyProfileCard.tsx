@@ -53,14 +53,14 @@ export default function CompanyProfileCard({ data, status }: CompanyProfileCardP
     <Card className="h-full space-y-4 rounded-2xl p-4 sm:p-5">
       <div className="flex items-center justify-between gap-3">
         <div className="flex items-center gap-2.5">
-          <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-cyan-400/20 bg-cyan-400/10 text-cyan-200">
+          <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-brand-400/20 bg-brand-400/10 text-brand-200">
             <Building2 className="h-4 w-4" />
           </span>
           <h2 className="text-base font-bold text-white">公司简介</h2>
         </div>
         {data?.website ? (
           <a
-            className="inline-flex h-9 items-center gap-1.5 rounded-xl px-2.5 text-sm font-semibold text-cyan-200 transition hover:bg-cyan-400/10 hover:text-cyan-100"
+            className="inline-flex h-9 items-center gap-1.5 rounded-xl px-2.5 text-sm font-semibold text-brand-200 transition hover:bg-brand-400/10 hover:text-brand-100"
             href={data.website}
             target="_blank"
             rel="noreferrer"
@@ -109,7 +109,7 @@ export default function CompanyProfileCard({ data, status }: CompanyProfileCardP
             {canExpand ? (
               <button
                 type="button"
-                className="mt-2 text-sm font-semibold text-cyan-300 transition hover:text-cyan-200"
+                className="mt-2 text-sm font-semibold text-brand-300 transition hover:text-brand-200"
                 onClick={() => setExpanded((value) => !value)}
               >
                 {expanded ? '收起' : '展开'}

@@ -1,7 +1,9 @@
-import { Suspense } from 'react';
+import { Suspense, useLayoutEffect } from 'react';
 import { BarChart3, BookOpenCheck, CandlestickChart, ClipboardList, Filter, Settings } from 'lucide-react';
 import { NavLink, Outlet, useLocation } from 'react-router-dom';
+import GlobalMarketSelector from './GlobalMarketSelector';
 import { cn } from '../lib/utils';
+import { useMarketStore } from '../stores/marketStore';
 
 const topItems = [
   { to: '/screener', label: '筛选器', icon: Filter },
@@ -21,12 +23,12 @@ function ShellNavItem({ to, label, icon: Icon }: { to: string; label: string; ic
         cn(
           'interactive-press group relative flex min-h-11 items-center justify-center gap-3 rounded-xl border px-2.5 text-sm font-semibold xl:justify-start xl:px-3.5',
           isActive
-            ? 'border-cyan-300/20 bg-cyan-300/[0.09] text-cyan-100 shadow-[inset_3px_0_0_rgba(103,216,243,0.9)]'
+            ? 'border-brand-300/20 bg-brand-300/[0.09] text-brand-100 shadow-[inset_3px_0_0_var(--accent)]'
             : 'border-transparent text-slate-400 hover:border-slate-800 hover:bg-slate-800/55 hover:text-slate-100'
         )
       }
     >
-      <Icon className="h-[19px] w-[19px] shrink-0 transition-colors group-hover:text-cyan-200" strokeWidth={1.8} />
+      <Icon className="h-[19px] w-[19px] shrink-0 transition-colors group-hover:text-brand-200" strokeWidth={1.8} />
       <span className="hidden xl:inline">{label}</span>
     </NavLink>
   );
@@ -39,13 +41,13 @@ function MobileNavItem({ to, label, icon: Icon }: { to: string; label: string; i
       className={({ isActive }) =>
         cn(
           'interactive-press relative flex min-h-[64px] min-w-0 flex-col items-center justify-center gap-1.5 rounded-xl px-1 py-2 text-xs font-semibold',
-          isActive ? 'text-cyan-200' : 'text-slate-400'
+          isActive ? 'text-brand-200' : 'text-slate-400'
         )
       }
     >
       {({ isActive }) => (
         <>
-          <span className={cn('absolute top-1.5 h-1 w-4 rounded-full bg-cyan-300 transition-opacity', isActive ? 'opacity-100' : 'opacity-0')} />
+          <span className={cn('absolute top-1.5 h-1 w-4 rounded-full bg-brand-300 transition-opacity', isActive ? 'opacity-100' : 'opacity-0')} />
           <Icon className="h-5 w-5" strokeWidth={isActive ? 2.1 : 1.75} />
           <span className="truncate">{label}</span>
         </>
@@ -56,26 +58,38 @@ function MobileNavItem({ to, label, icon: Icon }: { to: string; label: string; i
 
 export default function AppShell() {
   const location = useLocation();
+  const assetMarket = useMarketStore((state) => state.assetMarket);
   const currentItem = [...topItems, ...bottomItems].find((item) => location.pathname.startsWith(item.to)) ?? topItems[0];
+
+  useLayoutEffect(() => {
+    document.documentElement.dataset.market = assetMarket;
+  }, [assetMarket]);
 
   return (
     <div className="flex min-h-screen bg-transparent text-slate-100">
-      <a href="#main-content" className="fixed left-3 top-3 z-[100] -translate-y-20 rounded-xl bg-cyan-300 px-4 py-2 text-sm font-bold text-slate-950 transition-transform focus:translate-y-0">
+      <a href="#main-content" className="fixed left-3 top-3 z-[100] -translate-y-20 rounded-xl bg-brand-300 px-4 py-2 text-sm font-bold text-slate-950 transition-transform focus:translate-y-0">
         跳到主要内容
       </a>
 
       <aside className="glass-chrome sticky top-0 hidden h-screen w-[76px] shrink-0 flex-col border-r border-white/[0.07] px-3 py-4 md:flex xl:w-[240px] xl:px-4">
-        <NavLink to="/screener" aria-label="AlphaLens 首页" className="interactive-press flex min-h-12 items-center justify-center gap-3 rounded-2xl xl:justify-start xl:px-1">
-          <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-[13px] bg-gradient-to-br from-cyan-200 to-cyan-400 text-slate-950 shadow-[0_10px_30px_rgba(34,184,221,0.2)]">
-            <CandlestickChart className="h-5 w-5" strokeWidth={2.2} />
-          </span>
-          <span className="hidden min-w-0 xl:block">
-            <span className="block text-[15px] font-extrabold tracking-[-0.02em] text-white">AlphaLens</span>
-            <span className="mt-0.5 block text-[11px] font-medium tracking-wide text-slate-500">投资研究工作台</span>
-          </span>
-        </NavLink>
+        <div>
+          <div className="flex min-h-12 items-center justify-center gap-3 xl:justify-start xl:px-1">
+            <NavLink to="/screener" aria-label="AlphaLens 首页" className="interactive-press flex shrink-0 rounded-[13px]">
+              <span className="flex h-10 w-10 items-center justify-center rounded-[13px] bg-gradient-to-br from-brand-200 to-brand-400 text-slate-950 shadow-glow">
+                <CandlestickChart className="h-5 w-5" strokeWidth={2.2} />
+              </span>
+            </NavLink>
+            <div className="hidden min-w-0 xl:block">
+              <NavLink to="/screener" className="interactive-press block rounded-md text-[15px] font-extrabold tracking-[-0.02em] text-white">
+                AlphaLens
+              </NavLink>
+              <GlobalMarketSelector className="-mt-0.5" />
+            </div>
+          </div>
+          <GlobalMarketSelector compact className="mt-1 flex justify-center xl:hidden" />
+        </div>
 
-        <nav aria-label="主导航" className="mt-7 space-y-1.5">
+        <nav aria-label="主导航" className="mt-5 space-y-1.5 xl:mt-7">
           {topItems.map((item) => (
             <ShellNavItem key={item.to} {...item} />
           ))}
@@ -95,19 +109,22 @@ export default function AppShell() {
 
       <div className="min-w-0 flex-1">
         <header className="glass-chrome sticky top-0 z-40 flex min-h-16 items-center justify-between border-b border-white/[0.07] px-4 md:hidden">
-          <NavLink to="/screener" className="interactive-press flex items-center gap-2.5 rounded-xl" aria-label="AlphaLens 首页">
-            <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-gradient-to-br from-cyan-200 to-cyan-400 text-slate-950">
-              <CandlestickChart className="h-[18px] w-[18px]" strokeWidth={2.2} />
-            </span>
-            <span>
-              <span className="block text-sm font-extrabold tracking-tight text-white">AlphaLens</span>
-              <span className="block text-[11px] font-medium text-slate-500">{currentItem.label}</span>
-            </span>
-          </NavLink>
+          <div className="flex min-w-0 items-center gap-2.5">
+            <NavLink to="/screener" className="interactive-press flex min-w-0 items-center gap-2.5 rounded-xl" aria-label="AlphaLens 首页">
+              <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-brand-200 to-brand-400 text-slate-950 shadow-glow">
+                <CandlestickChart className="h-[18px] w-[18px]" strokeWidth={2.2} />
+              </span>
+              <span className="min-w-0">
+                <span className="block truncate text-sm font-extrabold tracking-tight text-white">AlphaLens</span>
+                <span className="block truncate text-[11px] font-medium text-slate-500">{currentItem.label}</span>
+              </span>
+            </NavLink>
+            <GlobalMarketSelector compact className="shrink-0" />
+          </div>
           <NavLink
             to="/settings"
             aria-label="设置"
-            className={({ isActive }) => cn('interactive-press flex h-11 w-11 items-center justify-center rounded-xl border', isActive ? 'border-cyan-300/30 bg-cyan-300/10 text-cyan-200' : 'border-slate-800 bg-slate-900/70 text-slate-400')}
+            className={({ isActive }) => cn('interactive-press flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border', isActive ? 'border-brand-300/30 bg-brand-300/10 text-brand-200' : 'border-slate-800 bg-slate-900/70 text-slate-400')}
           >
             <Settings className="h-5 w-5" />
           </NavLink>
@@ -120,7 +137,7 @@ export default function AppShell() {
           <Suspense
             fallback={
               <div className="mx-auto flex min-h-[60vh] w-full max-w-[1440px] items-center justify-center px-4 text-sm font-semibold text-slate-400" role="status">
-                <span className="mr-3 h-2 w-2 rounded-full bg-cyan-300 shadow-[0_0_18px_rgba(103,216,243,0.7)]" />
+                <span className="mr-3 h-2 w-2 rounded-full bg-brand-300 shadow-glow" />
                 正在载入工作区
               </div>
             }

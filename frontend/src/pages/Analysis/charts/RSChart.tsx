@@ -38,7 +38,7 @@ export default function RSChart({ data, status, period }: RSChartProps) {
           />
           <YAxis domain={[0, 99]} tick={{ fill: chartTextColor, fontSize: 11 }} stroke={chartGridColor} width={38} />
           <RechartsTooltip content={<TooltipContent />} />
-          <Line type="monotone" dataKey="value" stroke="#2E5FA3" strokeWidth={2} dot={false} isAnimationActive={false} />
+          <Line type="monotone" dataKey="value" stroke="var(--accent-strong)" strokeWidth={2} dot={false} isAnimationActive={false} />
         </LineChart>
       </ResponsiveContainer>
     </ChartFrame>

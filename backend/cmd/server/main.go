@@ -69,6 +69,7 @@ func main() {
 	fmpClient := services.NewFMPClient(cfg.FMPAPIKey, cfg.RequestTimeout)
 	polygonClient := services.NewPolygonClient(cfg.PolygonAPIKey, cfg.RequestTimeout)
 	freeUniverseClient := services.NewFreeUniverseClient(cfg.EnableFreeUniverse, cfg.RequestTimeout)
+	ashareClient := services.NewAshareClient(cfg.EnableAshareData, cfg.RequestTimeout)
 	secClient := services.NewSECClient(cfg.EnableSECData, cfg.SECUserAgent, cfg.RequestTimeout)
 	institutionalClient := services.NewInstitutionalClient(cfg.EnableInstitutionalData, cfg.RequestTimeout)
 	stooqClient := services.NewStooqClient(cfg.EnableStooqData, cfg.RequestTimeout)
@@ -78,6 +79,7 @@ func main() {
 	scanner := services.NewScannerService(
 		database,
 		freeUniverseClient,
+		ashareClient,
 		secClient,
 		institutionalClient,
 		stooqClient,
@@ -87,7 +89,7 @@ func main() {
 		yfinanceClient,
 		cfg.ScanDelay,
 	)
-	analysisService := services.NewAnalysisService(database, alphaVantageClient, translationClient, secClient, stooqClient, fmpClient, polygonClient, yahooClient, yfinanceClient)
+	analysisService := services.NewAnalysisService(database, alphaVantageClient, translationClient, ashareClient, secClient, stooqClient, fmpClient, polygonClient, yahooClient, yfinanceClient)
 	screenerHandler := handlers.NewScreenerHandler(scanner)
 	presetHandler := handlers.NewPresetHandler(database)
 	chartsHandler := handlers.NewChartsHandler(analysisService, scanner)

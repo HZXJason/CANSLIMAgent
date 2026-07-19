@@ -72,10 +72,10 @@ export default function AIAnalysisConfig({ onStartAnalysis, isAnalyzing }: AIAna
   const hasAnalyst = config.analysts.length > 0;
 
   return (
-    <Card className="space-y-4 border-cyan-400/20 bg-slate-950/70 p-4 sm:p-5">
+    <Card className="space-y-4 border-brand-400/20 bg-slate-950/70 p-4 sm:p-5">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div className="flex items-center gap-3">
-          <span className="flex h-9 w-9 items-center justify-center rounded-xl border border-cyan-400/25 bg-cyan-400/10 text-cyan-200">
+          <span className="flex h-9 w-9 items-center justify-center rounded-xl border border-brand-400/25 bg-brand-400/10 text-brand-200">
             <Sparkles className="h-4 w-4" />
           </span>
           <h2 className="text-lg font-black text-white">AI 分析</h2>
@@ -107,7 +107,7 @@ export default function AIAnalysisConfig({ onStartAnalysis, isAnalyzing }: AIAna
                 {options.analysts.map((analyst) => (
                   <label
                     key={analyst.id}
-                    className="flex min-h-11 cursor-pointer items-center gap-3 rounded-xl border border-slate-800 bg-slate-900/45 px-3 py-2.5 transition hover:border-cyan-400/40"
+                    className="flex min-h-11 cursor-pointer items-center gap-3 rounded-xl border border-slate-800 bg-slate-900/45 px-3 py-2.5 transition hover:border-brand-400/40"
                   >
                     <Checkbox
                       checked={config.analysts.includes(analyst.id)}

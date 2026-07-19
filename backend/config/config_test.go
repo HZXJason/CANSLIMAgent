@@ -17,6 +17,18 @@ func TestLoadUsesLoopbackAndNoBrowserTrustByDefault(t *testing.T) {
 	}
 }
 
+func TestLoadEnablesAshareDataByDefaultAndAllowsOptOut(t *testing.T) {
+	t.Setenv("ENABLE_ASHARE_DATA", "")
+	if !Load().EnableAshareData {
+		t.Fatal("A-share data route must be enabled by default")
+	}
+
+	t.Setenv("ENABLE_ASHARE_DATA", "false")
+	if Load().EnableAshareData {
+		t.Fatal("ENABLE_ASHARE_DATA=false did not disable the A-share data route")
+	}
+}
+
 func TestProductionDisablesInProcessMigrationsByDefault(t *testing.T) {
 	t.Setenv("APP_ENV", "production")
 	t.Setenv("RUN_DATABASE_MIGRATIONS", "")

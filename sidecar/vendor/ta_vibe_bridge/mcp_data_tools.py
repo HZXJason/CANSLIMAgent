@@ -21,8 +21,13 @@ imported here as ``TOOLS_BY_ANALYST`` so the two layers can never drift.
 
 from __future__ import annotations
 
+import asyncio
+from concurrent.futures import Future
+from contextvars import copy_context
+from functools import wraps
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from threading import Thread
+from typing import TYPE_CHECKING, Any, Awaitable, Callable
 
 from .config import BridgeConfig
 
@@ -42,6 +47,74 @@ from .ta_patch import DEFAULT_ANALYST_TOOLS as TOOLS_BY_ANALYST
 DEFAULT_US_TOOLS: tuple[str, ...] = tuple(
     sorted({name for names in TOOLS_BY_ANALYST.values() for name in names})
 )
+
+
+def _run_coroutine_sync(factory: Callable[[], Awaitable[Any]]) -> Any:
+    """Run a freshly-created coroutine from synchronous TradingAgents code.
+
+    TradingAgents executes its compiled graph synchronously. MCP tools, however,
+    are exposed by ``langchain-mcp-adapters`` as coroutine-only
+    ``StructuredTool`` objects. The normal graph path runs in an executor thread
+    without an event loop, while tests and embedders can call it from a thread
+    that already owns one. The latter needs a helper thread because blocking on
+    the current loop would deadlock.
+
+    ``factory`` deliberately creates the coroutine inside the loop that awaits
+    it, avoiding cross-loop awaitables and un-awaited coroutine warnings.
+    """
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return asyncio.run(factory())
+
+    outcome: Future[Any] = Future()
+
+    def run_in_helper_thread() -> None:
+        try:
+            outcome.set_result(asyncio.run(factory()))
+        except BaseException as exc:  # preserve the tool's original failure
+            outcome.set_exception(exc)
+
+    context = copy_context()
+    thread = Thread(
+        target=context.run,
+        args=(run_in_helper_thread,),
+        name="vibe-mcp-sync-bridge",
+        daemon=True,
+    )
+    thread.start()
+    thread.join()
+    return outcome.result()
+
+
+def make_sync_capable(tool: "BaseTool") -> "BaseTool":
+    """Add a sync entrypoint to an async-only MCP ``StructuredTool``.
+
+    The copied tool retains the original schema, async coroutine, callbacks,
+    metadata, error handlers, and ``content_and_artifact`` response contract.
+    ``wraps`` is load-bearing: LangGraph inspects the selected sync function for
+    injected arguments, so it must still see the MCP coroutine's annotated
+    ``runtime`` parameter.
+
+    Existing synchronous tools and non-``StructuredTool`` implementations are
+    returned unchanged.
+    """
+    from langchain_core.tools import StructuredTool
+
+    if not isinstance(tool, StructuredTool):
+        return tool
+    if callable(getattr(tool, "func", None)):
+        return tool
+
+    coroutine = getattr(tool, "coroutine", None)
+    if not callable(coroutine):
+        return tool
+
+    @wraps(coroutine)
+    def invoke_sync(*args: Any, **kwargs: Any) -> Any:
+        return _run_coroutine_sync(lambda: coroutine(*args, **kwargs))
+
+    return tool.model_copy(update={"func": invoke_sync})
 
 
 def vibe_mcp_server_spec(cfg: BridgeConfig | None = None) -> dict[str, Any]:
@@ -97,7 +170,11 @@ async def load_vibe_tools(
     if only is not None:
         allow = set(only)
         tools = [t for t in tools if t.name in allow]
-    return tools
+    # TradingAgents uses CompiledStateGraph.invoke(), so every MCP tool placed
+    # in its ToolNodes must support the synchronous BaseTool contract as well as
+    # its native async contract. Apply this centrally for both A-share and US
+    # assignments instead of special-casing either market.
+    return [make_sync_capable(tool) for tool in tools]
 
 
 def load_vibe_tools_sync(
@@ -111,8 +188,6 @@ def load_vibe_tools_sync(
     ``asyncio.run`` and therefore must not be called from within a running event
     loop; call :func:`load_vibe_tools` directly in async contexts.
     """
-    import asyncio
-
     return asyncio.run(load_vibe_tools(cfg, only=only))
 
 

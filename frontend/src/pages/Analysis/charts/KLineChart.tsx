@@ -1,5 +1,6 @@
 import { Bar, CartesianGrid, Cell, ComposedChart, ResponsiveContainer, Tooltip as RechartsTooltip, XAxis, YAxis } from 'recharts';
 import { cn } from '../../../lib/utils';
+import type { AssetMarket } from '../../../types';
 import type { Candle, ChartStatus, KLineData, KLinePeriod } from '../../../types/analysis';
 import ChartFrame from './ChartFrame';
 import { chartGridColor, chartTextColor, formatAxisDate, formatCompactNumber, statusFromLength } from './chartUtils';
@@ -14,8 +15,24 @@ interface KLineChartProps {
   data: KLineData | null;
   status: ChartStatus;
   period: KLinePeriod;
+  assetMarket: AssetMarket;
   onPeriodChange: (period: KLinePeriod) => void;
 }
+
+export const KLINE_MARKET_COLORS: Record<AssetMarket, { up: string; down: string; volumeUp: string; volumeDown: string }> = {
+  US: {
+    up: '#26a69a',
+    down: '#ef5350',
+    volumeUp: 'rgba(38, 166, 154, 0.32)',
+    volumeDown: 'rgba(239, 83, 80, 0.32)'
+  },
+  CN: {
+    up: '#ef5350',
+    down: '#26a69a',
+    volumeUp: 'rgba(239, 83, 80, 0.32)',
+    volumeDown: 'rgba(38, 166, 154, 0.32)'
+  }
+};
 
 interface KLineDatum extends Candle {
   priceRange: [number, number];
@@ -28,11 +45,13 @@ interface CandleShapeProps {
   width?: number;
   height?: number;
   payload?: KLineDatum;
+  assetMarket?: AssetMarket;
 }
 
-function CandleStickShape({ x = 0, y = 0, width = 0, height = 0, payload }: CandleShapeProps) {
+function CandleStickShape({ x = 0, y = 0, width = 0, height = 0, payload, assetMarket = 'US' }: CandleShapeProps) {
   if (!payload) return null;
-  const color = payload.close >= payload.open ? '#26A69A' : '#EF5350';
+  const colors = KLINE_MARKET_COLORS[assetMarket];
+  const color = payload.close >= payload.open ? colors.up : colors.down;
   const range = payload.high - payload.low || 1;
   const priceToY = (price: number) => y + ((payload.high - price) / range) * height;
   const openY = priceToY(payload.open);
@@ -65,7 +84,7 @@ function TooltipContent({ active, payload }: { active?: boolean; payload?: Array
   );
 }
 
-export default function KLineChart({ data, status, period, onPeriodChange }: KLineChartProps) {
+export default function KLineChart({ data, status, period, assetMarket, onPeriodChange }: KLineChartProps) {
   const items: KLineDatum[] = (data?.candles ?? []).map((candle) => ({
     ...candle,
     priceRange: [candle.low, candle.high],
@@ -73,6 +92,7 @@ export default function KLineChart({ data, status, period, onPeriodChange }: KLi
   }));
   const finalStatus = statusFromLength(status, items.length);
   const maxVolume = Math.max(...items.map((item) => item.volume), 1);
+  const colors = KLINE_MARKET_COLORS[assetMarket];
 
   return (
     <ChartFrame
@@ -95,7 +115,7 @@ export default function KLineChart({ data, status, period, onPeriodChange }: KLi
               aria-pressed={period === item}
               className={cn(
                 'interactive-press min-h-11 min-w-11 px-3 text-sm font-bold transition-[background-color,color] duration-150',
-                period === item ? 'bg-cyan-300 text-slate-950' : 'text-slate-400 hover:bg-slate-800 hover:text-white'
+                period === item ? 'bg-brand-300 text-slate-950' : 'text-slate-400 hover:bg-slate-800 hover:text-white'
               )}
               onClick={() => onPeriodChange(item)}
             >
@@ -120,10 +140,10 @@ export default function KLineChart({ data, status, period, onPeriodChange }: KLi
           <RechartsTooltip content={<TooltipContent />} />
           <Bar yAxisId="volume" dataKey="volume" barSize={6} isAnimationActive={false}>
             {items.map((item) => (
-              <Cell key={item.date + '-volume'} fill={item.up ? 'rgba(38, 166, 154, 0.32)' : 'rgba(239, 83, 80, 0.32)'} />
+              <Cell key={item.date + '-volume'} fill={item.up ? colors.volumeUp : colors.volumeDown} />
             ))}
           </Bar>
-          <Bar yAxisId="price" dataKey="priceRange" shape={<CandleStickShape />} isAnimationActive={false} />
+          <Bar yAxisId="price" dataKey="priceRange" shape={<CandleStickShape assetMarket={assetMarket} />} isAnimationActive={false} />
         </ComposedChart>
       </ResponsiveContainer>
     </ChartFrame>

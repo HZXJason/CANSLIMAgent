@@ -7,6 +7,7 @@ import BrokerJournalImport from '../../components/journal/BrokerJournalImport';
 import { Button } from '../../components/ui/button';
 import { Card } from '../../components/ui/card';
 import { fetchBrokerConnections, fetchJournalEntries, fetchLatestJournalReflection, generateJournalReflection } from '../../lib/api';
+import { displaySymbol } from '../../lib/markets';
 import { cn } from '../../lib/utils';
 import type { JournalEntry, StoredJournalReflection } from '../../types/journal';
 
@@ -21,7 +22,7 @@ function SideBadge({ side }: { side: JournalEntry['side'] }) {
 function ReflectionStatus({ entry }: { entry: JournalEntry }) {
   const reflected = Boolean(entry.reflection?.trim());
   return (
-    <span className={cn('inline-flex items-center gap-2 rounded-full border px-3 py-1 text-xs font-semibold', reflected ? 'border-cyan-400/50 bg-cyan-400/10 text-cyan-200' : 'border-slate-700 bg-slate-950/30 text-slate-500')}>
+    <span className={cn('inline-flex items-center gap-2 rounded-full border px-3 py-1 text-xs font-semibold', reflected ? 'border-brand-400/50 bg-brand-400/10 text-brand-200' : 'border-slate-700 bg-slate-950/30 text-slate-500')}>
       {reflected ? <CircleCheck className="h-3.5 w-3.5" /> : <Circle className="h-3.5 w-3.5" />}
       {reflected ? '已复盘' : '待复盘'}
     </span>
@@ -108,9 +109,9 @@ export default function JournalList() {
           <div className="hidden grid-cols-[1.1fr_0.7fr_1.2fr_1fr_1fr_0.8fr] gap-4 border-b border-slate-800 px-5 py-3 text-sm font-semibold text-slate-400 md:grid"><span>标的</span><span>方向</span><span>成交时间</span><span>数量 × 价格</span><span>成交额 / 手续费</span><span className="text-right">复盘</span></div>
           <div className="divide-y divide-slate-900">
             {entries.map((entry) => (
-              <button key={entry.id} className="group grid w-full gap-3 px-4 py-4 text-left transition-[background-color,box-shadow] duration-150 hover:bg-slate-800/55 active:bg-slate-800/75 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-cyan-400/60 sm:px-5 md:grid-cols-[1.1fr_0.7fr_1.2fr_1fr_1fr_0.8fr] md:items-center md:gap-4" onClick={() => navigate('/journal/' + entry.id)}>
+              <button key={entry.id} className="group grid w-full gap-3 px-4 py-4 text-left transition-[background-color,box-shadow] duration-150 hover:bg-slate-800/55 active:bg-slate-800/75 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand-400/60 sm:px-5 md:grid-cols-[1.1fr_0.7fr_1.2fr_1fr_1fr_0.8fr] md:items-center md:gap-4" onClick={() => navigate('/journal/' + entry.id)}>
                 <span className="flex items-start justify-between gap-3 md:block">
-                  <span><span className="block text-lg font-black text-white">{entry.symbol}</span><span className="text-sm text-slate-400">{entry.name || entry.market}</span></span>
+                  <span><span className="block text-lg font-black text-white">{displaySymbol(entry.symbol)}</span><span className="text-sm text-slate-400">{entry.name || entry.market}</span></span>
                   <ChevronRight className="mt-1 h-5 w-5 shrink-0 text-slate-600 transition-transform duration-150 group-hover:translate-x-0.5 group-hover:text-slate-400 md:hidden" />
                 </span>
                 <span className="flex items-center gap-3"><span className="w-12 shrink-0 text-xs font-semibold text-slate-500 md:hidden">方向</span><SideBadge side={entry.side} /></span>

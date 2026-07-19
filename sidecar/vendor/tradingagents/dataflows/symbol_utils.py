@@ -10,6 +10,8 @@ differ from the broker / TradingView / MT5 style symbols users often type:
     EURUSD            EURUSD=X          spot forex pairs take a ``=X`` suffix
     BTCUSD            BTC-USD           crypto pairs use a ``-`` separator
     SPX500, US500     ^GSPC             index CFDs map to Yahoo index symbols
+    600519.SH         600519.SS         app canonical Shanghai suffix differs
+                                        from Yahoo Finance's Shanghai suffix
 
 Passing the raw broker symbol to Yahoo returns an empty result, which the
 agents previously received as free text and could hallucinate a price
@@ -80,6 +82,30 @@ _YAHOO_SAFE = re.compile(r"^[A-Za-z0-9._\-\^=]+$")
 _CRYPTO_QUOTES = ("USDT", "USDC", "USD")
 
 
+def is_china_a_symbol(raw: str) -> bool:
+    """Return whether ``raw`` uses CANSLIMAgent's canonical A-share suffix."""
+    if not isinstance(raw, str):
+        return False
+    symbol = raw.strip().upper()
+    code, separator, exchange = symbol.rpartition(".")
+    if not separator or len(code) != 6 or not code.isdigit():
+        return False
+    if exchange == "SH":
+        return code[:3] in {"600", "601", "603", "605", "688", "689"}
+    if exchange == "SZ":
+        return code[:3] in {"000", "001", "002", "003", "300", "301"}
+    if exchange == "BJ":
+        return code.startswith(("920", "4", "8"))
+    return False
+
+
+def yahoo_report_symbol(raw: str, canonical: str) -> str:
+    """Keep the app's A-share symbol in reports while Yahoo uses its alias."""
+    if is_china_a_symbol(raw):
+        return raw.strip().upper()
+    return canonical
+
+
 def crypto_base(raw: str) -> str | None:
     """Return the crypto base (e.g. ``BTC``) for a known USD/USDT/USDC-quoted
     crypto symbol in any form the pipeline may hold — ``BTC-USD``, ``BTCUSD``,
@@ -106,10 +132,11 @@ def normalize_symbol(raw: str) -> str:
 
     Resolution order (first match wins):
       1. Explicit alias table (metals, energy, index CFDs).
-      2. Crypto rule: a known crypto base quoted in USD/USDT/USDC (dashed or
+      2. CANSLIMAgent canonical Shanghai A share: ``.SH`` -> Yahoo ``.SS``.
+      3. Crypto rule: a known crypto base quoted in USD/USDT/USDC (dashed or
          not) -> ``BASE-USD``.
-      3. Forex rule: six letters that are two ISO currency codes -> ``PAIR=X``.
-      4. Otherwise the upper-cased symbol is returned unchanged (plain
+      4. Forex rule: six letters that are two ISO currency codes -> ``PAIR=X``.
+      5. Otherwise the upper-cased symbol is returned unchanged (plain
          equities, ETFs, Yahoo-native symbols like ``GC=F`` or ``^GSPC``).
 
     A trailing ``+`` (broker CFD marker, e.g. ``XAUUSD+``) is stripped before
@@ -126,6 +153,8 @@ def normalize_symbol(raw: str) -> str:
     crypto = _normalize_crypto(s)
     if s in _ALIASES:
         canonical = _ALIASES[s]
+    elif is_china_a_symbol(s) and s.endswith(".SH"):
+        canonical = s[:-3] + ".SS"
     elif crypto is not None:
         canonical = crypto
     elif len(s) == 6 and s[:3] in _FOREX_CURRENCIES and s[3:] in _FOREX_CURRENCIES:

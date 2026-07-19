@@ -148,5 +148,51 @@ func normalizeSymbolParam(value string) string {
 	if !safeSymbolPattern.MatchString(symbol) {
 		return ""
 	}
+	if canonical := services.NormalizeAshareSymbol(symbol); canonical != "" {
+		return canonical
+	}
+	// A symbol that explicitly looks like a mainland listing must never fall
+	// through to the US provider chain when its code range and exchange disagree.
+	if looksLikeAshareInput(symbol) {
+		return ""
+	}
 	return symbol
+}
+
+func looksLikeAshareInput(symbol string) bool {
+	if len(symbol) == 6 {
+		for _, character := range symbol {
+			if character < '0' || character > '9' {
+				return false
+			}
+		}
+		return true
+	}
+	if len(symbol) == 9 && symbol[6] == '.' {
+		if suffix := symbol[7:]; suffix == "SH" || suffix == "SZ" || suffix == "BJ" || suffix == "SS" {
+			for _, character := range symbol[:6] {
+				if character < '0' || character > '9' {
+					return false
+				}
+			}
+			return true
+		}
+	}
+	if len(symbol) == 8 && (strings.HasPrefix(symbol, "SH") || strings.HasPrefix(symbol, "SZ") || strings.HasPrefix(symbol, "BJ")) {
+		for _, character := range symbol[2:] {
+			if character < '0' || character > '9' {
+				return false
+			}
+		}
+		return true
+	}
+	if len(symbol) == 9 && (strings.HasPrefix(symbol, "SH") || strings.HasPrefix(symbol, "SZ") || strings.HasPrefix(symbol, "BJ")) && (symbol[2] == '.' || symbol[2] == '-') {
+		for _, character := range symbol[3:] {
+			if character < '0' || character > '9' {
+				return false
+			}
+		}
+		return true
+	}
+	return false
 }

@@ -96,13 +96,13 @@ export default function BrokerJournalImport({ connections, onImported }: BrokerJ
 
         {connected.length > 0 ? <p className="text-sm text-slate-400">最多读取一年；确认预览后才会写入日志。</p> : null}
         {error ? <p className="rounded-xl border border-red-800 bg-red-950/30 p-3 text-sm text-red-200">{error}</p> : null}
-        {message ? <p className="rounded-xl border border-cyan-900 bg-cyan-950/20 p-3 text-sm text-cyan-100">{message}</p> : null}
+        {message ? <p className="rounded-xl border border-brand-900 bg-brand-950/20 p-3 text-sm text-brand-100">{message}</p> : null}
 
         {preview ? (
-          <div className="rounded-2xl border border-cyan-900/70 bg-cyan-950/20 p-4">
+          <div className="rounded-2xl border border-brand-900/70 bg-brand-950/20 p-4">
             <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
               <div>
-                <h3 className="font-bold text-cyan-100">导入预览</h3>
+                <h3 className="font-bold text-brand-100">导入预览</h3>
                 <p className="mt-1 text-sm text-slate-300">{preview.result.executions.length} 笔可导入成交</p>
               </div>
               <div className="flex flex-col-reverse gap-2 sm:flex-row">

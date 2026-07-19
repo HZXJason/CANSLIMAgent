@@ -9,7 +9,10 @@ import { ConfirmDialog } from '../../components/ui/confirm-dialog';
 import { Input } from '../../components/ui/input';
 import { Select } from '../../components/ui/select';
 import { createTradePlan, executeTradePlan, fetchTradePlan, updateTradePlan } from '../../lib/api';
+import { assetMarketForSymbol, displaySymbol, normalizeSymbolForAsset } from '../../lib/markets';
 import { cn } from '../../lib/utils';
+import { useMarketStore } from '../../stores/marketStore';
+import type { AssetMarket } from '../../types';
 import type { ExecuteTradePlanInput, NewTradePlanInput, TradePlan, TradePlanDirection, TradePlanStatus, TradePlanUpdateInput } from '../../types/tradePlan';
 
 interface LocationState {
@@ -74,9 +77,9 @@ function currentLocalDatetime() {
   return local.toISOString().slice(0, 16);
 }
 
-function initialPlanForm(symbol = '', aiSummary = ''): PlanForm {
+function initialPlanForm(symbol = '', aiSummary = '', assetMarket: AssetMarket = 'US'): PlanForm {
   return {
-    ticker: symbol.toUpperCase(),
+    ticker: normalizeSymbolForAsset(assetMarket, symbol),
     direction: 'buy',
     status: 'draft',
     plan_date: todayISO(),
@@ -111,13 +114,14 @@ function formFromPlan(plan: TradePlan): PlanForm {
 }
 
 function initialExecuteForm(plan: TradePlan): ExecuteForm {
+  const isChinaA = /\.(SH|SZ|BJ)$/i.test(plan.ticker);
   return {
     datetime: currentLocalDatetime(),
     quantity: '',
     price: plan.entry_price === null ? '' : String(plan.entry_price),
     fee: '0',
-    market: 'us',
-    currency: 'USD',
+    market: isChinaA ? 'china_a' : 'us',
+    currency: isChinaA ? 'CNY' : 'USD',
     order_id: '',
     notes: plan.notes ?? ''
   };
@@ -154,14 +158,21 @@ function parseExecuteNumber(value: string, field: keyof ExecuteForm, label: stri
   return parsed;
 }
 
-function buildPlanInput(form: PlanForm, coreLocked: boolean) {
+function buildPlanInput(form: PlanForm, coreLocked: boolean, assetMarket: AssetMarket) {
   const errors: PlanFormErrors = {};
   if (coreLocked) {
     return { errors, input: { notes: cleanText(form.notes) } as TradePlanUpdateInput };
   }
 
-  const ticker = form.ticker.trim().toUpperCase();
-  if (!ticker) errors.ticker = '代码为必填项';
+  const rawTicker = form.ticker.trim();
+  const ticker = normalizeSymbolForAsset(assetMarket, rawTicker);
+  if (!rawTicker) {
+    errors.ticker = '代码为必填项';
+  } else if (!ticker) {
+    errors.ticker = assetMarket === 'CN'
+      ? '请输入有效的 6 位 A 股代码或匹配的 SH、SZ、BJ 代码'
+      : '请输入有效的美股代码，例如 AAPL 或 BRK.B';
+  }
   if (!form.direction) errors.direction = '请选择方向';
   if (!form.plan_date) errors.plan_date = '计划日期为必填项';
 
@@ -218,7 +229,7 @@ function Textarea({ className, invalid, ...props }: TextareaHTMLAttributes<HTMLT
     <textarea
       aria-invalid={invalid || undefined}
       className={cn(
-        'min-h-28 w-full resize-y rounded-xl border bg-slate-950/55 px-3.5 py-3 text-sm leading-6 text-slate-100 outline-none transition-[border-color,background-color,box-shadow] duration-150 ease-out placeholder:text-slate-600 hover:bg-slate-950/75 focus:border-cyan-300/60 focus:bg-slate-950/80 focus:ring-2 focus:ring-cyan-300/15 disabled:cursor-not-allowed disabled:bg-slate-900/55 disabled:text-slate-500',
+        'min-h-28 w-full resize-y rounded-xl border bg-slate-950/55 px-3.5 py-3 text-sm leading-6 text-slate-100 outline-none transition-[border-color,background-color,box-shadow] duration-150 ease-out placeholder:text-slate-600 hover:bg-slate-950/75 focus:border-brand-300/60 focus:bg-slate-950/80 focus:ring-2 focus:ring-brand-300/15 disabled:cursor-not-allowed disabled:bg-slate-900/55 disabled:text-slate-500',
         invalid ? 'border-red-400/80 focus:border-red-400 focus:ring-red-400/15' : 'border-slate-700/80',
         className
       )}
@@ -235,7 +246,7 @@ function FieldError({ value }: { value?: string }) {
 function StatusBadge({ status }: { status: TradePlanStatus }) {
   const styles: Record<TradePlanStatus, string> = {
     draft: 'border-slate-700 bg-slate-950/30 text-slate-300',
-    waiting: 'border-cyan-400/50 bg-cyan-400/10 text-cyan-200',
+    waiting: 'border-brand-400/50 bg-brand-400/10 text-brand-200',
     executed: 'border-emerald-400/60 bg-emerald-400/15 text-emerald-200',
     cancelled: 'border-red-400/50 bg-red-950/50 text-red-100',
     expired: 'border-amber-400/50 bg-amber-950/40 text-amber-100'
@@ -246,11 +257,13 @@ function StatusBadge({ status }: { status: TradePlanStatus }) {
 function PlanFormCard({ plan }: { plan?: TradePlan }) {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
+  const assetMarket = useMarketStore((state) => state.assetMarket);
+  const planAssetMarket = plan ? assetMarketForSymbol(plan.ticker) ?? assetMarket : assetMarket;
   const [searchParams] = useSearchParams();
   const location = useLocation();
   const locationState = location.state as LocationState | null;
   const symbol = searchParams.get('symbol') ?? '';
-  const [form, setForm] = useState<PlanForm>(() => (plan ? formFromPlan(plan) : initialPlanForm(symbol, locationState?.aiSummary ?? '')));
+  const [form, setForm] = useState<PlanForm>(() => (plan ? formFromPlan(plan) : initialPlanForm(symbol, locationState?.aiSummary ?? '', planAssetMarket)));
   const [errors, setErrors] = useState<PlanFormErrors>({});
   const [pendingSaveInput, setPendingSaveInput] = useState<NewTradePlanInput | TradePlanUpdateInput | null>(null);
   const coreLocked = Boolean(plan && plan.status !== 'draft');
@@ -285,7 +298,7 @@ function PlanFormCard({ plan }: { plan?: TradePlan }) {
   };
 
   const submit = () => {
-    const result = buildPlanInput(form, coreLocked);
+    const result = buildPlanInput(form, coreLocked, planAssetMarket);
     setErrors(result.errors);
     if (!result.input) return;
     if (!coreLocked && form.status === 'waiting') {
@@ -300,7 +313,7 @@ function PlanFormCard({ plan }: { plan?: TradePlan }) {
       <Card className="overflow-hidden p-0">
       {plan ? (
         <div className="flex flex-col gap-3 border-b border-slate-800 px-5 py-4 sm:flex-row sm:items-center sm:justify-between sm:px-6">
-          <h2 className="text-xl font-bold text-white">{form.ticker}</h2>
+          <h2 className="text-xl font-bold text-white">{displaySymbol(form.ticker)}</h2>
           <div className="flex flex-wrap items-center gap-3">
             {coreLocked ? (
               <span className="inline-flex items-center gap-2 text-sm font-semibold text-slate-400">
@@ -598,7 +611,7 @@ function ExecutionCard({ plan }: { plan: TradePlan }) {
       <ConfirmDialog
         open={pendingExecution !== null}
         title="确认成交"
-        description={`${plan.ticker} 将标记为已执行，并创建交易日志。`}
+        description={`${displaySymbol(plan.ticker)} 将标记为已执行，并创建交易日志。`}
         confirmText="确认成交"
         confirmVariant="primary"
         onConfirm={() => {

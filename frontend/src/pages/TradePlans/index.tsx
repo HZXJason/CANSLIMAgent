@@ -7,6 +7,7 @@ import { Button } from '../../components/ui/button';
 import { Card } from '../../components/ui/card';
 import { Select } from '../../components/ui/select';
 import { fetchTradePlans } from '../../lib/api';
+import { displaySymbol } from '../../lib/markets';
 import { cn, formatDateCN } from '../../lib/utils';
 import type { TradePlan, TradePlanStatus } from '../../types/tradePlan';
 
@@ -28,7 +29,7 @@ const directionLabel: Record<TradePlan['direction'], string> = {
 
 const statusClass: Record<TradePlanStatus, string> = {
   draft: 'border-slate-700 bg-slate-950/30 text-slate-300',
-  waiting: 'border-cyan-400/50 bg-cyan-400/10 text-cyan-200',
+  waiting: 'border-brand-400/50 bg-brand-400/10 text-brand-200',
   executed: 'border-emerald-400/60 bg-emerald-400/15 text-emerald-200',
   cancelled: 'border-red-400/50 bg-red-950/50 text-red-100',
   expired: 'border-amber-400/50 bg-amber-950/40 text-amber-100'
@@ -140,14 +141,14 @@ export default function TradePlanList() {
             {plans.map((plan) => (
               <button
                 key={plan.id}
-                className="group grid w-full gap-3 px-4 py-4 text-left transition-[background-color,box-shadow] duration-150 hover:bg-slate-800/55 active:bg-slate-800/75 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-cyan-400/60 sm:px-5 md:grid-cols-[1.15fr_0.7fr_0.85fr_1fr_1.1fr] md:items-center md:gap-4"
+                className="group grid w-full gap-3 px-4 py-4 text-left transition-[background-color,box-shadow] duration-150 hover:bg-slate-800/55 active:bg-slate-800/75 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand-400/60 sm:px-5 md:grid-cols-[1.15fr_0.7fr_0.85fr_1fr_1.1fr] md:items-center md:gap-4"
                 onClick={() => navigate('/trade-plans/' + plan.id)}
               >
                 <span className="flex min-w-0 items-start justify-between gap-3 md:block">
                   <span>
                     <span className="flex items-center gap-2 text-lg font-black text-white">
                     <PlanStatusIcon status={plan.status} />
-                    {plan.ticker}
+                    {displaySymbol(plan.ticker)}
                     </span>
                     {plan.entry_trigger ? <span className="mt-1 block line-clamp-2 text-sm leading-5 text-slate-400 md:truncate">{plan.entry_trigger}</span> : null}
                   </span>

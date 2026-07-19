@@ -6,8 +6,10 @@ import { Button } from '../../components/ui/button';
 import { Card } from '../../components/ui/card';
 import { API_BASE_URL, createPreset, deletePreset, fetchCachedResults, fetchPresets, fetchRefreshJob, refreshMarket } from '../../lib/api';
 import { computeStock, stockPassesFilter } from '../../lib/computeLabels';
+import { SCREENER_MARKETS, assetMarketForScreenerMarket, screenerMarketLabel } from '../../lib/markets';
 import { sortStocks } from '../../lib/sortStocks';
 import { formatDateCN } from '../../lib/utils';
+import { useMarketStore } from '../../stores/marketStore';
 import { useScreenerStore } from '../../stores/screenerStore';
 import type { Market, ScanEvent, ThresholdPreset } from '../../types';
 import MarketSelector from './MarketSelector';
@@ -17,19 +19,17 @@ import TagFilter from './TagFilter';
 import ThresholdPanel from './ThresholdPanel';
 
 const SCAN_STALL_TIMEOUT_MS = 45_000;
+const EMPTY_PROGRESS = { analyzed: 0, total: 0 };
 
 export default function ScreenerPage() {
   const queryClient = useQueryClient();
+  const assetMarket = useMarketStore((state) => state.assetMarket);
   const eventSourceRef = useRef<EventSource | null>(null);
   const retryRef = useRef(0);
   const scanRunRef = useRef(0);
   const scanTimeoutRef = useRef<number | null>(null);
   const activeScanProgressRef = useRef({ analyzed: 0, total: 0 });
-  const marketProgressRef = useRef<Record<Market, { analyzed: number; total: number }>>({
-    SP500: { analyzed: 0, total: 0 },
-    NASDAQ100: { analyzed: 0, total: 0 },
-    RUSSELL2000: { analyzed: 0, total: 0 }
-  });
+  const marketProgressRef = useRef<Partial<Record<Market, { analyzed: number; total: number }>>>({});
   const defaultPresetAppliedRef = useRef(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
@@ -40,7 +40,7 @@ export default function ScreenerPage() {
   const isRefreshing = refreshingMarket !== null;
 
   const {
-    selectedMarket,
+    selectedMarkets,
     setMarket,
     thresholds,
     setThresholds,
@@ -64,11 +64,12 @@ export default function ScreenerPage() {
     activeTagFilters,
     toggleTagFilter
   } = useScreenerStore();
+  const selectedMarket = selectedMarkets[assetMarket];
   const selectedMarketRef = useRef(selectedMarket);
   selectedMarketRef.current = selectedMarket;
 
   const cachedQuery = useQuery({
-    queryKey: ['screener-results', selectedMarket],
+    queryKey: ['screener-results', assetMarket, selectedMarket],
     queryFn: () => fetchCachedResults(selectedMarket)
   });
 
@@ -77,11 +78,7 @@ export default function ScreenerPage() {
     queryFn: fetchPresets
   });
 
-  const appliedCacheAtRef = useRef<Record<Market, number>>({
-    SP500: 0,
-    NASDAQ100: 0,
-    RUSSELL2000: 0
-  });
+  const appliedCacheAtRef = useRef<Partial<Record<Market, number>>>({});
 
   useEffect(() => {
     if (
@@ -144,11 +141,18 @@ export default function ScreenerPage() {
 
   const selectedMarketDataAsOf = selectedMarketStocks[0]?.data_as_of ?? null;
 
-  const marketLabel: Record<Market, string> = {
-    SP500: '标普 500',
-    NASDAQ100: '纳指 100',
-    RUSSELL2000: '罗素 2000'
-  };
+  const progressForMarket = useCallback(
+    (market: Market) => marketProgressRef.current[market] ?? EMPTY_PROGRESS,
+    []
+  );
+
+  useEffect(() => {
+    if (useScreenerStore.getState().activeScanMarket === null) {
+      setScanProgress(progressForMarket(selectedMarket));
+    }
+    setErrorMessage(null);
+    setNotice(null);
+  }, [progressForMarket, selectedMarket, setScanProgress]);
 
   const clearScanTimeout = useCallback(() => {
     if (scanTimeoutRef.current !== null) {
@@ -166,12 +170,12 @@ export default function ScreenerPage() {
       setIsScanning(false);
       setIsScanPaused(false);
       setHasReceivedScanProgress(false);
-      setScanProgress(marketProgressRef.current[selectedMarketRef.current]);
+      setScanProgress(progressForMarket(selectedMarketRef.current));
       setScanStatus(null);
       setNotice(null);
       setErrorMessage(message);
     },
-    [clearScanTimeout, setActiveScanMarket, setIsScanning, setScanStatus]
+    [clearScanTimeout, progressForMarket, setActiveScanMarket, setIsScanning, setScanProgress, setScanStatus]
   );
 
   const armScanTimeout = useCallback(
@@ -180,7 +184,7 @@ export default function ScreenerPage() {
       scanTimeoutRef.current = window.setTimeout(() => {
         if (scanRunRef.current !== runID) return;
         stopScanWithError('数据源连接超时，请检查网络连接、代理或后端服务状态后重试');
-        void queryClient.invalidateQueries({ queryKey: ['screener-results', market] });
+        void queryClient.invalidateQueries({ queryKey: ['screener-results', assetMarketForScreenerMarket(market), market] });
       }, SCAN_STALL_TIMEOUT_MS);
     },
     [clearScanTimeout, queryClient, stopScanWithError]
@@ -189,7 +193,7 @@ export default function ScreenerPage() {
   const connectToScan = useCallback(
     function connectToScan(runID: number, market: Market) {
       if (scanRunRef.current !== runID) return;
-      const source = new EventSource(API_BASE_URL + '/screener/scan?market=' + market);
+      const source = new EventSource(API_BASE_URL + '/screener/scan?market=' + encodeURIComponent(market));
       eventSourceRef.current = source;
 
       source.onopen = () => {
@@ -224,7 +228,7 @@ export default function ScreenerPage() {
             marketProgressRef.current[market] = event.data;
             setHasReceivedScanProgress(true);
             const visibleMarket = selectedMarketRef.current;
-            setScanProgress(visibleMarket === market ? event.data : marketProgressRef.current[visibleMarket]);
+            setScanProgress(visibleMarket === market ? event.data : progressForMarket(visibleMarket));
             setIsScanning(false);
             setIsScanPaused(false);
             setScanCompletedMarkets((current) => {
@@ -236,7 +240,7 @@ export default function ScreenerPage() {
             setActiveScanMarket(null);
             source.close();
             eventSourceRef.current = null;
-            void queryClient.invalidateQueries({ queryKey: ['screener-results', market] });
+            void queryClient.invalidateQueries({ queryKey: ['screener-results', assetMarketForScreenerMarket(market), market] });
           }
           if (event.type === 'scan_error') {
             stopScanWithError(event.data.message || '数据获取失败，请检查网络连接或后端服务状态');
@@ -258,7 +262,7 @@ export default function ScreenerPage() {
           return;
         }
         stopScanWithError('数据获取失败，请检查网络连接或后端服务状态');
-        void queryClient.invalidateQueries({ queryKey: ['screener-results', market] });
+        void queryClient.invalidateQueries({ queryKey: ['screener-results', assetMarketForScreenerMarket(market), market] });
       };
     },
     [
@@ -266,6 +270,7 @@ export default function ScreenerPage() {
       armScanTimeout,
       clearScanTimeout,
       queryClient,
+      progressForMarket,
       setActiveScanMarket,
       setIsScanning,
       setScanProgress,
@@ -364,9 +369,9 @@ export default function ScreenerPage() {
     setErrorMessage(null);
     setNotice(null);
     if (activeScanMarket === null) {
-      setScanProgress(marketProgressRef.current[market]);
+      setScanProgress(progressForMarket(market));
     }
-    setMarket(market);
+    setMarket(assetMarket, market);
   };
 
   const handleSavePreset = async (name: string) => {
@@ -405,14 +410,14 @@ export default function ScreenerPage() {
       await new Promise((resolve) => window.setTimeout(resolve, 1000));
       const job = await fetchRefreshJob(jobID);
       if (job.status === 'completed') {
-        setNotice(marketLabel[market] + ' 刷新完成');
+        setNotice(screenerMarketLabel(market) + ' 刷新完成');
         setRefreshingMarket(null);
         setScanCompletedMarkets((current) => {
           const next = new Set(current);
           next.add(market);
           return next;
         });
-        await queryClient.invalidateQueries({ queryKey: ['screener-results', market] });
+        await queryClient.invalidateQueries({ queryKey: ['screener-results', assetMarketForScreenerMarket(market), market] });
         return;
       }
       if (job.status === 'failed') {
@@ -420,7 +425,7 @@ export default function ScreenerPage() {
         throw new Error(job.error ?? '数据刷新失败');
       }
     }
-    setNotice(marketLabel[market] + ' 仍在后台刷新');
+    setNotice(screenerMarketLabel(market) + ' 仍在后台刷新');
     setRefreshingMarket(null);
   };
 
@@ -483,7 +488,7 @@ export default function ScreenerPage() {
         description="先用一致的增长与相对强度标准缩小范围，再进入个股证据与 AI 分析。"
         meta={
           <span className="inline-flex items-center gap-2 rounded-full border border-slate-800 bg-slate-950/35 px-3 py-1.5">
-            <span className="h-1.5 w-1.5 rounded-full bg-cyan-300" />
+            <span className="h-1.5 w-1.5 rounded-full bg-brand-300" />
             数据日期 <span className="font-bold text-slate-200">{formatDateCN(selectedMarketDataAsOf)}</span>
           </span>
         }
@@ -497,9 +502,9 @@ export default function ScreenerPage() {
                 <h2 id="screener-market-title" className="text-base font-bold text-white">选择市场</h2>
                 <p className="mt-1 text-xs leading-5 text-slate-500">切换不会中断其他市场正在进行的扫描</p>
               </div>
-              <span className="hidden rounded-full border border-slate-800 px-2.5 py-1 text-xs font-semibold text-slate-500 sm:inline-flex">3 个市场</span>
+              <span className="hidden rounded-full border border-slate-800 px-2.5 py-1 text-xs font-semibold text-slate-500 sm:inline-flex">{SCREENER_MARKETS[assetMarket].length} 个市场</span>
             </div>
-            <MarketSelector selectedMarket={selectedMarket} onChange={handleMarketChange} />
+            <MarketSelector assetMarket={assetMarket} selectedMarket={selectedMarket} onChange={handleMarketChange} />
           </section>
 
           <section className="p-4 sm:p-5" aria-labelledby="screener-scan-title">
@@ -508,8 +513,8 @@ export default function ScreenerPage() {
               <div className="mb-3 flex flex-wrap items-center gap-2.5">
                 <h2 id="screener-scan-title" className="text-base font-bold text-white">市场扫描</h2>
                 {operationMarket ? (
-                  <span className="rounded-full border border-cyan-300/15 bg-cyan-300/[0.07] px-2.5 py-1 text-xs font-semibold text-cyan-100">
-                    {marketLabel[operationMarket]}
+                  <span className="rounded-full border border-brand-300/15 bg-brand-300/[0.07] px-2.5 py-1 text-xs font-semibold text-brand-100">
+                    {screenerMarketLabel(operationMarket)}
                   </span>
                 ) : null}
               </div>
@@ -569,9 +574,9 @@ export default function ScreenerPage() {
         </div>
       ) : null}
       {notice ? (
-        <div className="mt-4 flex items-start justify-between gap-3 rounded-2xl border border-cyan-300/25 bg-cyan-300/[0.07] px-4 py-3 text-sm text-cyan-50" role="status">
+        <div className="mt-4 flex items-start justify-between gap-3 rounded-2xl border border-brand-300/25 bg-brand-300/[0.07] px-4 py-3 text-sm text-brand-50" role="status">
           <span>{notice}</span>
-          <button type="button" className="interactive-press -m-2 flex h-10 w-10 shrink-0 items-center justify-center rounded-xl text-cyan-300 hover:bg-cyan-300/10 hover:text-white" onClick={() => setNotice(null)} aria-label="关闭提示">
+          <button type="button" className="interactive-press -m-2 flex h-10 w-10 shrink-0 items-center justify-center rounded-xl text-brand-300 hover:bg-brand-300/10 hover:text-white" onClick={() => setNotice(null)} aria-label="关闭提示">
             <X className="h-4 w-4" />
           </button>
         </div>

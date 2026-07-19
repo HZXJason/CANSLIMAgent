@@ -39,7 +39,7 @@ export default function ThoughtStream({ symbol, lines, expanded, status }: Thoug
           ) : (
             lines.map((line, index) => (
               <p key={line.timestamp + '-' + index}>
-                <span className="text-cyan-300">[{line.agent}]</span> {line.content}
+                <span className="text-brand-300">[{line.agent}]</span> {line.content}
               </p>
             ))
           )}

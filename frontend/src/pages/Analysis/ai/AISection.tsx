@@ -42,8 +42,8 @@ export default function AISection({ symbol, state }: AISectionProps) {
   const statusBadge = (() => {
     if (state.aiStatus === 'streaming') {
       return (
-        <span className="inline-flex items-center gap-2 rounded-full border border-cyan-400/30 bg-cyan-400/10 px-3 py-1.5 text-xs font-bold text-cyan-200">
-          <span className="h-2 w-2 animate-pulse rounded-full bg-cyan-300" />
+        <span className="inline-flex items-center gap-2 rounded-full border border-brand-400/30 bg-brand-400/10 px-3 py-1.5 text-xs font-bold text-brand-200">
+          <span className="h-2 w-2 animate-pulse rounded-full bg-brand-300" />
           生成中
         </span>
       );
@@ -108,7 +108,7 @@ export default function AISection({ symbol, state }: AISectionProps) {
     <section className="space-y-4">
       <AIAnalysisConfig onStartAnalysis={requestAnalysis} isAnalyzing={isAnalyzing} />
 
-      {showResults ? <Card className="space-y-4 border-cyan-400/20 bg-slate-950/70 p-4 sm:p-5">
+      {showResults ? <Card className="space-y-4 border-brand-400/20 bg-slate-950/70 p-4 sm:p-5">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <h2 className="text-lg font-black text-white">分析结果</h2>
           <div className="flex flex-wrap items-center gap-2">

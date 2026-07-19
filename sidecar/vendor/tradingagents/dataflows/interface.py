@@ -19,6 +19,7 @@ from .errors import (
 )
 from .fred import get_macro_data as get_fred_macro_data
 from .polymarket import get_prediction_markets as get_polymarket_prediction_markets
+from .symbol_utils import is_china_a_symbol
 from .y_finance import (
     get_balance_sheet as get_yfinance_balance_sheet,
     get_cashflow as get_yfinance_cashflow,
@@ -234,7 +235,11 @@ def route_to_vendor(method: str, *args, **kwargs):
             )
         sym = last_no_data.symbol
         canonical = last_no_data.canonical
-        resolved = "" if canonical == sym else f" (resolved to '{canonical}')"
+        resolved = (
+            ""
+            if canonical == sym or is_china_a_symbol(sym)
+            else f" (resolved to '{canonical}')"
+        )
         # Surface the typed error's detail (e.g. "latest row is 2025-06-11 ...
         # stale") so the agent sees the specific reason — invalid symbol, no
         # coverage, or stale data — not just a generic "unavailable".

@@ -233,7 +233,7 @@ export default function SettingsPage() {
 
       <Card className="overflow-hidden p-0">
         <div className="flex items-center gap-3 border-b border-slate-800 px-5 py-4 sm:px-6">
-          <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-cyan-400/10 text-cyan-300">
+          <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-brand-400/10 text-brand-300">
             <SlidersHorizontal className="h-5 w-5" />
           </div>
           <h2 className="text-lg font-bold text-white">AI 分析</h2>
@@ -368,7 +368,7 @@ export default function SettingsPage() {
             {modelError ? <p className="mt-3 text-sm text-amber-300">{modelError}</p> : null}
           </div>
 
-          <label className="flex cursor-pointer items-center gap-3 rounded-2xl border border-slate-800 bg-slate-950/25 px-4 py-3 transition hover:border-cyan-400/40">
+          <label className="flex cursor-pointer items-center gap-3 rounded-2xl border border-slate-800 bg-slate-950/25 px-4 py-3 transition hover:border-brand-400/40">
             <Checkbox
               checked={config.online_tools}
               onCheckedChange={(checked) => setConfig((current) => ({ ...current, online_tools: checked }))}

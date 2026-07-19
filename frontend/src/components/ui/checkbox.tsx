@@ -16,7 +16,7 @@ export const Checkbox = React.forwardRef<HTMLInputElement, CheckboxProps>(
         checked={checked}
         disabled={disabled}
         className={cn(
-          'peer h-6 w-6 cursor-pointer appearance-none rounded-[7px] border border-slate-600 bg-slate-950/70 transition-[border-color,background-color,box-shadow,transform] duration-150 ease-out checked:border-cyan-300 checked:bg-cyan-300 focus-visible:ring-2 focus-visible:ring-cyan-300/30 disabled:cursor-not-allowed disabled:opacity-50 active:scale-95',
+          'peer h-6 w-6 cursor-pointer appearance-none rounded-[7px] border border-slate-600 bg-slate-950/70 transition-[border-color,background-color,box-shadow,transform] duration-150 ease-out checked:border-brand-300 checked:bg-brand-300 focus-visible:ring-2 focus-visible:ring-brand-300/30 disabled:cursor-not-allowed disabled:opacity-50 active:scale-95',
           className
         )}
         onChange={(event) => onCheckedChange?.(event.target.checked)}

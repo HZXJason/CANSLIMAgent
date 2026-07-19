@@ -36,7 +36,7 @@ export default function TagFilter({ activeTags, onToggle, onClear }: TagFilterPr
                 'interactive-press inline-flex h-11 min-w-11 items-center justify-center rounded-xl border px-3 text-sm font-extrabold sm:h-10 sm:min-w-10',
                 activeTags.includes(tag)
                   ? 'border-emerald-400 bg-emerald-400 text-slate-950 shadow-sm shadow-emerald-500/20'
-                  : 'border-slate-700/80 bg-slate-950/40 text-slate-400 hover:border-cyan-300/35 hover:bg-slate-800/50 hover:text-slate-100'
+                  : 'border-slate-700/80 bg-slate-950/40 text-slate-400 hover:border-brand-300/35 hover:bg-slate-800/50 hover:text-slate-100'
               )}
               onClick={() => onToggle(tag)}
               aria-label={tagTooltips[tag]}
@@ -48,7 +48,7 @@ export default function TagFilter({ activeTags, onToggle, onClear }: TagFilterPr
         ))}
       </div>
       {activeTags.length > 0 ? (
-        <button type="button" className="interactive-press inline-flex min-h-11 items-center rounded-xl px-2 text-sm font-bold text-cyan-300 hover:bg-cyan-300/[0.07] hover:text-cyan-200 sm:min-h-10" onClick={onClear}>
+        <button type="button" className="interactive-press inline-flex min-h-11 items-center rounded-xl px-2 text-sm font-bold text-brand-300 hover:bg-brand-300/[0.07] hover:text-brand-200 sm:min-h-10" onClick={onClear}>
           清除
         </button>
       ) : null}

@@ -28,6 +28,7 @@ type AnalysisService struct {
 	db           *gorm.DB
 	alphaVantage *AlphaVantageClient
 	translator   *TranslationClient
+	ashare       *AshareClient
 	sec          *SECClient
 	stooq        *StooqClient
 	fmp          *FMPClient
@@ -138,11 +139,12 @@ type candleSourceResult struct {
 	candles []Candle
 }
 
-func NewAnalysisService(database *gorm.DB, alphaVantage *AlphaVantageClient, translator *TranslationClient, sec *SECClient, stooq *StooqClient, fmp *FMPClient, polygon *PolygonClient, yahoo *YahooClient, yfinance *YFinanceClient) *AnalysisService {
+func NewAnalysisService(database *gorm.DB, alphaVantage *AlphaVantageClient, translator *TranslationClient, ashare *AshareClient, sec *SECClient, stooq *StooqClient, fmp *FMPClient, polygon *PolygonClient, yahoo *YahooClient, yfinance *YFinanceClient) *AnalysisService {
 	return &AnalysisService{
 		db:           database,
 		alphaVantage: alphaVantage,
 		translator:   translator,
+		ashare:       ashare,
 		sec:          sec,
 		stooq:        stooq,
 		fmp:          fmp,
@@ -184,6 +186,16 @@ func (s *AnalysisService) CompanyProfile(ctx context.Context, symbol string) (Co
 	symbol = normalizeSymbol(symbol)
 	if symbol == "" {
 		return CompanyProfile{}, errors.New("股票代码不能为空")
+	}
+	if IsAshareSymbol(symbol) {
+		if s.ashare == nil || !s.ashare.Configured() {
+			return CompanyProfile{Symbol: NormalizeAshareSymbol(symbol)}, errors.New("A 股数据源未启用")
+		}
+		profile, err := s.ashare.FetchCompanyProfile(ctx, symbol)
+		if err != nil {
+			return profile, err
+		}
+		return ensureProfileName(ctx, s.db, profile), nil
 	}
 
 	failures := []string{}
@@ -252,7 +264,7 @@ func (s *AnalysisService) RS(ctx context.Context, symbol string, period string) 
 	if err != nil {
 		return RSData{}, err
 	}
-	benchmarkResult, err := s.fetchCandles(ctx, "SPY", period)
+	benchmarkResult, err := s.fetchCandles(ctx, ashareBenchmarkForSymbol(symbol), period)
 	if err != nil {
 		return RSData{}, err
 	}
@@ -278,6 +290,13 @@ func (s *AnalysisService) RS(ctx context.Context, symbol string, period string) 
 
 func (s *AnalysisService) EPSQuarterly(ctx context.Context, symbol string) (EPSData, error) {
 	symbol = normalizeSymbol(symbol)
+	if IsAshareSymbol(symbol) {
+		canonical := NormalizeAshareSymbol(symbol)
+		if s.ashare == nil || !s.ashare.Configured() {
+			return EPSData{Symbol: canonical, Quarters: []EPSQuarter{}}, errors.New("A 股数据源未启用")
+		}
+		return s.ashare.FetchEPSQuarterly(ctx, canonical)
+	}
 	failures := []string{}
 
 	if s.sec != nil && s.sec.Configured() {
@@ -361,6 +380,13 @@ func (s *AnalysisService) fetchFMPQuarterlyEPS(ctx context.Context, symbol strin
 
 func (s *AnalysisService) RevenueAnnual(ctx context.Context, symbol string) (RevenueData, error) {
 	symbol = normalizeSymbol(symbol)
+	if IsAshareSymbol(symbol) {
+		canonical := NormalizeAshareSymbol(symbol)
+		if s.ashare == nil || !s.ashare.Configured() {
+			return RevenueData{Symbol: canonical, Years: []RevenueYear{}}, errors.New("A 股数据源未启用")
+		}
+		return s.ashare.FetchRevenueAnnual(ctx, canonical)
+	}
 	failures := []string{}
 
 	if s.sec != nil && s.sec.Configured() {
@@ -439,6 +465,13 @@ func (s *AnalysisService) fetchFMPAnnualRevenue(ctx context.Context, symbol stri
 
 func (s *AnalysisService) GrossMarginQuarterly(ctx context.Context, symbol string) (GrossMarginData, error) {
 	symbol = normalizeSymbol(symbol)
+	if IsAshareSymbol(symbol) {
+		canonical := NormalizeAshareSymbol(symbol)
+		if s.ashare == nil || !s.ashare.Configured() {
+			return GrossMarginData{Symbol: canonical, Quarters: []GrossMarginQuarter{}}, errors.New("A 股数据源未启用")
+		}
+		return s.ashare.FetchGrossMarginQuarterly(ctx, canonical)
+	}
 	failures := []string{}
 
 	if s.sec != nil && s.sec.Configured() {
@@ -490,6 +523,13 @@ func (s *AnalysisService) SecondLayerData(ctx context.Context, symbol string) (S
 	symbol = normalizeSymbol(symbol)
 	if symbol == "" {
 		return SecondLayerData{}, errors.New("股票代码不能为空")
+	}
+	if IsAshareSymbol(symbol) {
+		canonical := NormalizeAshareSymbol(symbol)
+		if s.ashare == nil || !s.ashare.Configured() {
+			return SecondLayerData{"symbol": canonical}, errors.New("A 股数据源未启用")
+		}
+		return s.ashare.FetchSecondLayerData(ctx, canonical)
 	}
 
 	result := SecondLayerData{"symbol": symbol}
@@ -557,6 +597,16 @@ func (s *AnalysisService) fetchFMPGrossMarginQuarterly(ctx context.Context, symb
 }
 
 func (s *AnalysisService) fetchCandles(ctx context.Context, symbol string, period string) (candleSourceResult, error) {
+	if IsAshareSymbol(symbol) {
+		if s.ashare == nil || !s.ashare.Configured() {
+			return candleSourceResult{candles: []Candle{}}, errors.New("A 股数据源未启用")
+		}
+		candles, err := s.ashare.FetchCandles(ctx, symbol, period)
+		if err != nil {
+			return candleSourceResult{candles: []Candle{}}, err
+		}
+		return candleSourceResult{source: ashareMarketDataSource, candles: candles}, nil
+	}
 	var lastErr error
 	if s.stooq != nil && s.stooq.Configured() {
 		if candles, err := s.stooq.FetchCandles(ctx, symbol, period); err == nil && len(candles) > 0 {

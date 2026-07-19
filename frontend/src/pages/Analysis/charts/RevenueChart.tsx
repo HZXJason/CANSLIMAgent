@@ -40,8 +40,8 @@ export default function RevenueChart({ data, status }: RevenueChartProps) {
             tickFormatter={(value: number) => value + '%'}
           />
           <RechartsTooltip content={<TooltipContent />} />
-          <Bar yAxisId="left" dataKey="revenue" fill="rgba(34, 211, 238, 0.58)" radius={[4, 4, 0, 0]} isAnimationActive={false} />
-          <Line yAxisId="right" type="monotone" dataKey="revenue_yoy_growth" stroke="#26A69A" strokeWidth={2} dot={{ r: 3 }} isAnimationActive={false} />
+          <Bar yAxisId="left" dataKey="revenue" fill="rgb(var(--brand-400) / 0.58)" radius={[4, 4, 0, 0]} isAnimationActive={false} />
+          <Line yAxisId="right" type="monotone" dataKey="revenue_yoy_growth" stroke="var(--market-up)" strokeWidth={2} dot={{ r: 3 }} isAnimationActive={false} />
         </ComposedChart>
       </ResponsiveContainer>
     </ChartFrame>

@@ -30,12 +30,23 @@ describe('StockHeader', () => {
   it('shows an explicit question mark for every insufficient CANSLIM metric', () => {
     render(
       <MemoryRouter>
-        <StockHeader symbol="MU" tabName="Micron" summary={insufficientSummary} />
+        <StockHeader symbol="MU" tabName="Micron" summary={insufficientSummary} assetMarket="US" />
       </MemoryRouter>
     );
 
     for (const tag of ['C', 'A', 'S', 'L', 'I']) {
       expect(screen.getByLabelText(tag + ' 数据不足')).toHaveTextContent('?');
     }
+  });
+
+  it('uses the canonical symbol market while summary metadata is still loading', () => {
+    render(
+      <MemoryRouter>
+        <StockHeader symbol="600519.SH" tabName="贵州茅台" summary={null} assetMarket="CN" />
+      </MemoryRouter>
+    );
+
+    expect(screen.getByRole('heading', { name: '600519' })).toBeInTheDocument();
+    expect(screen.getByText('A股市场')).toBeInTheDocument();
   });
 });

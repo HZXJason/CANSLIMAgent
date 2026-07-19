@@ -35,7 +35,7 @@ export default function EPSChart({ data, status }: EPSChartProps) {
           <RechartsTooltip content={<TooltipContent />} />
           <Bar dataKey="eps_yoy_growth" radius={[4, 4, 0, 0]} isAnimationActive={false}>
             {items.map((item) => (
-              <Cell key={item.period} fill={item.eps_yoy_growth >= 0 ? '#26A69A' : '#EF5350'} opacity={item.data_sufficient ? 1 : 0.55} />
+              <Cell key={item.period} fill={item.eps_yoy_growth >= 0 ? 'var(--market-up)' : 'var(--market-down)'} opacity={item.data_sufficient ? 1 : 0.55} />
             ))}
           </Bar>
         </BarChart>

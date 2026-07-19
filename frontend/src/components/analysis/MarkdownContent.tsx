@@ -17,7 +17,7 @@ export default function MarkdownContent({ content, className = '' }: MarkdownCon
         rehypePlugins={[rehypeSanitize]}
         components={{
           h1: ({ children }) => <h1 className="mb-4 text-xl font-black text-white">{children}</h1>,
-          h2: ({ children }) => <h2 className="mb-2 mt-5 text-base font-bold text-cyan-100">{children}</h2>,
+          h2: ({ children }) => <h2 className="mb-2 mt-5 text-base font-bold text-brand-100">{children}</h2>,
           h3: ({ children }) => <h3 className="mb-2 mt-4 text-sm font-bold text-slate-100">{children}</h3>,
           p: ({ children }) => <p className="my-2 text-slate-300">{children}</p>,
           ul: ({ children }) => <ul className="my-3 list-disc space-y-2 pl-5 text-slate-300">{children}</ul>,
@@ -25,12 +25,12 @@ export default function MarkdownContent({ content, className = '' }: MarkdownCon
           li: ({ children }) => <li className="pl-1">{children}</li>,
           strong: ({ children }) => <strong className="font-bold text-white">{children}</strong>,
           a: ({ children, href }) => (
-            <a className="font-semibold text-cyan-300 underline decoration-cyan-300/40 underline-offset-4" href={href}>
+            <a className="font-semibold text-brand-300 underline decoration-brand-300/40 underline-offset-4" href={href}>
               {children}
             </a>
           ),
           blockquote: ({ children }) => (
-            <blockquote className="my-4 border-l-2 border-cyan-400/50 pl-4 text-slate-400">{children}</blockquote>
+            <blockquote className="my-4 border-l-2 border-brand-400/50 pl-4 text-slate-400">{children}</blockquote>
           ),
           table: ({ children }) => (
             <div className="my-4 overflow-x-auto rounded-lg border border-slate-800">
@@ -43,7 +43,7 @@ export default function MarkdownContent({ content, className = '' }: MarkdownCon
           th: ({ children }) => <th className="border-r border-slate-800 px-3 py-2 font-bold last:border-r-0">{children}</th>,
           td: ({ children }) => <td className="border-r border-slate-800 px-3 py-2 text-slate-300 last:border-r-0">{children}</td>,
           pre: ({ children }) => <pre className="my-4 overflow-x-auto rounded-lg bg-slate-950 p-3 text-xs leading-6 text-slate-200">{children}</pre>,
-          code: ({ children }) => <code className="rounded bg-slate-900 px-1.5 py-0.5 text-cyan-100">{children}</code>
+          code: ({ children }) => <code className="rounded bg-slate-900 px-1.5 py-0.5 text-brand-100">{children}</code>
         }}
       >
         {content}

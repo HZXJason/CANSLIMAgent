@@ -6,20 +6,15 @@ import { Button } from '../../components/ui/button';
 import { Card } from '../../components/ui/card';
 import { Tooltip } from '../../components/ui/tooltip';
 import { SCORE_LABEL_KEYS, SCREENER_FILTER_KEYS, labelStatusText } from '../../lib/computeLabels';
+import { assetMarketForScreenerMarket, displaySymbol, normalizeSymbolForAsset, screenerMarketLabel } from '../../lib/markets';
 import { hasGeneratedAIAnalysis, useAnalysisStore } from '../../stores/analysisStore';
 import { useTabStore } from '../../stores/tabStore';
-import type { ComputedStock, LabelResult, Market, ScreenerFilterKey } from '../../types';
+import type { ComputedStock, LabelResult, ScreenerFilterKey } from '../../types';
 
 const tagOrder: ScreenerFilterKey[] = SCREENER_FILTER_KEYS;
 const scoreDenominator = SCORE_LABEL_KEYS.length;
 const INITIAL_VISIBLE_STOCKS = 160;
 const VISIBLE_STOCK_INCREMENT = 160;
-
-const marketLabel: Record<Market, string> = {
-  SP500: '标普500',
-  NASDAQ100: '纳指100',
-  RUSSELL2000: '罗素2000'
-};
 
 interface StockListProps {
   stocks: ComputedStock[];
@@ -73,7 +68,7 @@ function NLabelBadge({ written }: { written: boolean | null }) {
 function AIAnalysisBadge() {
   return (
     <Tooltip content="已生成 AI 分析报告">
-      <Badge variant="neutral" aria-label="已生成 AI 分析报告" className="h-6 min-w-9 shrink-0 gap-1 border-cyan-400/50 bg-cyan-400/10 px-1.5 text-[11px] text-cyan-200">
+      <Badge variant="neutral" aria-label="已生成 AI 分析报告" className="h-6 min-w-9 shrink-0 gap-1 border-brand-400/50 bg-brand-400/10 px-1.5 text-[11px] text-brand-200">
         <Sparkles className="h-3 w-3" />
         AI
       </Badge>
@@ -99,8 +94,12 @@ function stockIdentity(stock: ComputedStock) {
   return stock.market + ':' + stock.symbol;
 }
 
+function canonicalStockSymbol(stock: ComputedStock) {
+  return normalizeSymbolForAsset(assetMarketForScreenerMarket(stock.market), stock.symbol);
+}
+
 function stockHasAIAnalysis(stock: ComputedStock, aiAnalyzedSymbols: Set<string>) {
-	return stock.ai_analyzed || aiAnalyzedSymbols.has(stock.symbol.toUpperCase());
+	return stock.ai_analyzed || aiAnalyzedSymbols.has(canonicalStockSymbol(stock));
 }
 
 interface StockRowProps {
@@ -118,23 +117,23 @@ const StockRow = memo(function StockRow({ stock, hasAIAnalysis, onOpen }: StockR
       type="button"
       className="group grid w-full grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 gap-y-2.5 px-4 py-4 text-left transition-[background-color,box-shadow] duration-150 ease-out hover:bg-slate-800/55 active:bg-slate-800/75 sm:px-5 md:grid-cols-[0.9fr_1.4fr_2fr_0.9fr_0.7fr] md:gap-4"
       onClick={() => onOpen(stock)}
-      aria-label={`打开 ${stock.symbol} ${stock.name}，${rowSummary}`}
+      aria-label={`打开 ${displaySymbol(stock.symbol)} ${stock.name}，${rowSummary}`}
     >
       <span className="flex min-w-0 items-center gap-2 font-semibold text-white">
-        <BarChart3 className="h-4 w-4 text-cyan-300/70" />
-        <span className="truncate">{stock.symbol}</span>
+        <BarChart3 className="h-4 w-4 text-brand-300/70" />
+        <span className="truncate">{displaySymbol(stock.symbol)}</span>
         {hasAIAnalysis ? <AIAnalysisBadge /> : null}
       </span>
       <span className="col-span-2 row-start-2 flex min-w-0 items-center gap-2 truncate text-sm text-slate-400 md:col-span-1 md:row-auto md:block md:text-base md:text-slate-300">
         <span className="truncate">{stock.name}</span>
-        <span className="shrink-0 text-slate-600 md:hidden">· {marketLabel[stock.market]}</span>
+        <span className="shrink-0 text-slate-600 md:hidden">· {screenerMarketLabel(stock.market, true)}</span>
       </span>
       <span className="col-span-2 row-start-3 flex flex-wrap gap-1.5 md:col-span-1 md:row-auto md:gap-2">
         {tagOrder.map((tag) => (
           <FilterBadge key={tag} stock={stock} tag={tag} />
         ))}
       </span>
-      <span className="hidden text-sm text-slate-400 md:block">{marketLabel[stock.market]}</span>
+      <span className="hidden text-sm text-slate-400 md:block">{screenerMarketLabel(stock.market, true)}</span>
       <span className="col-start-2 row-start-1 inline-flex items-center justify-end gap-1.5 text-right text-sm font-bold tabular-nums text-slate-200 md:col-auto md:row-auto">
         <span>{stock.passCount}/{scoreDenominator} · {stock.weightSum}</span>
         <ChevronRight className="h-4 w-4 text-slate-600 transition-transform duration-150 group-hover:translate-x-0.5 group-hover:text-slate-400 md:hidden" />
@@ -166,8 +165,10 @@ export default function StockList({ stocks, hasRawData, filtered }: StockListPro
   const hiddenCount = stocks.length - visibleStocks.length;
   const handleOpenStock = useCallback(
     (stock: ComputedStock) => {
-      openTab(stock.symbol, stock.name);
-      navigate('/analysis/' + stock.symbol, { state: { name: stock.name } });
+      const canonicalSymbol = canonicalStockSymbol(stock);
+      if (!canonicalSymbol) return;
+      openTab(canonicalSymbol, stock.name);
+      navigate('/analysis/' + encodeURIComponent(canonicalSymbol), { state: { name: stock.name } });
     },
     [navigate, openTab]
   );

@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef } from 'react';
 import { fetchCompanyProfile, fetchEPSQuarterly, fetchGrossMarginQuarterly, fetchKLine, fetchRevenueAnnual, fetchRS, fetchSecondLayerData, fetchStockSummary } from '../../lib/api';
+import { assetMarketForSymbol } from '../../lib/markets';
 import { createInitialAnalysisState, useAnalysisStore } from '../../stores/analysisStore';
 import type { ChartStatus } from '../../types/analysis';
 import AISection from './ai/AISection';
@@ -23,6 +24,7 @@ function statusForLength(length: number): ChartStatus {
 
 export default function AnalysisPage({ symbol, tabName }: AnalysisPageProps) {
 	const normalized = symbol.toUpperCase();
+	const assetMarket = assetMarketForSymbol(normalized) ?? 'US';
 	const profileRefreshRef = useRef(new Set<string>());
   const fallbackState = useMemo(() => createInitialAnalysisState(), [normalized]);
   const state = useAnalysisStore((store) => store.analysisStates[normalized]) ?? fallbackState;
@@ -185,9 +187,9 @@ export default function AnalysisPage({ symbol, tabName }: AnalysisPageProps) {
 
   return (
     <div className="min-w-0 space-y-3 sm:space-y-4">
-      <StockHeader symbol={normalized} tabName={tabName} summary={state.stockSummary} />
+      <StockHeader symbol={normalized} tabName={tabName} summary={state.stockSummary} assetMarket={assetMarket} />
       <section className="grid min-w-0 items-start gap-3 sm:gap-4 xl:grid-cols-[minmax(0,1.72fr)_minmax(320px,0.82fr)]" aria-label="价格与公司概览">
-        <KLineChart data={state.klineData} status={state.chartStatus.kline} period={state.klinePeriod} onPeriodChange={(period) => setKLinePeriod(normalized, period)} />
+        <KLineChart data={state.klineData} status={state.chartStatus.kline} period={state.klinePeriod} assetMarket={assetMarket} onPeriodChange={(period) => setKLinePeriod(normalized, period)} />
         <div className="grid min-w-0 gap-3 sm:gap-4 md:grid-cols-2 xl:grid-cols-1">
           <CompanyProfileCard data={state.companyProfile} status={state.chartStatus.profile} />
           <RSChart data={state.rsData} status={state.chartStatus.rs} period={state.klinePeriod} />

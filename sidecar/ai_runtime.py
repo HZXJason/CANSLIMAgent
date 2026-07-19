@@ -42,6 +42,13 @@ _PREFETCH_DEFAULT_TIMEOUT_SECONDS = 30.0
 _PREFETCH_LIST_SAMPLE_SIZE = 16
 _PREFETCH_MAX_STRING_CHARS = 2_000
 
+_CHINA_A_VIBE_ANALYST_TOOLS: dict[str, tuple[str, ...]] = {
+    "fundamentals": ("get_financial_statements",),
+    "market": ("get_market_data",),
+    "news": ("get_stock_news",),
+    "social": (),
+}
+
 _SIDECAR_ROOT = Path(__file__).resolve().parent
 _VENDOR_ROOT = _SIDECAR_ROOT / "vendor"
 _SIDECAR_PARENTS = list(_SIDECAR_ROOT.parents)
@@ -160,6 +167,21 @@ def _normalize_analysis_date(value: str | date | datetime | None) -> date:
         raise ValueError("analysis_date must use YYYY-MM-DD format") from exc
 
 
+def is_china_a_symbol(value: str) -> bool:
+    """Return whether *value* uses the app's canonical mainland A-share form."""
+    symbol = str(value or "").strip().upper()
+    code, separator, exchange = symbol.rpartition(".")
+    if not separator or len(code) != 6 or not code.isdigit():
+        return False
+    if exchange == "SH":
+        return code[:3] in {"600", "601", "603", "605", "688", "689"}
+    if exchange == "SZ":
+        return code[:3] in {"000", "001", "002", "003", "300", "301"}
+    if exchange == "BJ":
+        return code.startswith(("920", "4", "8"))
+    return False
+
+
 def _normalize_vibe_symbols(ticker: str) -> tuple[str, str]:
     symbol = str(ticker or "").strip().upper()
     if not symbol:
@@ -203,26 +225,28 @@ def _build_prefetch_calls(
     tools: dict[str, Any],
 ) -> list[_PrefetchCall]:
     calls: list[_PrefetchCall] = []
+    china_a = is_china_a_symbol(market_symbol)
 
     if "fundamentals" in roles:
-        calls.append(
-            _PrefetchCall(
-                "fundamentals",
-                "stock_profile",
-                "get_stock_profile",
-                {
-                    "ticker": bare_ticker,
-                    "sections": [
-                        "key_stats",
-                        "financials",
-                        "earnings_trend",
-                        "institution_ownership",
-                        "insider_holders",
-                        "recommendation_trend",
-                    ],
-                },
+        if not china_a:
+            calls.append(
+                _PrefetchCall(
+                    "fundamentals",
+                    "stock_profile",
+                    "get_stock_profile",
+                    {
+                        "ticker": bare_ticker,
+                        "sections": [
+                            "key_stats",
+                            "financials",
+                            "earnings_trend",
+                            "institution_ownership",
+                            "insider_holders",
+                            "recommendation_trend",
+                        ],
+                    },
+                )
             )
-        )
 
         financial_tool = tools.get("get_financial_statements")
         base_financial_args = {
@@ -249,14 +273,15 @@ def _build_prefetch_calls(
                 )
             )
 
-        calls.append(
-            _PrefetchCall(
-                "fundamentals",
-                "sec_filings",
-                "get_sec_filings",
-                {"ticker": bare_ticker, "limit": 12},
+        if not china_a:
+            calls.append(
+                _PrefetchCall(
+                    "fundamentals",
+                    "sec_filings",
+                    "get_sec_filings",
+                    {"ticker": bare_ticker, "limit": 12},
+                )
             )
-        )
 
     if "market" in roles:
         calls.append(
@@ -285,7 +310,7 @@ def _build_prefetch_calls(
             )
         )
 
-    if "social" in roles:
+    if "social" in roles and not china_a:
         calls.append(
             _PrefetchCall(
                 "social",
@@ -667,17 +692,20 @@ def prefetch_vibe_evidence(
 
 
 @contextmanager
-def patched_tradingagents_graph() -> Iterator[None]:
+def patched_tradingagents_graph(*, china_a_mode: bool = False) -> Iterator[None]:
     """Patch TradingAgents during graph construction, then restore globals."""
-    if not vibe_tools_enabled():
-        yield
-        return
-
-    tools = _load_tools()
-    from ta_vibe_bridge.ta_patch import apply_mcp_tools
-
     with _PATCH_LOCK:
-        undo = apply_mcp_tools(tools)
+        # Graph construction updates vendored process globals. Serialize it even
+        # when Vibe is disabled so A/US factories capture the request's mode.
+        if not vibe_tools_enabled():
+            yield
+            return
+
+        tools = _load_tools()
+        from ta_vibe_bridge.ta_patch import apply_mcp_tools
+
+        assignment = _CHINA_A_VIBE_ANALYST_TOOLS if china_a_mode else None
+        undo = apply_mcp_tools(tools, assignment=assignment)
         try:
             yield
         finally:

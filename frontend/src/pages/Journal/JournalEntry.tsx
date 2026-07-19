@@ -9,7 +9,10 @@ import { ConfirmDialog } from '../../components/ui/confirm-dialog';
 import { Input } from '../../components/ui/input';
 import { Select } from '../../components/ui/select';
 import { createJournalEntry, deleteJournalEntry, fetchJournalEntry, updateJournalReflection } from '../../lib/api';
+import { displaySymbol, normalizeSymbolForAsset } from '../../lib/markets';
 import { cn } from '../../lib/utils';
+import { useMarketStore } from '../../stores/marketStore';
+import type { AssetMarket } from '../../types';
 import type {
   JournalEntry as JournalEntryType,
   JournalReflectionInput,
@@ -48,7 +51,7 @@ function currentLocalDatetime() {
   return local.toISOString().slice(0, 16);
 }
 
-function initialForm(): EntryForm {
+function initialForm(assetMarket: AssetMarket): EntryForm {
   return {
     datetime: currentLocalDatetime(),
     symbol: '',
@@ -57,8 +60,8 @@ function initialForm(): EntryForm {
     quantity: '',
     price: '',
     fee: '0',
-    market: 'us',
-    currency: 'USD',
+    market: assetMarket === 'CN' ? 'china_a' : 'us',
+    currency: assetMarket === 'CN' ? 'CNY' : 'USD',
     order_id: '',
     notes: ''
   };
@@ -71,9 +74,20 @@ function parsePositive(value: string, label: string) {
 
 function buildInput(form: EntryForm): { input: NewJournalEntryInput | null; errors: EntryErrors } {
   const errors: EntryErrors = {};
-  const symbol = form.symbol.trim().toUpperCase();
+  const rawSymbol = form.symbol.trim().toUpperCase();
+  const symbol = form.market === 'china_a'
+    ? normalizeSymbolForAsset('CN', rawSymbol)
+    : form.market === 'us'
+      ? normalizeSymbolForAsset('US', rawSymbol)
+      : rawSymbol;
   if (!form.datetime) errors.datetime = '成交时间为必填项';
-  if (!symbol) errors.symbol = '标的代码为必填项';
+  if (!rawSymbol) {
+    errors.symbol = '标的代码为必填项';
+  } else if (!symbol) {
+    errors.symbol = form.market === 'china_a'
+      ? '请输入有效的 6 位 A 股代码或匹配的 SH、SZ、BJ 代码'
+      : '请输入有效的美股代码，例如 AAPL 或 BRK.B';
+  }
   const quantity = parsePositive(form.quantity, '成交数量');
   const price = parsePositive(form.price, '成交价格');
   if (quantity.error) errors.quantity = quantity.error;
@@ -103,7 +117,7 @@ function buildInput(form: EntryForm): { input: NewJournalEntryInput | null; erro
 function Textarea({ className, ...props }: TextareaHTMLAttributes<HTMLTextAreaElement>) {
   return (
     <textarea
-      className={cn('min-h-28 w-full resize-y rounded-xl border border-slate-700/80 bg-slate-950/55 px-3.5 py-3 text-sm leading-6 text-slate-100 outline-none transition-[border-color,background-color,box-shadow] duration-150 ease-out placeholder:text-slate-600 hover:bg-slate-950/75 focus:border-cyan-300/60 focus:bg-slate-950/80 focus:ring-2 focus:ring-cyan-300/15 disabled:cursor-not-allowed disabled:bg-slate-900/55 disabled:text-slate-500', className)}
+      className={cn('min-h-28 w-full resize-y rounded-xl border border-slate-700/80 bg-slate-950/55 px-3.5 py-3 text-sm leading-6 text-slate-100 outline-none transition-[border-color,background-color,box-shadow] duration-150 ease-out placeholder:text-slate-600 hover:bg-slate-950/75 focus:border-brand-300/60 focus:bg-slate-950/80 focus:ring-2 focus:ring-brand-300/15 disabled:cursor-not-allowed disabled:bg-slate-900/55 disabled:text-slate-500', className)}
       {...props}
     />
   );
@@ -125,7 +139,8 @@ function ReadOnlyValue({ label, value }: { label: string; value: string }) {
 function NewEntryView() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
-  const [form, setForm] = useState<EntryForm>(() => initialForm());
+  const assetMarket = useMarketStore((state) => state.assetMarket);
+  const [form, setForm] = useState<EntryForm>(() => initialForm(assetMarket));
   const [errors, setErrors] = useState<EntryErrors>({});
   const amount = useMemo(() => Number(form.quantity || 0) * Number(form.price || 0), [form.quantity, form.price]);
 
@@ -214,7 +229,7 @@ function DetailView({ entry }: { entry: JournalEntryType }) {
     <div className="space-y-5">
       <Card className="overflow-hidden p-0">
         <div className="flex flex-col gap-3 border-b border-slate-800 px-5 py-4 sm:flex-row sm:items-center sm:justify-between sm:px-6">
-          <h2 className="text-xl font-bold text-white">{entry.symbol} · {entry.side === 'buy' ? '买入' : '卖出'}</h2>
+          <h2 className="text-xl font-bold text-white">{displaySymbol(entry.symbol)} · {entry.side === 'buy' ? '买入' : '卖出'}</h2>
           <span className="inline-flex self-start items-center gap-2 rounded-full bg-slate-800 px-3 py-1.5 text-xs font-semibold text-slate-300 sm:self-auto">
             <LockKeyhole className="h-4 w-4" />
             成交信息不可修改
@@ -223,7 +238,7 @@ function DetailView({ entry }: { entry: JournalEntryType }) {
         <div className="p-5 sm:p-6">
           <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
             <ReadOnlyValue label="成交时间" value={new Date(entry.datetime).toLocaleString()} />
-            <ReadOnlyValue label="标的" value={[entry.symbol, entry.name].filter(Boolean).join(' · ')} />
+            <ReadOnlyValue label="标的" value={[displaySymbol(entry.symbol), entry.name].filter(Boolean).join(' · ')} />
             <ReadOnlyValue label="市场 / 币种" value={entry.market + ' / ' + (entry.currency || '-')} />
             <ReadOnlyValue label="成交数量" value={number(entry.quantity)} />
             <ReadOnlyValue label="成交价格" value={number(entry.price)} />
@@ -251,7 +266,7 @@ function DetailView({ entry }: { entry: JournalEntryType }) {
       <ConfirmDialog
         open={deleteConfirmOpen}
         title="删除成交记录"
-        description={`删除 ${entry.symbol} 的这条成交记录后将无法恢复。`}
+        description={`删除 ${displaySymbol(entry.symbol)} 的这条成交记录后将无法恢复。`}
         confirmText="删除记录"
         onConfirm={deleteEntry}
         onOpenChange={setDeleteConfirmOpen}

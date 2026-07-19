@@ -12,7 +12,7 @@ from .stockstats_utils import (
     load_ohlcv,
     yf_retry,
 )
-from .symbol_utils import NoMarketDataError, normalize_symbol
+from .symbol_utils import NoMarketDataError, normalize_symbol, yahoo_report_symbol
 
 
 def get_YFin_data_online(
@@ -62,7 +62,13 @@ def get_YFin_data_online(
 
     # Add header information; note the resolved symbol when it differs so the
     # agent (and user) can see which instrument was actually priced.
-    label = canonical if canonical == symbol.upper() else f"{canonical} (from {symbol})"
+    display_symbol = yahoo_report_symbol(symbol, canonical)
+    if display_symbol != canonical:
+        label = display_symbol
+    elif canonical == symbol.upper():
+        label = canonical
+    else:
+        label = f"{canonical} (from {symbol})"
     header = f"# Stock data for {label} from {start_date} to {end_date}\n"
     header += f"# Total records: {len(data)}\n"
     header += f"# Data retrieved on: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n"
@@ -277,6 +283,7 @@ def get_fundamentals(
 ):
     """Get company fundamentals overview from yfinance."""
     canonical = normalize_symbol(ticker)
+    display_symbol = yahoo_report_symbol(ticker, canonical)
     try:
         ticker_obj = yf.Ticker(canonical)
         info = yf_retry(lambda: ticker_obj.info)
@@ -327,7 +334,7 @@ def get_fundamentals(
         if not lines:
             raise NoMarketDataError(ticker, canonical, "no fundamental fields returned")
 
-        header = f"# Company Fundamentals for {canonical}\n"
+        header = f"# Company Fundamentals for {display_symbol}\n"
         header += f"# Data retrieved on: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n"
 
         return header + "\n".join(lines)
@@ -345,6 +352,7 @@ def get_balance_sheet(
 ):
     """Get balance sheet data from yfinance."""
     canonical = normalize_symbol(ticker)
+    display_symbol = yahoo_report_symbol(ticker, canonical)
     try:
         ticker_obj = yf.Ticker(canonical)
 
@@ -362,7 +370,7 @@ def get_balance_sheet(
         csv_string = data.to_csv()
 
         # Add header information
-        header = f"# Balance Sheet data for {canonical} ({freq})\n"
+        header = f"# Balance Sheet data for {display_symbol} ({freq})\n"
         header += f"# Data retrieved on: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n"
 
         return header + csv_string
@@ -380,6 +388,7 @@ def get_cashflow(
 ):
     """Get cash flow data from yfinance."""
     canonical = normalize_symbol(ticker)
+    display_symbol = yahoo_report_symbol(ticker, canonical)
     try:
         ticker_obj = yf.Ticker(canonical)
 
@@ -397,7 +406,7 @@ def get_cashflow(
         csv_string = data.to_csv()
 
         # Add header information
-        header = f"# Cash Flow data for {canonical} ({freq})\n"
+        header = f"# Cash Flow data for {display_symbol} ({freq})\n"
         header += f"# Data retrieved on: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n"
 
         return header + csv_string
@@ -415,6 +424,7 @@ def get_income_statement(
 ):
     """Get income statement data from yfinance."""
     canonical = normalize_symbol(ticker)
+    display_symbol = yahoo_report_symbol(ticker, canonical)
     try:
         ticker_obj = yf.Ticker(canonical)
 
@@ -432,7 +442,7 @@ def get_income_statement(
         csv_string = data.to_csv()
 
         # Add header information
-        header = f"# Income Statement data for {canonical} ({freq})\n"
+        header = f"# Income Statement data for {display_symbol} ({freq})\n"
         header += f"# Data retrieved on: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n"
 
         return header + csv_string
@@ -448,6 +458,7 @@ def get_insider_transactions(
 ):
     """Get insider transactions data from yfinance."""
     canonical = normalize_symbol(ticker)
+    display_symbol = yahoo_report_symbol(ticker, canonical)
     try:
         ticker_obj = yf.Ticker(canonical)
         data = yf_retry(lambda: ticker_obj.insider_transactions)
@@ -455,13 +466,13 @@ def get_insider_transactions(
         # Empty is normal here (many valid symbols have no insider filings),
         # so report it plainly rather than treating the symbol as invalid.
         if data is None or data.empty:
-            return f"No insider transactions reported for symbol '{canonical}'"
+            return f"No insider transactions reported for symbol '{display_symbol}'"
 
         # Convert to CSV string for consistency with other functions
         csv_string = data.to_csv()
 
         # Add header information
-        header = f"# Insider Transactions data for {canonical}\n"
+        header = f"# Insider Transactions data for {display_symbol}\n"
         header += f"# Data retrieved on: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n"
 
         return header + csv_string

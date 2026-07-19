@@ -92,7 +92,7 @@ export function ConfirmDialog({
       aria-describedby={descriptionId}
       tabIndex={-1}
     >
-      <div className="dialog-surface max-h-[calc(100dvh-2rem)] w-full max-w-md overflow-y-auto rounded-[22px] border border-slate-700/80 bg-[#111a29] p-5 shadow-float sm:p-6">
+      <div className="dialog-surface max-h-[calc(100dvh-2rem)] w-full max-w-md overflow-y-auto rounded-[22px] border border-slate-700/80 bg-surface-elevated p-5 shadow-float sm:p-6">
         <h2 id={titleId} className="text-lg font-bold tracking-[-0.015em] text-white sm:text-xl">{title}</h2>
         <p id={descriptionId} className="mt-3 text-sm leading-6 text-slate-400">{description}</p>
         <div className="mt-6 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end sm:gap-3">

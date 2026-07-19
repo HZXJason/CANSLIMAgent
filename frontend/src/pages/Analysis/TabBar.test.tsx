@@ -40,6 +40,28 @@ describe('Analysis TabBar', () => {
     expect(screen.queryByRole('textbox', { name: '股票代码' })).not.toBeInTheDocument();
   });
 
+  it('keeps the add field open and explains an invalid market symbol', () => {
+    const onAdd = vi.fn(() => false);
+    render(
+      <TabBar
+        tabs={[]}
+        activeTabId={null}
+        onActive={vi.fn()}
+        onClose={vi.fn()}
+        onAdd={onAdd}
+        invalidSymbolMessage="请输入 6 位 A 股代码"
+      />
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: '添加股票' }));
+    fireEvent.change(screen.getByRole('textbox', { name: '股票代码' }), { target: { value: 'AAPL' } });
+    fireEvent.click(screen.getByRole('button', { name: '打开股票' }));
+
+    expect(onAdd).toHaveBeenCalledWith('AAPL');
+    expect(screen.getByRole('alert')).toHaveTextContent('请输入 6 位 A 股代码');
+    expect(screen.getByRole('textbox', { name: '股票代码' })).toHaveAttribute('aria-invalid', 'true');
+  });
+
   it('keeps tab selection and close actions separate', () => {
     const onActive = vi.fn();
     const onClose = vi.fn();
@@ -50,6 +72,16 @@ describe('Analysis TabBar', () => {
 
     expect(onActive).toHaveBeenCalledWith('MSFT');
     expect(onClose).toHaveBeenCalledWith('AAPL');
+  });
+
+  it('keeps canonical A-share identities while displaying the code without its suffix', () => {
+    const onActive = vi.fn();
+    const cnTabs = [{ symbol: '600519.SH', name: '贵州茅台', openedAt: 1 }];
+    render(<TabBar tabs={cnTabs} activeTabId="600519.SH" onActive={onActive} onClose={vi.fn()} onAdd={vi.fn()} />);
+
+    fireEvent.click(screen.getByRole('tab', { name: '600519 贵州茅台' }));
+    expect(onActive).toHaveBeenCalledWith('600519.SH');
+    expect(screen.getByRole('button', { name: '关闭 600519' })).toBeInTheDocument();
   });
 
   it('scrolls a clipped active tab into view without moving visible tabs', () => {

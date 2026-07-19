@@ -1,3 +1,4 @@
+import json
 import unittest
 import tempfile
 import httpx
@@ -207,6 +208,30 @@ class ApplicationContextTest(unittest.TestCase):
         self.assertIn('"quantity": 5', context)
         self.assertIn("behavioral context", context)
 
+    def test_a_share_context_uses_cny_and_does_not_penalize_us_only_gaps(self):
+        class FakeGraph:
+            def resolve_instrument_context(self, ticker, asset_type="stock"):
+                return f"instrument={ticker};asset={asset_type}"
+
+        graph = FakeGraph()
+        request = main.AnalysisRequest(
+            ticker="600519.SH",
+            analysis_context={"price": {"currency": "CNY", "close": 1450}},
+        )
+
+        main.attach_application_context(graph, request)
+        context = graph.resolve_instrument_context("600519.SH")
+        payload = main.compact_context_json(request)
+
+        self.assertIn("mainland China A-share", context)
+        self.assertIn("CNY/RMB", context)
+        self.assertIn("RMB turnover rather than dollar volume", context)
+        self.assertIn("SEC filings", context)
+        self.assertIn("never a negative fact", context)
+        self.assertIn('"market": "china_a"', payload)
+        self.assertIn('"currency": "CNY"', payload)
+        self.assertIn('"canonical_symbol": "600519.SH"', payload)
+
     def test_checkpoint_directory_is_scoped_by_run_id(self):
         request = main.AnalysisRequest(ticker="NVDA", run_id="run-nvda-checkpoint-001")
         config = {}
@@ -242,6 +267,117 @@ class ApplicationContextTest(unittest.TestCase):
         self.assertNotIn("77114000", payload)
         self.assertIn("283055000", payload)
         self.assertIn("governed by data_audit", payload)
+
+
+class CANSLIMSecondLayerMarketPromptTest(unittest.TestCase):
+    def test_us_prompt_is_unchanged(self):
+        self.assertEqual(
+            main.canslim_second_layer_system_prompt("AAPL"),
+            main.CANSLIM_SECOND_LAYER_SYSTEM_PROMPT,
+        )
+
+    def test_a_share_prompt_uses_rmb_and_treats_us_only_gaps_as_unavailable(self):
+        observed = {}
+
+        class FakeLLM:
+            def invoke(self, messages):
+                observed["messages"] = messages
+                return SimpleNamespace(content="分析完成")
+
+        request = main.AnalysisRequest(
+            ticker="000001.SZ",
+            analysts=["canslim_second_layer"],
+            analysis_context={"price": {"currency": "CNY"}},
+        )
+        with patch.object(main, "create_role_llm", return_value=FakeLLM()):
+            result = main.run_canslim_second_layer_analysis(request)
+
+        system_prompt = observed["messages"][0].content
+        user_prompt = observed["messages"][1].content
+        self.assertEqual(result, "分析完成")
+        self.assertIn("平均人民币成交额", system_prompt)
+        self.assertIn("SEC EDGAR", system_prompt)
+        self.assertIn("不得据此扣分", system_prompt)
+        self.assertIn("不得外推或编造", system_prompt)
+        self.assertNotIn("平均美元成交额", system_prompt)
+        self.assertNotIn("second_layer_data.sec.insider_transactions", system_prompt)
+        self.assertNotIn("增发/ATM", system_prompt)
+        self.assertIn('"market": "china_a"', user_prompt)
+        self.assertIn('"turnover_unit": "CNY"', user_prompt)
+
+
+class TradingAgentsMarketConfigurationTest(unittest.TestCase):
+    def test_a_share_graph_captures_mode_benchmark_and_yfinance_routes(self):
+        from tradingagents.graph import trading_graph as trading_graph_module
+
+        observed = {}
+
+        class PatchContext:
+            def __enter__(self):
+                return None
+
+            def __exit__(self, *_args):
+                return False
+
+        def fake_patch(*, china_a_mode):
+            observed["patched_mode"] = china_a_mode
+            return PatchContext()
+
+        class FakeGraph:
+            def __init__(self, *, selected_analysts, debug, config, callbacks):
+                observed["selected_analysts"] = selected_analysts
+                observed["config"] = config
+                self.config = config
+
+        request = main.AnalysisRequest(
+            ticker="600519.SH",
+            api_key="request-secret",
+            run_id="run-china-a-graph-001",
+        )
+        with patch.object(main, "configure_analysis_checkpoint"), patch.object(
+            main,
+            "patched_tradingagents_graph",
+            side_effect=fake_patch,
+        ), patch.object(trading_graph_module, "TradingAgentsGraph", FakeGraph):
+            graph = main.configured_graph(request, analysts=("market", "news"))
+
+        self.assertIs(graph.config, observed["config"])
+        self.assertTrue(observed["patched_mode"])
+        self.assertTrue(observed["config"]["china_a_mode"])
+        self.assertEqual(observed["config"]["benchmark_ticker"], "000300.SS")
+        for category in (
+            "core_stock_apis",
+            "technical_indicators",
+            "fundamental_data",
+            "news_data",
+        ):
+            self.assertEqual(observed["config"]["data_vendors"][category], "yfinance")
+        # configured_graph removes the request key after clients have copied it.
+        self.assertNotIn("api_key", observed["config"])
+
+    def test_a_share_vibe_rendering_names_yahoo_boundary_and_source_provenance(self):
+        rendered = main.render_vibe_evidence(
+            {
+                "market_symbol": "600519.SH",
+                "status": "complete",
+                "summary": {"requested": 1, "ok": 1, "failed": 0},
+                "source_traces": [
+                    {
+                        "tool": "get_market_data",
+                        "role": "market",
+                        "status": "ok",
+                        "source": "china-a-provider",
+                        "duration_ms": 3,
+                    }
+                ],
+            }
+        )
+
+        self.assertIn("Yahoo A股行情快照", rendered)
+        self.assertIn("`.SH` 转为 `.SS`", rendered)
+        self.assertIn("Vibe 实际来源", rendered)
+        self.assertIn("单一来源不会被描述为跨源核验", rendered)
+        self.assertIn("`china-a-provider`", rendered)
 
 
 class BrokerGatewayDiscoveryTest(unittest.IsolatedAsyncioTestCase):
@@ -603,6 +739,60 @@ class DataAuditorTest(unittest.TestCase):
         self.assertEqual(quarter["status"], "verified")
         self.assertEqual(quarter["selected"]["value"], 0.25)
         self.assertIn("annual_revenue_2025", {item["id"] for item in audit["canonical_facts"]})
+
+    def test_a_share_audit_uses_disclosure_sources_without_sec_claims(self):
+        bundle = {
+            "market_symbol": "600519.SH",
+            "source_traces": [
+                {"evidence_key": "financial_indicators_annual", "payload": {"data": {}}},
+                {"evidence_key": "financial_indicators_quarterly", "payload": {"data": {}}},
+            ],
+        }
+        context = {
+            "stock_summary": {"symbol": "600519.SH", "market": "SSE_MAIN"},
+            "revenue": {
+                "source": "东方财富 F10",
+                "years": [{"year": 2025, "revenue": 174144000000.0, "data_sufficient": True}],
+            },
+            "eps": {
+                "source": "东方财富 F10",
+                "quarters": [{"period": "2026Q1", "eps": 19.0, "data_sufficient": True}],
+            },
+        }
+
+        audit = data_auditor.audit_data(bundle, context)
+        rendered = data_auditor.render_data_audit(audit)
+
+        self.assertEqual(audit["status"], "source_only")
+        self.assertTrue(all(item["status"] == "source_only" for item in audit["findings"]))
+        self.assertTrue(all(item["verification"] == "single_source" for item in audit["canonical_facts"]))
+        self.assertEqual({item["source"] for item in audit["canonical_facts"]}, {"东方财富 F10"})
+        self.assertNotIn(
+            "SEC",
+            json.dumps(
+                {
+                    "scope": audit["scope"],
+                    "findings": audit["findings"],
+                    "canonical_facts": audit["canonical_facts"],
+                },
+                ensure_ascii=False,
+            ),
+        )
+        self.assertIn("单一来源", rendered)
+
+    def test_invalid_exchange_prefix_does_not_enter_a_share_source_only_path(self):
+        audit = data_auditor.audit_data(
+            {"market_symbol": "123456.SZ", "source_traces": []},
+            {
+                "stock_summary": {"symbol": "123456.SZ"},
+                "revenue": {
+                    "source": "test",
+                    "years": [{"year": 2025, "revenue": 1, "data_sufficient": True}],
+                },
+            },
+        )
+
+        self.assertNotEqual(audit["status"], "source_only")
 
 
 class ReconnectableAnalyzeEndpointTest(unittest.IsolatedAsyncioTestCase):

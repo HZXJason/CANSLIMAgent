@@ -2,6 +2,10 @@ package services
 
 import (
 	"context"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -100,17 +104,20 @@ func TestNeedsSingleStockHydration(t *testing.T) {
 		IDataSufficient:   true,
 		DataAsOf:          time.Now().UTC(),
 	}
-	if needsSingleStockHydration(metric) {
+	if needsSingleStockHydration(metric, true) {
 		t.Fatal("expected complete current metric to be retained")
 	}
 	metric.DataAsOf = time.Now().UTC().AddDate(0, 0, -4)
-	if !needsSingleStockHydration(metric) {
+	if !needsSingleStockHydration(metric, true) {
 		t.Fatal("expected stale metric to be refreshed")
 	}
 	metric.DataAsOf = time.Now().UTC()
 	metric.IInstitutionDelta = nil
-	if !needsSingleStockHydration(metric) {
+	if !needsSingleStockHydration(metric, true) {
 		t.Fatal("expected missing I metric to be refreshed")
+	}
+	if needsSingleStockHydration(metric, false) {
+		t.Fatal("expected A-share metric to remain reusable without institutional data")
 	}
 }
 
@@ -122,5 +129,36 @@ func TestRefreshJobContextSurvivesRequestCancellation(t *testing.T) {
 	}
 	if err := refreshJobContext(requestContext).Err(); err != nil {
 		t.Fatalf("refresh job inherited cancelled request context: %v", err)
+	}
+}
+
+func TestApplyInstitutionalSignalSkipsAshareMarkets(t *testing.T) {
+	var calls atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		calls.Add(1)
+		http.Error(w, "unexpected Nasdaq request", http.StatusInternalServerError)
+	}))
+	defer server.Close()
+
+	institutional := NewInstitutionalClient(true, time.Second)
+	institutional.baseURL = server.URL
+	institutional.client = server.Client()
+	service := &ScannerService{institutional: institutional}
+	metric := emptyMetric(time.Now().UTC())
+
+	service.applyInstitutionalSignal(context.Background(), models.MarketSSEMain, "600519.SH", &metric)
+	if calls.Load() != 0 {
+		t.Fatalf("A-share route made %d Nasdaq institutional requests", calls.Load())
+	}
+	if metric.IDataSufficient || metric.IInstitutionDelta != nil {
+		t.Fatalf("A-share institutional metric was fabricated: %#v", metric)
+	}
+}
+
+func TestFetchUniverseDoesNotFallbackWhenAshareRouteDisabled(t *testing.T) {
+	service := &ScannerService{ashare: NewAshareClient(false, time.Second)}
+	_, err := service.fetchUniverse(context.Background(), models.MarketChiNext)
+	if err == nil || !strings.Contains(err.Error(), "A 股数据源未启用") {
+		t.Fatalf("fetchUniverse error = %v", err)
 	}
 }

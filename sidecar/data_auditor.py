@@ -10,6 +10,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from ai_runtime import is_china_a_symbol
+
 
 _REVENUE_KEY = "RevenueFromContractWithCustomerExcludingAssessedTax"
 _EPS_KEY = "EarningsPerShareDiluted"
@@ -92,6 +94,106 @@ def _candidate(source: str, value: float | None, *, period: str, detail: str, ac
     return result
 
 
+def _is_china_a_context(bundle: dict[str, Any], application_context: dict[str, Any]) -> bool:
+    summary = _as_dict(application_context.get("stock_summary"))
+    symbol = str(
+        bundle.get("market_symbol")
+        or bundle.get("symbol")
+        or summary.get("symbol")
+        or ""
+    ).strip().upper()
+    return is_china_a_symbol(symbol)
+
+
+def _audit_china_a(application_context: dict[str, Any]) -> dict[str, Any]:
+    """Keep A-share disclosure values usable without pretending SEC verification."""
+    findings: list[dict[str, Any]] = []
+    canonical: list[dict[str, Any]] = []
+
+    revenue_context = _as_dict(application_context.get("revenue"))
+    annual = _latest_context_year(application_context)
+    if annual:
+        year = int(annual["year"])
+        value = _number(annual.get("revenue"))
+        source = str(revenue_context.get("source") or "A 股上市公司财务披露")
+        candidate = _candidate(
+            source,
+            value,
+            period=str(year),
+            detail="application-provided A-share annual series; single source, not cross-source verified",
+        )
+        finding = {
+            "id": f"annual_revenue_{year}",
+            "field": "年度营收",
+            "period": str(year),
+            "status": "source_only" if value is not None else "unverified",
+            "candidates": [candidate],
+            "reason": "来自已标注来源的 A 股年度披露序列；本次没有独立同期间来源用于交叉核验。",
+        }
+        if value is not None:
+            finding["selected"] = candidate
+            canonical.append(
+                {
+                    "id": finding["id"],
+                    "field": finding["field"],
+                    "period": finding["period"],
+                    "value": value,
+                    "source": source,
+                    "verification": "single_source",
+                }
+            )
+        findings.append(finding)
+
+    eps_context = _as_dict(application_context.get("eps"))
+    quarter = _latest_context_quarter(application_context)
+    if quarter:
+        period = str(quarter["period"])
+        value = _number(quarter.get("eps"))
+        source = str(eps_context.get("source") or "A 股上市公司财务披露")
+        candidate = _candidate(
+            source,
+            value,
+            period=period,
+            detail="application-provided A-share quarterly series; single source, not cross-source verified",
+        )
+        finding = {
+            "id": f"diluted_eps_{period}",
+            "field": "每股收益",
+            "period": period,
+            "status": "source_only" if value is not None else "unverified",
+            "candidates": [candidate],
+            "reason": "来自已标注来源的 A 股季度披露序列；本次没有独立同期间来源用于交叉核验。",
+        }
+        if value is not None:
+            finding["selected"] = candidate
+            canonical.append(
+                {
+                    "id": finding["id"],
+                    "field": finding["field"],
+                    "period": period,
+                    "value": value,
+                    "source": source,
+                    "verification": "single_source",
+                }
+            )
+        findings.append(finding)
+
+    return {
+        "schema_version": "vibe.data_audit.v1",
+        "status": "source_only" if canonical else "not_available",
+        "scope": "A-share application disclosure series with source provenance; no cross-source verification",
+        "findings": findings,
+        "canonical_facts": canonical,
+        "blocked_claims": [],
+        "rules": [
+            "Use canonical_facts as single-source disclosure values and cite their stated source.",
+            "Do not describe single_source facts as independently or cross-source verified.",
+            "SEC filings, US insider data, US options, and US short-interest data are not expected for A shares.",
+            "Treat fields outside this audit scope as unverified unless their own source metadata is shown.",
+        ],
+    }
+
+
 def audit_data(bundle: dict[str, Any], application_context: dict[str, Any]) -> dict[str, Any]:
     """Build a strict financial audit contract from current-run evidence.
 
@@ -100,6 +202,9 @@ def audit_data(bundle: dict[str, Any], application_context: dict[str, Any]) -> d
     raw Vibe 10-Q rows are accepted for a matching quarter.  A raw 10-K row
     lacking duration metadata is never allowed to overwrite an annual value.
     """
+    if _is_china_a_context(bundle, application_context):
+        return _audit_china_a(application_context)
+
     annual_trace = _trace(bundle, "financial_indicators_annual")
     quarterly_trace = _trace(bundle, "financial_indicators_quarterly")
     annual_rows = _period_rows(annual_trace)
@@ -220,7 +325,12 @@ def render_data_audit(audit: dict[str, Any]) -> str:
             continue
         selected = _as_dict(finding.get("selected"))
         value = selected.get("value") if selected else "未知"
-        status = {"verified": "已核验", "conflict": "冲突", "unverified": "未核验"}.get(finding.get("status"), "未知")
+        status = {
+            "verified": "已核验",
+            "source_only": "单一来源",
+            "conflict": "冲突",
+            "unverified": "未核验",
+        }.get(finding.get("status"), "未知")
         lines.append(f"| {finding.get('field', '-')} | {finding.get('period', '-')} | {status} | {value} | {finding.get('reason', '-')} |")
         if finding.get("status") == "conflict":
             for candidate in finding.get("candidates", []):

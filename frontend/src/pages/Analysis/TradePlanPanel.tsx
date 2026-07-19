@@ -4,6 +4,7 @@ import { useNavigate } from 'react-router-dom';
 import { Button } from '../../components/ui/button';
 import { Card } from '../../components/ui/card';
 import { fetchTradePlans } from '../../lib/api';
+import { displaySymbol } from '../../lib/markets';
 import { cn, formatDateCN } from '../../lib/utils';
 import type { TradePlan, TradePlanStatus } from '../../types/tradePlan';
 
@@ -23,7 +24,7 @@ const directionLabel: Record<TradePlan['direction'], string> = {
 
 const statusClass: Record<TradePlanStatus, string> = {
   draft: 'border-slate-700 bg-slate-950/30 text-slate-300',
-  waiting: 'border-cyan-400/50 bg-cyan-400/10 text-cyan-200',
+  waiting: 'border-brand-400/50 bg-brand-400/10 text-brand-200',
   executed: 'border-emerald-400/60 bg-emerald-400/15 text-emerald-200',
   cancelled: 'border-red-400/50 bg-red-950/50 text-red-100',
   expired: 'border-amber-400/50 bg-amber-950/40 text-amber-100'
@@ -40,6 +41,7 @@ function StatusBadge({ status }: { status: TradePlanStatus }) {
 
 export default function TradePlanPanel({ symbol, aiSummary }: { symbol: string; aiSummary?: string }) {
   const navigate = useNavigate();
+  const visibleSymbol = displaySymbol(symbol);
   const plansQuery = useQuery({
     queryKey: ['trade-plans', { ticker: symbol }],
     queryFn: () => fetchTradePlans({ ticker: symbol })
@@ -75,9 +77,9 @@ export default function TradePlanPanel({ symbol, aiSummary }: { symbol: string; 
       {plansQuery.isError ? <div className="rounded-2xl border border-red-800 bg-red-950/60 px-4 py-3 text-sm text-red-100">交易计划读取失败</div> : null}
 
       {!plansQuery.isLoading && !plansQuery.isError && activePlans.length === 0 ? (
-        <button className="flex min-h-24 w-full items-center justify-center gap-3 rounded-xl border border-dashed border-slate-700 bg-slate-950/25 text-sm font-semibold text-slate-400 transition hover:border-cyan-400/50 hover:text-cyan-200" onClick={createPlan}>
+        <button className="flex min-h-24 w-full items-center justify-center gap-3 rounded-xl border border-dashed border-slate-700 bg-slate-950/25 text-sm font-semibold text-slate-400 transition hover:border-brand-400/50 hover:text-brand-200" onClick={createPlan}>
           <ClipboardList className="h-5 w-5" />
-          新建 {symbol} 交易计划
+          新建 {visibleSymbol} 交易计划
         </button>
       ) : null}
 
@@ -86,7 +88,7 @@ export default function TradePlanPanel({ symbol, aiSummary }: { symbol: string; 
           {activePlans.map((plan) => (
             <button
               key={plan.id}
-              className="min-h-28 rounded-xl border border-slate-800 bg-slate-950/35 p-4 text-left transition hover:border-cyan-400/40 hover:bg-slate-900"
+              className="min-h-28 rounded-xl border border-slate-800 bg-slate-950/35 p-4 text-left transition hover:border-brand-400/40 hover:bg-slate-900"
               onClick={() => navigate('/trade-plans/' + plan.id)}
             >
               <div className="flex items-start justify-between gap-3">
@@ -96,7 +98,7 @@ export default function TradePlanPanel({ symbol, aiSummary }: { symbol: string; 
               <p className="mt-3 line-clamp-2 text-sm leading-6 text-slate-300">{plan.entry_trigger || '未填写触发条件'}</p>
               <div className="mt-3 flex flex-wrap items-center gap-3 text-xs font-semibold text-slate-500">
                 <span className="inline-flex items-center gap-1">
-                  <Clock3 className="h-3.5 w-3.5 text-cyan-300" />
+                  <Clock3 className="h-3.5 w-3.5 text-brand-300" />
                   {formatDateCN(plan.plan_date)}
                 </span>
                 <span>入场 {formatMoney(plan.entry_price)}</span>

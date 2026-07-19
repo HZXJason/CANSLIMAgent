@@ -82,8 +82,8 @@ export default function ThresholdPanel({
           aria-expanded={open}
           aria-controls="screener-threshold-fields"
         >
-          <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-cyan-300/15 bg-cyan-300/[0.07]">
-            <ChevronRight className={cn('h-4 w-4 text-cyan-300 transition-transform duration-150', open && 'rotate-90')} />
+          <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-brand-300/15 bg-brand-300/[0.07]">
+            <ChevronRight className={cn('h-4 w-4 text-brand-300 transition-transform duration-150', open && 'rotate-90')} />
           </span>
           <span className="min-w-0">
             <span className="block truncate text-base font-bold text-white">筛选阈值</span>

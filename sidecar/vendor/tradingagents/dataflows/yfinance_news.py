@@ -8,7 +8,7 @@ from dateutil.relativedelta import relativedelta
 
 from .config import get_config
 from .stockstats_utils import yf_retry
-from .symbol_utils import normalize_symbol
+from .symbol_utils import normalize_symbol, yahoo_report_symbol
 
 
 def _extract_article_data(article: dict) -> dict:
@@ -92,7 +92,8 @@ def get_news_yfinance(
     # a raw broker/forex/crypto alias (XAUUSD, BTCUSD) otherwise silently
     # returns no news. Keep the user's ticker in the report header.
     canonical = normalize_symbol(ticker)
-    resolved = "" if canonical == ticker else f" (resolved to {canonical})"
+    display_symbol = yahoo_report_symbol(ticker, canonical)
+    resolved = "" if display_symbol != canonical or canonical == ticker.upper() else f" (resolved to {canonical})"
     try:
         stock = yf.Ticker(canonical)
         news = yf_retry(lambda: stock.get_news(count=article_limit))

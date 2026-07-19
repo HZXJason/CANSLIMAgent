@@ -62,6 +62,11 @@ def _coerce_max_retries(value):
     return n
 
 
+def _shared_dataflow_config(config: dict[str, Any]) -> dict[str, Any]:
+    """Return process-global dataflow settings without request LLM secrets."""
+    return {key: value for key, value in config.items() if key != "api_key"}
+
+
 class TradingAgentsGraph:
     """Main class that orchestrates the trading agents framework."""
 
@@ -84,8 +89,9 @@ class TradingAgentsGraph:
         self.config = config or DEFAULT_CONFIG
         self.callbacks = callbacks or []
 
-        # Update the interface's config
-        set_config(self.config)
+        # Dataflow routing is process-global in the vendored runtime. Never copy
+        # the request-scoped LLM secret into that shared configuration.
+        set_config(_shared_dataflow_config(self.config))
 
         # Create necessary directories
         os.makedirs(self.config["data_cache_dir"], exist_ok=True)
@@ -129,6 +135,7 @@ class TradingAgentsGraph:
             self.deep_thinking_llm,
             self.tool_nodes,
             self.conditional_logic,
+            china_a_mode=bool(self.config.get("china_a_mode")),
         )
 
         self.propagator = Propagator(
@@ -191,6 +198,16 @@ class TradingAgentsGraph:
 
     def _create_tool_nodes(self) -> dict[str, ToolNode]:
         """Create tool nodes for different data sources using abstract methods."""
+        news_tools = [get_news]
+        if not self.config.get("china_a_mode"):
+            news_tools.extend(
+                [
+                    get_global_news,
+                    get_insider_transactions,
+                    get_macro_indicators,
+                    get_prediction_markets,
+                ]
+            )
         return {
             "market": ToolNode(
                 [
@@ -211,14 +228,7 @@ class TradingAgentsGraph:
                 ]
             ),
             "news": ToolNode(
-                [
-                    # News and insider information
-                    get_news,
-                    get_global_news,
-                    get_insider_transactions,
-                    get_macro_indicators,
-                    get_prediction_markets,
-                ]
+                news_tools
             ),
             "fundamentals": ToolNode(
                 [

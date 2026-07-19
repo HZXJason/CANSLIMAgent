@@ -1,4 +1,7 @@
-export type Market = 'SP500' | 'NASDAQ100' | 'RUSSELL2000';
+export type AssetMarket = 'US' | 'CN';
+export type USMarket = 'SP500' | 'NASDAQ100' | 'RUSSELL2000';
+export type CNMarket = 'SSE_MAIN' | 'SZSE_MAIN' | 'STAR' | 'CHINEXT' | 'BSE';
+export type Market = USMarket | CNMarket;
 export type LabelKey = 'C' | 'A' | 'S' | 'L' | 'I';
 export type ScreenerFilterKey = LabelKey | 'N';
 export type LabelStatus = 'pass' | 'fail' | 'insufficient';

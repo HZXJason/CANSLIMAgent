@@ -47,7 +47,25 @@ def _seven_days_back(trade_date: str) -> str:
     return (datetime.strptime(trade_date, "%Y-%m-%d") - timedelta(days=7)).strftime("%Y-%m-%d")
 
 
-def create_sentiment_analyst(llm):
+def prefetch_sentiment_sources(
+    ticker: str,
+    start_date: str,
+    end_date: str,
+    *,
+    china_a_mode: bool,
+) -> tuple[str, str | None, str | None]:
+    """Fetch only market-applicable sentiment sources for one instrument."""
+    news_block = get_news.func(ticker, start_date, end_date)
+    if china_a_mode:
+        return news_block, None, None
+    return (
+        news_block,
+        fetch_stocktwits_messages(ticker, limit=30),
+        fetch_reddit_posts(ticker),
+    )
+
+
+def create_sentiment_analyst(llm, *, china_a_mode: bool = False):
     """Create a sentiment analyst node for the trading graph.
 
     Pre-fetches news + StockTwits + Reddit data, injects them into the
@@ -63,12 +81,14 @@ def create_sentiment_analyst(llm):
         start_date = _seven_days_back(end_date)
         instrument_context = get_instrument_context_from_state(state)
 
-        # Pre-fetch all three sources. Each fetcher degrades gracefully and
-        # returns a string (no exceptions surface from here), so the LLM
-        # always sees something — either real data or a clear placeholder.
-        news_block = get_news.func(ticker, start_date, end_date)
-        stocktwits_block = fetch_stocktwits_messages(ticker, limit=30)
-        reddit_block = fetch_reddit_posts(ticker)
+        # A shares intentionally skip US retail-social sources. Their absence
+        # is market scope, not missing bearish evidence.
+        news_block, stocktwits_block, reddit_block = prefetch_sentiment_sources(
+            ticker,
+            start_date,
+            end_date,
+            china_a_mode=china_a_mode,
+        )
 
         system_message = _build_system_message(
             ticker=ticker,
@@ -77,6 +97,7 @@ def create_sentiment_analyst(llm):
             news_block=news_block,
             stocktwits_block=stocktwits_block,
             reddit_block=reddit_block,
+            china_a_mode=china_a_mode,
         )
 
         prompt = ChatPromptTemplate.from_messages(
@@ -124,10 +145,25 @@ def _build_system_message(
     start_date: str,
     end_date: str,
     news_block: str,
-    stocktwits_block: str,
-    reddit_block: str,
+    stocktwits_block: str | None,
+    reddit_block: str | None,
+    china_a_mode: bool = False,
 ) -> str:
     """Assemble the sentiment-analyst system message with structured data blocks."""
+    if china_a_mode:
+        return f"""You are a mainland China A-share sentiment analyst. Produce a source-grounded sentiment report for {ticker} covering {start_date} to {end_date}.
+
+Use only the A-share company news below and the CANSLIMAgent application context supplied separately in the instrument context. StockTwits, Reddit, US options, SEC, US insider, prediction-market, and US macro sources are intentionally outside this market scope: do not call them, infer them, or count their absence as negative evidence or a score penalty.
+
+<start_of_a_share_company_news>
+{news_block}
+<end_of_a_share_company_news>
+
+If company-news coverage is unavailable or insufficient, set confidence to low and use a Neutral score rather than inventing social sentiment or treating silence as bearish. Distinguish actual company events from interpretations, cite the supplied source for material claims, and treat monetary context as CNY unless explicitly labeled otherwise.
+
+Fill the standard overall_band, overall_score, confidence, and narrative fields. The narrative must explain the available A-share company-news signal, application-context evidence, data limits, catalysts, and risks, with a markdown summary table.
+
+{get_language_instruction()}"""
     return f"""You are a financial market sentiment analyst. Your task is to produce a comprehensive sentiment report for {ticker} covering the period from {start_date} to {end_date}, drawing on three complementary data sources that have already been collected for you.
 
 ## Data sources (pre-fetched, in this prompt)
@@ -186,7 +222,7 @@ Fill the following fields:
 # ---------------------------------------------------------------------------
 # Backwards-compatibility shim
 # ---------------------------------------------------------------------------
-def create_social_media_analyst(llm):
+def create_social_media_analyst(llm, *, china_a_mode: bool = False):
     """Deprecated alias for :func:`create_sentiment_analyst`.
 
     Kept so existing code that imports ``create_social_media_analyst``
@@ -202,4 +238,4 @@ def create_social_media_analyst(llm):
         DeprecationWarning,
         stacklevel=2,
     )
-    return create_sentiment_analyst(llm)
+    return create_sentiment_analyst(llm, china_a_mode=china_a_mode)

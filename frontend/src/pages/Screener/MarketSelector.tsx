@@ -1,24 +1,25 @@
-import type { Market } from '../../types';
+import { SCREENER_MARKETS } from '../../lib/markets';
 import { cn } from '../../lib/utils';
-
-const markets: Array<{ value: Market; label: string }> = [
-  { value: 'SP500', label: '标普 500' },
-  { value: 'NASDAQ100', label: '纳指 100' },
-  { value: 'RUSSELL2000', label: '罗素 2000' }
-];
+import type { AssetMarket, Market } from '../../types';
 
 interface MarketSelectorProps {
+  assetMarket: AssetMarket;
   selectedMarket: Market;
   onChange: (market: Market) => void;
   disabled?: boolean;
 }
 
-export default function MarketSelector({ selectedMarket, onChange, disabled = false }: MarketSelectorProps) {
+export default function MarketSelector({ assetMarket, selectedMarket, onChange, disabled = false }: MarketSelectorProps) {
+  const markets = SCREENER_MARKETS[assetMarket];
+
   return (
     <div
-      className="grid w-full grid-cols-3 gap-1.5 rounded-2xl border border-slate-800/90 bg-slate-950/45 p-1.5"
+      className={cn(
+        'grid w-full gap-1.5 rounded-2xl border border-slate-800/90 bg-slate-950/45 p-1.5',
+        markets.length > 3 ? 'grid-cols-2 sm:grid-cols-3 lg:grid-cols-5' : 'grid-cols-3'
+      )}
       role="tablist"
-      aria-label="市场筛选"
+      aria-label={assetMarket === 'CN' ? 'A股板块筛选' : '美股市场筛选'}
     >
       {markets.map((market) => (
         <button
@@ -32,7 +33,7 @@ export default function MarketSelector({ selectedMarket, onChange, disabled = fa
             disabled
               ? 'cursor-not-allowed border-transparent text-slate-600'
               : selectedMarket === market.value
-                ? 'border-cyan-300/30 bg-cyan-300/[0.12] text-cyan-50 shadow-[inset_0_-2px_0_rgba(103,216,243,0.75)]'
+                ? 'border-brand-300/30 bg-brand-300/[0.12] text-brand-50 shadow-[inset_0_-2px_0_var(--accent)]'
                 : 'border-transparent text-slate-400 hover:border-slate-700/70 hover:bg-slate-800/65 hover:text-white'
           )}
           onClick={() => onChange(market.value)}

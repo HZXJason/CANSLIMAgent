@@ -1,5 +1,6 @@
 import { create } from 'zustand';
-import type { Market, ScanProgress, ScreenerFilterKey, StockWithMetrics, ThresholdConfig, ThresholdPreset } from '../types';
+import { DEFAULT_SCREENER_MARKET, assetMarketForScreenerMarket, normalizeSymbolForAsset } from '../lib/markets';
+import type { AssetMarket, Market, ScanProgress, ScreenerFilterKey, StockWithMetrics, ThresholdConfig, ThresholdPreset } from '../types';
 
 export const DEFAULT_THRESHOLDS: ThresholdConfig = {
   c_min_growth: 25,
@@ -12,8 +13,8 @@ export const DEFAULT_THRESHOLDS: ThresholdConfig = {
 };
 
 interface ScreenerStore {
-  selectedMarket: Market;
-  setMarket: (market: Market) => void;
+  selectedMarkets: Record<AssetMarket, Market>;
+  setMarket: (assetMarket: AssetMarket, market: Market) => void;
   thresholds: ThresholdConfig;
   setThresholds: (thresholds: Partial<ThresholdConfig>) => void;
   activePresetId: number | null;
@@ -46,9 +47,19 @@ function stockKey(stock: StockWithMetrics) {
   return stock.market + ':' + stock.symbol;
 }
 
+function canonicalStock(stock: StockWithMetrics): StockWithMetrics | null {
+  const symbol = normalizeSymbolForAsset(assetMarketForScreenerMarket(stock.market), stock.symbol);
+  if (!symbol) return null;
+  return {
+    ...stock,
+    symbol
+  };
+}
+
 export const useScreenerStore = create<ScreenerStore>((set) => ({
-  selectedMarket: 'SP500',
-  setMarket: (market) => set({ selectedMarket: market }),
+  selectedMarkets: { ...DEFAULT_SCREENER_MARKET },
+  setMarket: (assetMarket, market) =>
+    set((state) => ({ selectedMarkets: { ...state.selectedMarkets, [assetMarket]: market } })),
   thresholds: DEFAULT_THRESHOLDS,
   setThresholds: (thresholds) => set((state) => ({ thresholds: { ...state.thresholds, ...thresholds }, activePresetId: null })),
   activePresetId: null,
@@ -73,7 +84,12 @@ export const useScreenerStore = create<ScreenerStore>((set) => ({
   rawStocks: [],
   setMarketStocks: (market, stocks) =>
     set((state) => {
-      const nextMarketStocks = stocks.filter((stock) => stock.market === market);
+      const nextMarketStocks = stocks
+        .filter((stock) => stock.market === market)
+        .flatMap((stock) => {
+          const canonical = canonicalStock(stock);
+          return canonical ? [canonical] : [];
+        });
       const otherMarketStocks = state.rawStocks.filter((stock) => stock.market !== market);
       const merged = new Map<string, StockWithMetrics>();
       [...otherMarketStocks, ...nextMarketStocks].forEach((stock) => {
@@ -87,10 +103,12 @@ export const useScreenerStore = create<ScreenerStore>((set) => ({
     }),
   addStockResult: (stock) =>
     set((state) => {
-      const key = stockKey(stock);
+      const nextStock = canonicalStock(stock);
+      if (!nextStock) return state;
+      const key = stockKey(nextStock);
       const existing = new Map(state.rawStocks.map((item) => [stockKey(item), item] as const));
-      existing.set(key, stock);
-      return { rawStocks: Array.from(existing.values()), dataAsOf: stock.data_as_of };
+      existing.set(key, nextStock);
+      return { rawStocks: Array.from(existing.values()), dataAsOf: nextStock.data_as_of };
     }),
   clearMarketResults: (market) =>
     set((state) => ({

@@ -2,6 +2,7 @@ import { Check, Plus, X } from 'lucide-react';
 import { FormEvent, KeyboardEvent, useEffect, useRef, useState } from 'react';
 import { Button } from '../../components/ui/button';
 import { Input } from '../../components/ui/input';
+import { displaySymbol } from '../../lib/markets';
 import { cn } from '../../lib/utils';
 import type { StockTab } from '../../stores/tabStore';
 
@@ -10,7 +11,8 @@ interface TabBarProps {
   activeTabId: string | null;
   onActive: (symbol: string) => void;
   onClose: (symbol: string) => void;
-  onAdd: (symbol: string) => void;
+  onAdd: (symbol: string) => boolean | void;
+  invalidSymbolMessage?: string;
 }
 
 function tabDomID(symbol: string) {
@@ -24,9 +26,10 @@ function preferredScrollBehavior(): ScrollBehavior {
   return 'smooth';
 }
 
-export default function TabBar({ tabs, activeTabId, onActive, onClose, onAdd }: TabBarProps) {
+export default function TabBar({ tabs, activeTabId, onActive, onClose, onAdd, invalidSymbolMessage = '请输入当前市场支持的股票代码。' }: TabBarProps) {
   const [adding, setAdding] = useState(false);
   const [symbol, setSymbol] = useState('');
+  const [inputError, setInputError] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement | null>(null);
   const addButtonRef = useRef<HTMLButtonElement | null>(null);
   const tabListRef = useRef<HTMLDivElement | null>(null);
@@ -61,6 +64,7 @@ export default function TabBar({ tabs, activeTabId, onActive, onClose, onAdd }: 
   const closeInput = (restoreFocus = false) => {
     setAdding(false);
     setSymbol('');
+    setInputError(null);
     if (restoreFocus) {
       window.requestAnimationFrame(() => addButtonRef.current?.focus());
     }
@@ -70,7 +74,10 @@ export default function TabBar({ tabs, activeTabId, onActive, onClose, onAdd }: 
     event.preventDefault();
     const value = symbol.trim();
     if (!value) return;
-    onAdd(value);
+    if (onAdd(value) === false) {
+      setInputError(invalidSymbolMessage);
+      return;
+    }
     closeInput();
   };
 
@@ -103,6 +110,8 @@ export default function TabBar({ tabs, activeTabId, onActive, onClose, onAdd }: 
         {tabs.map((tab, index) => {
           const active = activeTabId === tab.symbol;
           const domID = tabDomID(tab.symbol);
+          const visibleSymbol = displaySymbol(tab.symbol);
+          const hasDistinctName = tab.name !== tab.symbol && tab.name !== visibleSymbol;
           return (
             <div
               key={tab.symbol}
@@ -114,7 +123,7 @@ export default function TabBar({ tabs, activeTabId, onActive, onClose, onAdd }: 
               className={cn(
                 'group inline-flex min-h-11 shrink-0 items-stretch overflow-hidden rounded-xl border transition-[border-color,background-color,color,box-shadow] duration-150 sm:min-h-10',
                 active
-                  ? 'border-cyan-300/35 bg-cyan-300/[0.09] text-cyan-50 shadow-[inset_0_-2px_0_rgba(103,216,243,0.72)]'
+                  ? 'border-brand-300/35 bg-brand-300/[0.09] text-brand-50 shadow-[inset_0_-2px_0_var(--accent)]'
                   : 'border-white/[0.07] bg-slate-950/25 text-slate-400 hover:border-slate-700 hover:bg-slate-800/60 hover:text-slate-100'
               )}
             >
@@ -128,21 +137,21 @@ export default function TabBar({ tabs, activeTabId, onActive, onClose, onAdd }: 
                 role="tab"
                 aria-selected={active}
                 aria-controls={`analysis-panel-${domID}`}
-                aria-label={tab.name === tab.symbol ? tab.symbol : `${tab.symbol} ${tab.name}`}
+                aria-label={hasDistinctName ? `${visibleSymbol} ${tab.name}` : visibleSymbol}
                 tabIndex={active ? 0 : -1}
                 className="min-h-11 max-w-52 truncate py-2 pl-3 pr-2 text-left text-sm font-bold tracking-[-0.01em] focus-visible:z-10 sm:min-h-10"
                 onClick={() => onActive(tab.symbol)}
                 onKeyDown={(event) => handleTabKeyDown(event, index)}
               >
-                {tab.symbol}
-                {tab.name !== tab.symbol ? <span className="ml-2 font-medium opacity-70">{tab.name}</span> : null}
+                {visibleSymbol}
+                {hasDistinctName ? <span className="ml-2 font-medium opacity-70">{tab.name}</span> : null}
               </button>
               <button
                 type="button"
                 tabIndex={active ? 0 : -1}
                 className="interactive-press flex h-11 w-11 shrink-0 items-center justify-center rounded-lg text-slate-400 hover:bg-black/20 hover:text-white focus-visible:z-10 sm:h-10 sm:w-10"
                 onClick={() => onClose(tab.symbol)}
-                aria-label={'关闭 ' + tab.symbol}
+                aria-label={'关闭 ' + visibleSymbol}
               >
                 <X className="h-4 w-4" />
               </button>
@@ -152,18 +161,26 @@ export default function TabBar({ tabs, activeTabId, onActive, onClose, onAdd }: 
       </div>
 
       {adding ? (
-        <form className="flex min-w-0 flex-1 items-center gap-1.5 sm:flex-none sm:gap-2" aria-label="添加股票" onSubmit={submit}>
-          <Input
-            ref={inputRef}
-            value={symbol}
-            onChange={(event) => setSymbol(event.target.value)}
-            onKeyDown={(event) => {
-              if (event.key === 'Escape') closeInput(true);
-            }}
-            className="min-w-0 flex-1 uppercase sm:w-40 sm:flex-none"
-            placeholder="股票代码"
-            aria-label="股票代码"
-          />
+        <form className="flex min-w-0 flex-1 items-start gap-1.5 sm:flex-none sm:gap-2" aria-label="添加股票" onSubmit={submit}>
+          <div className="min-w-0 flex-1 sm:w-48 sm:flex-none">
+            <Input
+              ref={inputRef}
+              value={symbol}
+              onChange={(event) => {
+                setSymbol(event.target.value);
+                setInputError(null);
+              }}
+              onKeyDown={(event) => {
+                if (event.key === 'Escape') closeInput(true);
+              }}
+              className="min-w-0 uppercase"
+              placeholder="股票代码"
+              aria-label="股票代码"
+              aria-describedby={inputError ? 'analysis-symbol-error' : undefined}
+              invalid={Boolean(inputError)}
+            />
+            {inputError ? <p id="analysis-symbol-error" className="mt-1.5 text-xs font-medium leading-5 text-red-300" role="alert">{inputError}</p> : null}
+          </div>
           <Button type="submit" className="h-11 w-11 shrink-0 px-0 sm:h-10 sm:w-10" disabled={!symbol.trim()} aria-label="打开股票">
             <Check className="h-4 w-4" />
           </Button>

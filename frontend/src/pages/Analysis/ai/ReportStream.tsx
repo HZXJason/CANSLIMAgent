@@ -15,7 +15,7 @@ export default function ReportStream({ content, status }: ReportStreamProps) {
   return (
     <article className="rounded-2xl border border-slate-800 bg-slate-950/35 p-5">
       <MarkdownContent content={content} />
-      {status === 'streaming' ? <span className="analysis-cursor ml-1 inline-block h-4 w-2 translate-y-0.5 bg-cyan-300" /> : null}
+      {status === 'streaming' ? <span className="analysis-cursor ml-1 inline-block h-4 w-2 translate-y-0.5 bg-brand-300" /> : null}
     </article>
   );
 }

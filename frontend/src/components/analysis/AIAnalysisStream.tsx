@@ -127,7 +127,7 @@ function parseReportSections(report: string): ReportSection[] {
 function statusStyles(status?: AIProgressStatus) {
   if (status === 'done') return 'border-emerald-400/30 bg-emerald-400/10 text-emerald-200';
   if (status === 'error') return 'border-red-400/30 bg-red-400/10 text-red-200';
-  if (status === 'running') return 'border-cyan-400/30 bg-cyan-400/10 text-cyan-200';
+  if (status === 'running') return 'border-brand-400/30 bg-brand-400/10 text-brand-200';
   if (status === 'paused') return 'border-amber-300/30 bg-amber-300/10 text-amber-100';
   return 'border-slate-700 bg-slate-900/80 text-slate-400';
 }
@@ -361,12 +361,12 @@ export default function AIAnalysisStream({
             return (
               <Collapsible
                 key={section.key}
-                className={isActiveSection ? 'border-cyan-400/35 bg-cyan-400/5' : undefined}
+                className={isActiveSection ? 'border-brand-400/35 bg-brand-400/5' : undefined}
                 title={
                   <span className="flex items-center justify-between gap-3">
                     <span className="min-w-0 break-words">{section.title}</span>
                     {showSectionStatus ? (
-                      <span className="shrink-0 text-xs font-semibold text-cyan-300">
+                      <span className="shrink-0 text-xs font-semibold text-brand-300">
                         {sectionStatusLabel(section, progressItem, status)}
                       </span>
                     ) : null}
@@ -380,7 +380,7 @@ export default function AIAnalysisStream({
                   <p className="text-sm leading-7 text-slate-500">{emptySectionText(status, progressItem)}</p>
                 )}
                 {isActiveSection ? (
-                  <span className="analysis-cursor ml-1 inline-block h-4 w-2 translate-y-0.5 bg-cyan-300" />
+                  <span className="analysis-cursor ml-1 inline-block h-4 w-2 translate-y-0.5 bg-brand-300" />
                 ) : null}
               </Collapsible>
             );
@@ -391,7 +391,7 @@ export default function AIAnalysisStream({
       {showFallbackReport ? (
         <Collapsible title="综合报告" defaultOpen>
           <MarkdownContent content={fallbackReport} />
-          {status === 'streaming' ? <span className="analysis-cursor ml-1 inline-block h-4 w-2 translate-y-0.5 bg-cyan-300" /> : null}
+          {status === 'streaming' ? <span className="analysis-cursor ml-1 inline-block h-4 w-2 translate-y-0.5 bg-brand-300" /> : null}
         </Collapsible>
       ) : null}
     </div>

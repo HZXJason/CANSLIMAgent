@@ -16,7 +16,7 @@ export function Progress({ value, className }: ProgressProps) {
       aria-valuenow={Math.round(safeValue)}
     >
       <div
-        className="h-full w-full origin-left rounded-full bg-gradient-to-r from-cyan-400 to-cyan-200 transition-transform duration-150 ease-linear"
+        className="h-full w-full origin-left rounded-full bg-gradient-to-r from-brand-400 to-brand-200 transition-transform duration-150 ease-linear"
         style={{ transform: `scaleX(${safeValue / 100})` }}
       />
     </div>

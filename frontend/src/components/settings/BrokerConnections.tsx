@@ -98,7 +98,7 @@ export default function BrokerConnections() {
     <Card className="mt-5 overflow-hidden p-0">
       <div className="flex flex-col gap-3 border-b border-slate-800 px-5 py-4 sm:flex-row sm:items-center sm:justify-between sm:px-6">
         <div className="flex items-center gap-3">
-          <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-cyan-400/10 text-cyan-300">
+          <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-brand-400/10 text-brand-300">
             <Building2 className="h-5 w-5" />
           </div>
           <h2 className="text-lg font-bold text-white">券商账户</h2>
@@ -113,7 +113,7 @@ export default function BrokerConnections() {
         <div className="space-y-3 px-5 pt-4 sm:px-6">
           {!secureStorageReady ? <p className="rounded-xl border border-amber-800 bg-amber-950/30 p-3 text-sm text-amber-200">安全存储未配置，券商绑定已锁定。</p> : null}
           {error ? <p className="rounded-xl border border-red-800 bg-red-950/30 p-3 text-sm text-red-200">{error}</p> : null}
-          {message ? <p className="rounded-xl border border-cyan-900 bg-cyan-950/30 p-3 text-sm text-cyan-100">{message}</p> : null}
+          {message ? <p className="rounded-xl border border-brand-900 bg-brand-950/30 p-3 text-sm text-brand-100">{message}</p> : null}
         </div>
       ) : null}
 

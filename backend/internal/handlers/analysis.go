@@ -129,11 +129,7 @@ func (h *AnalysisHandler) buildLocalReport(ctx context.Context, symbol string) s
 		}
 	}
 
-	revenueText := "年度营收历史不足"
-	if len(revenue.Years) > 0 {
-		year := revenue.Years[0]
-		revenueText = fmt.Sprintf("%d 年营收 %.2f 亿美元，YoY %.2f%%，来源：%s", year.Year, year.Revenue/100000000, year.RevenueYoYGrowth, revenue.Source)
-	}
+	revenueText := formatRevenueSummary(symbol, revenue)
 
 	marginText := "毛利率历史不足"
 	if len(margin.Quarters) > 0 {
@@ -167,6 +163,18 @@ func (h *AnalysisHandler) buildLocalReport(ctx context.Context, symbol string) s
 
 当前报告由 AlphaLens 本地规则流生成。K 线图已临时关闭，后续应优先确认 EPS、营收、毛利率和 RS 数据源稳定性，再决定是否写回 N 标签。
 `, symbol, name, rsText, epsText, revenueText, marginText, market, nText)
+}
+
+func formatRevenueSummary(symbol string, revenue services.RevenueData) string {
+	if len(revenue.Years) == 0 {
+		return "年度营收历史不足"
+	}
+	year := revenue.Years[0]
+	unit := "亿美元"
+	if services.IsAshareSymbol(symbol) {
+		unit = "亿元人民币"
+	}
+	return fmt.Sprintf("%d 年营收 %.2f %s，YoY %.2f%%，来源：%s", year.Year, year.Revenue/100000000, unit, year.RevenueYoYGrowth, revenue.Source)
 }
 
 func writeSSE(c *gin.Context, name string, data gin.H, delay time.Duration) bool {

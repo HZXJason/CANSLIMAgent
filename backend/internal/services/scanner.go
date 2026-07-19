@@ -92,6 +92,7 @@ type scanRun struct {
 type ScannerService struct {
 	db            *gorm.DB
 	freeUniverse  *FreeUniverseClient
+	ashare        *AshareClient
 	sec           *SECClient
 	institutional *InstitutionalClient
 	stooq         *StooqClient
@@ -105,10 +106,11 @@ type ScannerService struct {
 	scanRuns      map[string]*scanRun
 }
 
-func NewScannerService(database *gorm.DB, freeUniverse *FreeUniverseClient, sec *SECClient, institutional *InstitutionalClient, stooq *StooqClient, fmp *FMPClient, polygon *PolygonClient, yahoo *YahooClient, yfinance *YFinanceClient, scanDelay time.Duration) *ScannerService {
+func NewScannerService(database *gorm.DB, freeUniverse *FreeUniverseClient, ashare *AshareClient, sec *SECClient, institutional *InstitutionalClient, stooq *StooqClient, fmp *FMPClient, polygon *PolygonClient, yahoo *YahooClient, yfinance *YFinanceClient, scanDelay time.Duration) *ScannerService {
 	return &ScannerService{
 		db:            database,
 		freeUniverse:  freeUniverse,
+		ashare:        ashare,
 		sec:           sec,
 		institutional: institutional,
 		stooq:         stooq,
@@ -350,7 +352,8 @@ func (s *ScannerService) cachedResultsForUniverse(ctx context.Context, market st
 
 	resultsBySymbol := make(map[string]StockResult, len(stocks))
 	for _, stock := range stocks {
-		if !isCompleteCachedMetric(stock.Metric, s.institutional != nil && s.institutional.Configured()) {
+		institutionalRequired := !models.IsAshareMarket(market) && s.institutional != nil && s.institutional.Configured()
+		if !isCompleteCachedMetric(stock.Metric, institutionalRequired) {
 			continue
 		}
 		result := toStockResult(stock)
@@ -501,7 +504,8 @@ func (s *ScannerService) MarkAIAnalysisCompleted(ctx context.Context, symbol str
 // HydrateStockMetrics refreshes the S/L/I metrics needed by an individual
 // analysis tab without a full market scan. The screener still calculates L as
 // a cross-sectional rank; a single-stock request uses the same bounded score
-// against SPY so it never fabricates a market percentile from one observation.
+// against the market benchmark so it never fabricates a market percentile from
+// one observation.
 func (s *ScannerService) HydrateStockMetrics(ctx context.Context, symbol string) (map[string]MetricSourcePayload, bool, error) {
 	symbol = strings.ToUpper(strings.TrimSpace(symbol))
 	if symbol == "" {
@@ -512,12 +516,17 @@ func (s *ScannerService) HydrateStockMetrics(ctx context.Context, symbol string)
 	if err := s.db.WithContext(ctx).Preload("Metric").Where("symbol = ?", symbol).Order("market asc").First(&stock).Error; err != nil {
 		return nil, false, err
 	}
-	if !needsSingleStockHydration(stock.Metric) {
-		return map[string]MetricSourcePayload{
+	institutionalRequired := !models.IsAshareMarket(stock.Market)
+	if !needsSingleStockHydration(stock.Metric, institutionalRequired) {
+		sources := map[string]MetricSourcePayload{
 			"s": {Source: "本地缓存", Status: "cached"},
 			"l": {Source: "本地缓存", Status: "cached"},
 			"i": {Source: "本地缓存", Status: "cached"},
-		}, false, nil
+		}
+		if !institutionalRequired {
+			sources["i"] = MetricSourcePayload{Source: "A 股机构持仓数据暂不可用", Status: "unavailable"}
+		}
+		return sources, false, nil
 	}
 
 	sources := map[string]MetricSourcePayload{}
@@ -538,16 +547,21 @@ func (s *ScannerService) HydrateStockMetrics(ctx context.Context, symbol string)
 	}
 
 	if priceOK && price.TwelveMonthReturn != nil {
-		benchmark, benchmarkOK := s.fetchPriceSignal(ctx, "SPY", now)
+		benchmarkSymbol := ashareBenchmarkForSymbol(stock.Symbol)
+		benchmark, benchmarkOK := s.fetchPriceSignal(ctx, benchmarkSymbol, now)
 		if benchmarkOK && benchmark.TwelveMonthReturn != nil {
 			rating := int(math.Round(rsScore(*price.TwelveMonthReturn, *benchmark.TwelveMonthReturn)))
 			metric.LRSRating = &rating
 			metric.LDataSufficient = true
-			sources["l"] = MetricSourcePayload{Source: price.Source + " / " + benchmark.Source + "（相对 SPY）", Status: "live"}
+			benchmarkLabel := "SPY"
+			if IsAshareSymbol(stock.Symbol) {
+				benchmarkLabel = "沪深300"
+			}
+			sources["l"] = MetricSourcePayload{Source: price.Source + " / " + benchmark.Source + "（相对 " + benchmarkLabel + "）", Status: "live"}
 		} else {
 			metric.LRSRating = nil
 			metric.LDataSufficient = false
-			sources["l"] = MetricSourcePayload{Source: "价格路由 / SPY", Status: "unavailable"}
+			sources["l"] = MetricSourcePayload{Source: "价格路由 / " + benchmarkSymbol, Status: "unavailable"}
 		}
 	} else {
 		metric.LRSRating = nil
@@ -555,7 +569,11 @@ func (s *ScannerService) HydrateStockMetrics(ctx context.Context, symbol string)
 		sources["l"] = MetricSourcePayload{Source: "价格路由", Status: "unavailable"}
 	}
 
-	if s.institutional != nil && s.institutional.Configured() {
+	if !institutionalRequired {
+		metric.IInstitutionDelta = nil
+		metric.IDataSufficient = false
+		sources["i"] = MetricSourcePayload{Source: "A 股机构持仓数据暂不可用", Status: "unavailable"}
+	} else if s.institutional != nil && s.institutional.Configured() {
 		signal, err := s.institutional.FetchInstitutionalSignal(ctx, stock.Symbol)
 		if err == nil && signal.Sufficient && signal.Delta != nil {
 			metric.IInstitutionDelta = signal.Delta
@@ -586,8 +604,11 @@ func (s *ScannerService) HydrateStockMetrics(ctx context.Context, symbol string)
 	return sources, true, nil
 }
 
-func needsSingleStockHydration(metric models.StockMetric) bool {
-	if !metric.SDataSufficient || metric.SVolumeRatio == nil || !metric.LDataSufficient || metric.LRSRating == nil || !metric.IDataSufficient || metric.IInstitutionDelta == nil {
+func needsSingleStockHydration(metric models.StockMetric, institutionalRequired bool) bool {
+	if !metric.SDataSufficient || metric.SVolumeRatio == nil || !metric.LDataSufficient || metric.LRSRating == nil {
+		return true
+	}
+	if institutionalRequired && (!metric.IDataSufficient || metric.IInstitutionDelta == nil) {
 		return true
 	}
 	return metric.DataAsOf.IsZero() || metric.DataAsOf.Before(time.Now().UTC().AddDate(0, 0, -3))
@@ -666,8 +687,8 @@ func (s *ScannerService) buildPendingMetric(ctx context.Context, market string, 
 	var rsBase *float64
 	rsSufficient := false
 
-	s.applyEPSFallback(ctx, stock.Symbol, &metric)
-	s.applyInstitutionalSignal(ctx, stock.Symbol, &metric)
+	s.applyEPSFallback(ctx, stock.Market, stock.Symbol, &metric)
+	s.applyInstitutionalSignal(ctx, stock.Market, stock.Symbol, &metric)
 
 	price, ok := s.fetchPriceSignal(ctx, stock.Symbol, metric.DataAsOf)
 	if ok {
@@ -687,8 +708,8 @@ func (s *ScannerService) buildPendingMetric(ctx context.Context, market string, 
 	return pendingMetric{stock: stock, metric: metric, rsBase: rsBase, rsSufficient: rsSufficient}, true
 }
 
-func (s *ScannerService) applyInstitutionalSignal(ctx context.Context, symbol string, metric *models.StockMetric) {
-	if s.institutional == nil || !s.institutional.Configured() {
+func (s *ScannerService) applyInstitutionalSignal(ctx context.Context, market string, symbol string, metric *models.StockMetric) {
+	if models.IsAshareMarket(market) || s.institutional == nil || !s.institutional.Configured() {
 		return
 	}
 	signal, err := s.institutional.FetchInstitutionalSignal(ctx, symbol)
@@ -700,6 +721,12 @@ func (s *ScannerService) applyInstitutionalSignal(ctx context.Context, symbol st
 }
 
 func (s *ScannerService) fetchUniverse(ctx context.Context, market string) ([]StockCandidate, error) {
+	if models.IsAshareMarket(market) {
+		if s.ashare == nil || !s.ashare.Configured() {
+			return nil, errors.New("A 股数据源未启用")
+		}
+		return s.ashare.FetchUniverse(ctx, market)
+	}
 	if s.freeUniverse != nil && s.freeUniverse.Configured() {
 		candidates, err := s.freeUniverse.FetchUniverse(ctx, market)
 		if err == nil && len(candidates) > 0 {
@@ -721,7 +748,25 @@ func (s *ScannerService) fetchUniverse(ctx context.Context, market string) ([]St
 	return nil, errors.New("无法连接真实数据源获取成分股列表，请检查网络连接、代理或 API Key 配置")
 }
 
-func (s *ScannerService) applyEPSFallback(ctx context.Context, symbol string, metric *models.StockMetric) {
+func (s *ScannerService) applyEPSFallback(ctx context.Context, market string, symbol string, metric *models.StockMetric) {
+	if models.IsAshareMarket(market) {
+		if s.ashare == nil || !s.ashare.Configured() {
+			return
+		}
+		quarter, quarterSufficient, annual, years, annualSufficient, asOf, err := s.ashare.FetchEPSGrowth(ctx, symbol)
+		if err != nil {
+			return
+		}
+		metric.CEPSGrowthPct = quarter
+		metric.CDataSufficient = quarter != nil && quarterSufficient
+		metric.AAnnualEPSGrowth = annual
+		metric.AYearsAvailable = years
+		metric.ADataSufficient = len(annual) >= 3 && annualSufficient
+		if !asOf.IsZero() {
+			metric.DataAsOf = asOf
+		}
+		return
+	}
 	if s.sec != nil && s.sec.Configured() {
 		quarter, quarterSufficient, annual, years, annualSufficient, asOf, err := s.sec.FetchEPSGrowth(ctx, symbol)
 		if err == nil {
@@ -769,6 +814,16 @@ func (s *ScannerService) applyEPSFallback(ctx context.Context, symbol string, me
 }
 
 func (s *ScannerService) fetchPriceSignal(ctx context.Context, symbol string, asOf time.Time) (priceSignal, bool) {
+	if IsAshareSymbol(symbol) {
+		if s.ashare == nil || !s.ashare.Configured() {
+			return priceSignal{}, false
+		}
+		price, err := s.ashare.FetchPriceSignal(ctx, symbol, asOf)
+		if err == nil && price.Sufficient {
+			return price, true
+		}
+		return priceSignal{}, false
+	}
 	// Vibe-Trading's US-equity router leads with Yahoo because its public chart
 	// endpoint is generally more throttle-tolerant than Stooq's browser-guarded
 	// download endpoint. Keep every existing provider as a fallback.

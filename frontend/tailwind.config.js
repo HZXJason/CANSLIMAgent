@@ -14,8 +14,19 @@ export default {
           muted: 'var(--surface-muted)'
         },
         brand: {
-          DEFAULT: 'var(--accent)',
-          strong: 'var(--accent-strong)'
+          50: 'rgb(var(--brand-50) / <alpha-value>)',
+          100: 'rgb(var(--brand-100) / <alpha-value>)',
+          200: 'rgb(var(--brand-200) / <alpha-value>)',
+          300: 'rgb(var(--brand-300) / <alpha-value>)',
+          400: 'rgb(var(--brand-400) / <alpha-value>)',
+          500: 'rgb(var(--brand-500) / <alpha-value>)',
+          600: 'rgb(var(--brand-600) / <alpha-value>)',
+          700: 'rgb(var(--brand-700) / <alpha-value>)',
+          800: 'rgb(var(--brand-800) / <alpha-value>)',
+          900: 'rgb(var(--brand-900) / <alpha-value>)',
+          950: 'rgb(var(--brand-950) / <alpha-value>)',
+          DEFAULT: 'rgb(var(--brand-300) / <alpha-value>)',
+          strong: 'rgb(var(--brand-500) / <alpha-value>)'
         },
         finance: {
           navy: '#1E3A5F',
@@ -26,7 +37,7 @@ export default {
         }
       },
       boxShadow: {
-        glow: '0 0 32px rgba(34, 184, 221, 0.16)',
+        glow: 'var(--shadow-glow)',
         panel: '0 18px 50px rgba(0, 0, 0, 0.22)',
         float: '0 24px 80px rgba(0, 0, 0, 0.42)'
       },

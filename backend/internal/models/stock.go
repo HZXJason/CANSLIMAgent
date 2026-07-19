@@ -6,6 +6,11 @@ const (
 	MarketSP500       = "SP500"
 	MarketNASDAQ100   = "NASDAQ100"
 	MarketRUSSELL2000 = "RUSSELL2000"
+	MarketSSEMain     = "SSE_MAIN"
+	MarketSZSEMain    = "SZSE_MAIN"
+	MarketSTAR        = "STAR"
+	MarketChiNext     = "CHINEXT"
+	MarketBSE         = "BSE"
 )
 
 type Stock struct {
@@ -57,7 +62,17 @@ type ThresholdPreset struct {
 
 func ValidMarket(market string) bool {
 	switch market {
-	case MarketSP500, MarketNASDAQ100, MarketRUSSELL2000:
+	case MarketSP500, MarketNASDAQ100, MarketRUSSELL2000,
+		MarketSSEMain, MarketSZSEMain, MarketSTAR, MarketChiNext, MarketBSE:
+		return true
+	default:
+		return false
+	}
+}
+
+func IsAshareMarket(market string) bool {
+	switch market {
+	case MarketSSEMain, MarketSZSEMain, MarketSTAR, MarketChiNext, MarketBSE:
 		return true
 	default:
 		return false
@@ -65,7 +80,7 @@ func ValidMarket(market string) bool {
 }
 
 func MarketDisabledReason(market string) string {
-	return "不支持的市场：" + market + "，目前支持 SP500、NASDAQ100、RUSSELL2000"
+	return "不支持的市场：" + market + "，目前支持 SP500、NASDAQ100、RUSSELL2000、SSE_MAIN、SZSE_MAIN、STAR、CHINEXT、BSE"
 }
 
 func DefaultThresholdPreset() ThresholdPreset {

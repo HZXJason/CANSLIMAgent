@@ -36,6 +36,7 @@ from data_auditor import audit_data, render_data_audit
 from journal_reflection import build_journal_reflection
 from broker_sync import discover_broker_account, sync_broker
 from ai_runtime import (
+    is_china_a_symbol,
     patched_tradingagents_graph,
     prefetch_vibe_evidence_async,
     runtime_status,
@@ -252,6 +253,22 @@ CUSTOM_ANALYST_MAP = {
     },
 }
 
+A_SHARE_APPLICATION_CONTEXT_INSTRUCTION = (
+    " This canonical .SH/.SZ/.BJ ticker is a mainland China A-share. "
+    "Interpret monetary values and trading turnover as CNY/RMB unless the supplied field explicitly "
+    "states another currency, and describe turnover as RMB turnover rather than dollar volume. "
+    "Use only supplied A-share exchange/company disclosures and A-share market data. SEC filings, "
+    "US insider data, US options chains, and other US-only datasets are not expected for this instrument; "
+    "their absence is unknown or not applicable, never a negative fact or evidence of risk."
+)
+
+A_SHARE_CANSLIM_SECOND_LAYER_ADDENDUM = """A股市场适配规则（优先于上文中的美股字段示例）：
+1. 当前标的是使用 `.SH`、`.SZ` 或 `.BJ` 后缀的中国大陆 A 股。金额与成交额默认以 CNY/人民币解释，除非 JSON 字段明确声明其他货币；第五部分必须使用“20 日和 50 日平均人民币成交额”，不得称为美元成交额。
+2. 只能使用 JSON 中实际提供的 A 股交易所、上市公司披露和 A 股市场数据。不得把 SEC EDGAR、美国内部人数据、美国期权链、美国做空数据或其他美股专属字段套用于 A 股。
+3. 上述美股专属字段缺失时，应标记为“未知”或“不适用”，不得据此扣分、触发淘汰、推断内部人行为、期权情绪或融资风险。
+4. 供需与事件风险可依据 JSON 中实际存在的流通股、股东变化、限售解禁、增发、可转债、监管与公司公告等 A 股证据；未提供的项目不得外推或编造。
+"""
+
 CANSLIM_SECOND_LAYER_SYSTEM_PROMPT = """你是一名严格的 CANSLIM 成长股交易系统分析师。
 你的任务不是为股票找理由看多，而是对已经通过第一层 CANSLIM 初筛的股票做第二层筛选，重点识别假成长、低质量盈利、流动性陷阱、技术形态缺陷、估值透支和风险收益比不合格的问题。
 
@@ -298,6 +315,21 @@ CANSLIM_SECOND_LAYER_SYSTEM_PROMPT = """你是一名严格的 CANSLIM 成长股�
 回答：1. 真成长还是疑似假成长；2. 行业领导股还是跟随股；3. 当前是可交易买点、观察点，还是应该回避；4. 最大三个风险；5. 最吸引人的三个优点；6. 如果交易，合理入场价、止损价、目标价和风险收益比；7. 如果暂不交易，需要等待什么信号。
 最后必须给出一句话结论：“这只股票目前属于：A级 / B级 / C级 / D级，原因是……”
 """
+
+
+def canslim_second_layer_system_prompt(ticker: str) -> str:
+    if not is_china_a_symbol(ticker):
+        return CANSLIM_SECOND_LAYER_SYSTEM_PROMPT
+
+    prompt = CANSLIM_SECOND_LAYER_SYSTEM_PROMPT.replace(
+        "6. JSON 中的 provided_data.second_layer_data 来自免费数据源增强，通常包含市值、股本、流通股、做空、机构/内部人持仓比例、估值、财报日、季度收入、利润率、现金流、应收、库存、债务和股本变化；其中 second_layer_data.sec.insider_transactions 与 second_layer_data.sec.recent_event_filings 来自 SEC EDGAR，可用于内部人交易和事件风险判断。provided_data.derived 是应用基于原始数据预先计算的二层筛选摘要。二者可优先用于价格、均线、成交额、支撑压力、RS 新高、盈利质量、估值、供需和事件判断；但仍不得外推 JSON 之外的数据。",
+        "6. JSON 中的 provided_data.second_layer_data 与 provided_data.derived 只可按实际标注的 A 股交易所、上市公司披露和市场来源使用，可优先用于价格、均线、人民币成交额、支撑压力、RS 新高、盈利质量、估值、供需和事件判断。SEC、美国内部人、美国期权与美国做空字段不属于 A 股必备数据；缺失时只能标记为未知或不适用，不得外推、扣分或视为风险事实。",
+    ).replace(
+        "判断 20 日和 50 日平均美元成交额是否足够、流通盘是否过小或过大、是否存在增发/ATM/可转债/认股权证等抛压、机构持仓是否处于合理阶段、内部人是否异常卖出、做空比例是否构成风险或潜在轧空因素。给出 0-15 分评分并解释。",
+        "判断 20 日和 50 日平均人民币成交额是否足够、流通盘是否过小或过大；仅在 JSON 明确提供时判断限售解禁、增发、配股、可转债、股东变化或机构持仓等供需因素。未提供的内部人、期权或做空数据必须标记为未知或不适用，不得作为风险或评分依据。给出 0-15 分评分并解释。",
+    )
+    return prompt + "\n\n" + A_SHARE_CANSLIM_SECOND_LAYER_ADDENDUM
+
 
 REPORT_DELTA_CHARS = int(os.getenv("AI_REPORT_DELTA_CHARS", "120"))
 REPORT_DELTA_DELAY = float(os.getenv("AI_REPORT_DELTA_DELAY", "0.006"))
@@ -823,10 +855,22 @@ def configured_graph(
     config["max_risk_rounds"] = request.max_risk_rounds
     config["online_tools"] = request.online_tools
     config["output_language"] = OUTPUT_LANGUAGE_INSTRUCTION
+    china_a_mode = is_china_a_symbol(request.ticker)
+    config["china_a_mode"] = china_a_mode
+    if china_a_mode:
+        config["benchmark_ticker"] = "000300.SS"
+        config["data_vendors"].update(
+            {
+                "core_stock_apis": "yfinance",
+                "technical_indicators": "yfinance",
+                "fundamental_data": "yfinance",
+                "news_data": "yfinance",
+            }
+        )
     configure_analysis_checkpoint(config, request)
 
     try:
-        with patched_tradingagents_graph():
+        with patched_tradingagents_graph(china_a_mode=china_a_mode):
             graph = TradingAgentsGraph(
                 selected_analysts=analysts,
                 debug=False,
@@ -887,6 +931,9 @@ def attach_application_context(graph: Any, request: AnalysisRequest) -> None:
 
     original_resolver = graph.resolve_instrument_context
     context_json = compact_context_json(request)
+    market_instruction = (
+        A_SHARE_APPLICATION_CONTEXT_INSTRUCTION if is_china_a_symbol(request.ticker) else ""
+    )
     instruction = (
         "\n\nCANSLIMAgent application-provided structured context follows. "
         "Treat it as point-in-time user/application evidence, preserve unknown values, "
@@ -896,7 +943,9 @@ def attach_application_context(graph: Any, request: AnalysisRequest) -> None:
         "use only complete/partial successful coverage as factual support, identify the source "
         "for material claims, explicitly name contrary evidence, and keep unavailable evidence unknown. "
         "When data_audit is present, use only its canonical_facts for audited numerical claims; "
-        "never state blocked_claims as facts and disclose unresolved figures as unknown.\n"
+        "never state blocked_claims as facts and disclose unresolved figures as unknown."
+        + market_instruction
+        + "\n"
         + context_json
     )
 
@@ -959,6 +1008,7 @@ def render_vibe_evidence(bundle: dict[str, Any]) -> str:
     """Render auditable MCP source traces without exposing bulky raw payloads."""
     summary = bundle.get("summary") if isinstance(bundle.get("summary"), dict) else {}
     traces = bundle.get("source_traces") if isinstance(bundle.get("source_traces"), list) else []
+    market_symbol = str(bundle.get("market_symbol") or bundle.get("symbol") or "").strip().upper()
     lines = [
         "Vibe-Trading 已在 TradingAgents 分析前执行数据预取，以下调用结果也已注入各分析角色的结构化上下文。",
         "",
@@ -984,10 +1034,22 @@ def render_vibe_evidence(bundle: dict[str, Any]) -> str:
             lines.append(f"\n> `{tool}` 降级原因：{error}")
     if not traces:
         lines.extend(["", "> 本次没有请求 Vibe 工具；TradingAgents 将仅使用应用上下文和自身数据源。"])
+    if is_china_a_symbol(market_symbol):
+        verification_note = (
+            "如本次启用技术分析，TradingAgents 会独立运行 Yahoo A股行情快照：应用和报告继续使用 "
+            f"`{market_symbol}`，仅在 Yahoo provider 边界将上海后缀 `.SH` 转为 `.SS`。"
+            "上表 Vibe 实际来源与应用上下文中的 source 标注分别保留；单一来源不会被描述为跨源核验，"
+            "任一来源失败也不会由模型补造。"
+        )
+    else:
+        verification_note = (
+            "TradingAgents 自带的 verified snapshot 仍会独立运行，用于与上述 Vibe 证据交叉核验；"
+            "单个 Vibe 工具失败不会中断整份报告。"
+        )
     lines.extend(
         [
             "",
-            "TradingAgents 自带的 verified snapshot 仍会独立运行，用于与上述 Vibe 证据交叉核验；单个 Vibe 工具失败不会中断整份报告。",
+            verification_note,
         ]
     )
     return "\n".join(lines).strip()
@@ -1046,6 +1108,13 @@ def compact_context_json(request: AnalysisRequest) -> str:
         "analysis_date": date.today().isoformat(),
         "provided_data": provided_data,
     }
+    if is_china_a_symbol(request.ticker):
+        payload["market_context"] = {
+            "market": "china_a",
+            "currency": "CNY",
+            "turnover_unit": "CNY",
+            "canonical_symbol": request.ticker.strip().upper(),
+        }
     return json.dumps(payload, ensure_ascii=False, indent=2, default=str)
 
 
@@ -1079,7 +1148,7 @@ def run_canslim_second_layer_analysis(
     )
     response = llm.invoke(
         [
-            SystemMessage(content=CANSLIM_SECOND_LAYER_SYSTEM_PROMPT),
+            SystemMessage(content=canslim_second_layer_system_prompt(request.ticker)),
             HumanMessage(content=user_prompt),
         ]
     )
@@ -1482,13 +1551,19 @@ async def analysis_events(request: AnalysisRequest):
                 },
             )
             yield sse("result", {"agent": "DataAuditor", "content": render_data_audit(data_audit)})
-            audit_status = "done" if data_audit.get("status") in {"clean", "issues_found", "not_available"} else "error"
+            data_audit_status = data_audit.get("status")
+            audit_status = "done" if data_audit_status in {"clean", "issues_found", "source_only", "not_available"} else "error"
+            audit_message = (
+                "A 股披露来源已标注；当前为单一来源，未伪装成跨源核验"
+                if data_audit_status == "source_only"
+                else "数据审计完成；冲突值已从可引用事实中排除"
+            )
             yield sse(
                 "progress",
                 {
                     "agent": "DataAuditor",
                     "status": audit_status,
-                    "message": "数据审计完成；冲突值已从可引用事实中排除" if audit_status == "done" else "数据审计不可用",
+                    "message": audit_message if audit_status == "done" else "数据审计不可用",
                 },
             )
     except Exception as exc:  # noqa: BLE001 - data-source failure must degrade
