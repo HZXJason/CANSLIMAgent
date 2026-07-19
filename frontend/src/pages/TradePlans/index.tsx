@@ -1,7 +1,8 @@
-import { ClipboardList, Clock3, FilePenLine, Plus, RefreshCw, XCircle } from 'lucide-react';
+import { ChevronRight, ClipboardList, Clock3, FilePenLine, Plus, RefreshCw, XCircle } from 'lucide-react';
 import { useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
+import { PageHeader } from '../../components/PageHeader';
 import { Button } from '../../components/ui/button';
 import { Card } from '../../components/ui/card';
 import { Select } from '../../components/ui/select';
@@ -79,26 +80,31 @@ export default function TradePlanList() {
   const plans = plansQuery.data ?? [];
 
   return (
-    <section className="mx-auto flex w-full max-w-[1120px] flex-col gap-5 px-4 py-5 sm:px-6 lg:px-8 lg:py-7">
-      <header className="flex flex-col gap-4 border-b border-slate-800/90 pb-4 sm:flex-row sm:items-center sm:justify-between">
-        <h1 className="text-2xl font-black tracking-tight text-white sm:text-3xl">交易计划</h1>
-        <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-          <div className="w-full sm:w-40">
-            <Select aria-label="按状态筛选" value={statusFilter} onValueChange={(value) => setStatusFilter(value as StatusFilter)}>
-              <option value="all">全部状态</option>
-              {Object.entries(statusLabel).map(([value, label]) => (
-                <option key={value} value={value}>
-                  {label}
-                </option>
-              ))}
-            </Select>
-          </div>
-          <Button className="w-full sm:w-auto" onClick={() => navigate('/trade-plans/new')}>
-            <Plus className="h-4 w-4" />
-            新建计划
-          </Button>
-        </div>
-      </header>
+    <section className="mx-auto flex w-full max-w-[1120px] flex-col gap-6 px-4 py-6 sm:px-6 sm:py-8 lg:px-8 lg:py-10">
+      <PageHeader
+        eyebrow="执行工作台"
+        title="交易计划"
+        description="在入场前写清触发条件、仓位边界与退出方案，让每次执行都有依据。"
+        meta={plansQuery.isLoading ? '正在同步计划' : `${plans.length} 个计划`}
+        actions={
+          <>
+            <div className="w-full sm:w-40">
+              <Select aria-label="按状态筛选" value={statusFilter} onValueChange={(value) => setStatusFilter(value as StatusFilter)}>
+                <option value="all">全部状态</option>
+                {Object.entries(statusLabel).map(([value, label]) => (
+                  <option key={value} value={value}>
+                    {label}
+                  </option>
+                ))}
+              </Select>
+            </div>
+            <Button className="w-full sm:w-auto" onClick={() => navigate('/trade-plans/new')}>
+              <Plus className="h-4 w-4" />
+              新建计划
+            </Button>
+          </>
+        }
+      />
 
       {plansQuery.isLoading ? (
         <Card className="space-y-3 p-4">
@@ -131,28 +137,36 @@ export default function TradePlanList() {
             <span>入场 / 止损</span>
           </div>
           <div className="divide-y divide-slate-900">
-            {plans.map((plan, index) => (
+            {plans.map((plan) => (
               <button
                 key={plan.id}
-                className="grid w-full gap-3 px-5 py-4 text-left transition hover:bg-slate-800/70 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-cyan-400/60 md:grid-cols-[1.15fr_0.7fr_0.85fr_1fr_1.1fr] md:items-center md:gap-4"
-                style={{ animationDelay: index * 30 + 'ms' }}
+                className="group grid w-full gap-3 px-4 py-4 text-left transition-[background-color,box-shadow] duration-150 hover:bg-slate-800/55 active:bg-slate-800/75 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-cyan-400/60 sm:px-5 md:grid-cols-[1.15fr_0.7fr_0.85fr_1fr_1.1fr] md:items-center md:gap-4"
                 onClick={() => navigate('/trade-plans/' + plan.id)}
               >
-                <span className="min-w-0">
-                  <span className="flex items-center gap-2 text-lg font-black text-white">
+                <span className="flex min-w-0 items-start justify-between gap-3 md:block">
+                  <span>
+                    <span className="flex items-center gap-2 text-lg font-black text-white">
                     <PlanStatusIcon status={plan.status} />
                     {plan.ticker}
+                    </span>
+                    {plan.entry_trigger ? <span className="mt-1 block line-clamp-2 text-sm leading-5 text-slate-400 md:truncate">{plan.entry_trigger}</span> : null}
                   </span>
-                  {plan.entry_trigger ? <span className="mt-1 block truncate text-sm text-slate-400">{plan.entry_trigger}</span> : null}
+                  <ChevronRight className="mt-1 h-5 w-5 shrink-0 text-slate-600 transition-transform duration-150 group-hover:translate-x-0.5 group-hover:text-slate-400 md:hidden" />
                 </span>
-                <span>
+                <span className="flex items-center gap-3">
+                  <span className="w-12 shrink-0 text-xs font-semibold text-slate-500 md:hidden">方向</span>
                   <DirectionBadge direction={plan.direction} />
                 </span>
-                <span>
+                <span className="flex items-center gap-3">
+                  <span className="w-12 shrink-0 text-xs font-semibold text-slate-500 md:hidden">状态</span>
                   <StatusBadge status={plan.status} />
                 </span>
-                <span className="text-sm font-semibold text-slate-300">{formatDateCN(plan.plan_date)}</span>
-                <span className="text-sm font-medium text-slate-300">
+                <span className="flex items-center gap-3 text-sm font-semibold text-slate-300">
+                  <span className="w-12 shrink-0 text-xs font-semibold text-slate-500 md:hidden">日期</span>
+                  {formatDateCN(plan.plan_date)}
+                </span>
+                <span className="flex items-center gap-3 text-sm font-medium text-slate-300 md:block">
+                  <span className="w-12 shrink-0 text-xs font-semibold text-slate-500 md:hidden">价格</span>
                   <span className="md:hidden">入场 {formatMoney(plan.entry_price)} / 止损 {formatMoney(plan.stop_loss)}</span>
                   <span className="hidden md:inline">{formatMoney(plan.entry_price)} / {formatMoney(plan.stop_loss)}</span>
                 </span>

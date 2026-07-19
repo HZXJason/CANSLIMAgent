@@ -85,17 +85,17 @@ export function ConfirmDialog({
   return (
     <div
       ref={dialogRef}
-      className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/70 px-4 backdrop-blur-sm"
+      className="dialog-backdrop fixed inset-0 z-50 flex items-center justify-center bg-slate-950/75 px-4 py-4 backdrop-blur-sm"
       role="dialog"
       aria-modal="true"
       aria-labelledby={titleId}
       aria-describedby={descriptionId}
       tabIndex={-1}
     >
-      <div className="w-full max-w-md rounded-2xl border border-slate-700 bg-slate-900 p-5 shadow-2xl shadow-slate-950">
-        <h2 id={titleId} className="text-lg font-bold text-white">{title}</h2>
+      <div className="dialog-surface max-h-[calc(100dvh-2rem)] w-full max-w-md overflow-y-auto rounded-[22px] border border-slate-700/80 bg-[#111a29] p-5 shadow-float sm:p-6">
+        <h2 id={titleId} className="text-lg font-bold tracking-[-0.015em] text-white sm:text-xl">{title}</h2>
         <p id={descriptionId} className="mt-3 text-sm leading-6 text-slate-400">{description}</p>
-        <div className="mt-6 flex justify-end gap-3">
+        <div className="mt-6 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end sm:gap-3">
           <Button ref={cancelButtonRef} variant="outline" onClick={() => onOpenChange(false)}>
             {cancelText}
           </Button>

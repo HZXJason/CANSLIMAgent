@@ -8,9 +8,10 @@ export interface InputProps extends React.InputHTMLAttributes<HTMLInputElement> 
 export const Input = React.forwardRef<HTMLInputElement, InputProps>(({ className, invalid, ...props }, ref) => (
   <input
     ref={ref}
+    aria-invalid={invalid || undefined}
     className={cn(
-      'h-10 w-full rounded-xl border bg-slate-950/60 px-3 text-sm text-slate-100 outline-none transition placeholder:text-slate-500 focus:border-cyan-400/60 focus:ring-2 focus:ring-cyan-400/20',
-      invalid ? 'border-red-500' : 'border-slate-700',
+      'min-h-11 w-full rounded-xl border bg-slate-950/55 px-3.5 text-sm text-slate-100 outline-none transition-[border-color,background-color,box-shadow] duration-150 ease-out placeholder:text-slate-600 hover:bg-slate-950/75 focus:border-cyan-300/60 focus:bg-slate-950/80 focus:ring-2 focus:ring-cyan-300/15 disabled:cursor-not-allowed disabled:bg-slate-900/55 disabled:text-slate-500 sm:min-h-10',
+      invalid ? 'border-red-400/80 focus:border-red-400 focus:ring-red-400/15' : 'border-slate-700/80',
       className
     )}
     {...props}

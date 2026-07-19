@@ -1,6 +1,7 @@
-import { BookOpenCheck, BrainCircuit, Circle, CircleCheck, Plus, RefreshCw } from 'lucide-react';
+import { BookOpenCheck, BrainCircuit, ChevronRight, Circle, CircleCheck, Plus, RefreshCw } from 'lucide-react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
+import { PageHeader } from '../../components/PageHeader';
 import MarkdownContent from '../../components/analysis/MarkdownContent';
 import BrokerJournalImport from '../../components/journal/BrokerJournalImport';
 import { Button } from '../../components/ui/button';
@@ -78,17 +79,22 @@ export default function JournalList() {
   const structuredEntries = entries.filter((entry) => entry.quantity > 0 && entry.price > 0);
 
   return (
-    <section className="mx-auto flex w-full max-w-[1180px] flex-col gap-5 px-4 py-5 sm:px-6 lg:px-8 lg:py-7">
-      <header className="flex flex-col gap-4 border-b border-slate-800/90 pb-4 sm:flex-row sm:items-center sm:justify-between">
-        <h1 className="text-2xl font-black text-white sm:text-3xl">交易日志</h1>
-        <div className="flex flex-col-reverse gap-2 sm:flex-row sm:flex-wrap">
-          <Button className="w-full sm:w-auto" variant="outline" disabled={structuredEntries.length === 0 || reflectionMutation.isPending} onClick={() => reflectionMutation.mutate()}>
-            <BrainCircuit className="h-4 w-4" />
-            {reflectionMutation.isPending ? '分析中' : '分析交易表现'}
-          </Button>
-          <Button className="w-full sm:w-auto" onClick={() => navigate('/journal/new')}><Plus className="h-4 w-4" />新建成交</Button>
-        </div>
-      </header>
+    <section className="mx-auto flex w-full max-w-[1180px] flex-col gap-6 px-4 py-6 sm:px-6 sm:py-8 lg:px-8 lg:py-10">
+      <PageHeader
+        eyebrow="决策复盘"
+        title="交易日志"
+        description="把成交、来源与复盘放在同一条记录链路中，持续校准自己的执行。"
+        meta={query.isLoading ? '正在同步成交记录' : `${entries.length} 笔成交 · ${structuredEntries.length} 笔可纳入分析`}
+        actions={
+          <>
+            <Button className="order-2 w-full sm:order-1 sm:w-auto" variant="outline" disabled={structuredEntries.length === 0 || reflectionMutation.isPending} onClick={() => reflectionMutation.mutate()}>
+              <BrainCircuit className="h-4 w-4" />
+              {reflectionMutation.isPending ? '分析中' : '分析交易表现'}
+            </Button>
+            <Button className="order-1 w-full sm:order-2 sm:w-auto" onClick={() => navigate('/journal/new')}><Plus className="h-4 w-4" />新建成交</Button>
+          </>
+        }
+      />
 
       <BrokerJournalImport connections={brokerQuery.data ?? []} onImported={() => { void queryClient.invalidateQueries({ queryKey: ['journal-entries'] }); }} />
 
@@ -102,13 +108,16 @@ export default function JournalList() {
           <div className="hidden grid-cols-[1.1fr_0.7fr_1.2fr_1fr_1fr_0.8fr] gap-4 border-b border-slate-800 px-5 py-3 text-sm font-semibold text-slate-400 md:grid"><span>标的</span><span>方向</span><span>成交时间</span><span>数量 × 价格</span><span>成交额 / 手续费</span><span className="text-right">复盘</span></div>
           <div className="divide-y divide-slate-900">
             {entries.map((entry) => (
-              <button key={entry.id} className="grid w-full gap-3 px-5 py-4 text-left transition hover:bg-slate-800/70 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-cyan-400/60 md:grid-cols-[1.1fr_0.7fr_1.2fr_1fr_1fr_0.8fr] md:items-center md:gap-4" onClick={() => navigate('/journal/' + entry.id)}>
-                <span><span className="block text-lg font-black text-white">{entry.symbol}</span><span className="text-sm text-slate-400">{entry.name || entry.market}</span></span>
-                <span><SideBadge side={entry.side} /></span>
-                <span className="text-sm text-slate-300">{new Date(entry.datetime).toLocaleString()}</span>
-                <span className="text-sm text-slate-400">{formatNumber(entry.quantity)} × {formatNumber(entry.price)}</span>
-                <span className="text-sm text-slate-400">{formatNumber(entry.amount)} / {formatNumber(entry.fee)}</span>
-                <span className="flex md:justify-end"><ReflectionStatus entry={entry} /></span>
+              <button key={entry.id} className="group grid w-full gap-3 px-4 py-4 text-left transition-[background-color,box-shadow] duration-150 hover:bg-slate-800/55 active:bg-slate-800/75 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-cyan-400/60 sm:px-5 md:grid-cols-[1.1fr_0.7fr_1.2fr_1fr_1fr_0.8fr] md:items-center md:gap-4" onClick={() => navigate('/journal/' + entry.id)}>
+                <span className="flex items-start justify-between gap-3 md:block">
+                  <span><span className="block text-lg font-black text-white">{entry.symbol}</span><span className="text-sm text-slate-400">{entry.name || entry.market}</span></span>
+                  <ChevronRight className="mt-1 h-5 w-5 shrink-0 text-slate-600 transition-transform duration-150 group-hover:translate-x-0.5 group-hover:text-slate-400 md:hidden" />
+                </span>
+                <span className="flex items-center gap-3"><span className="w-12 shrink-0 text-xs font-semibold text-slate-500 md:hidden">方向</span><SideBadge side={entry.side} /></span>
+                <span className="flex items-center gap-3 text-sm text-slate-300"><span className="w-12 shrink-0 text-xs font-semibold text-slate-500 md:hidden">时间</span>{new Date(entry.datetime).toLocaleString()}</span>
+                <span className="flex items-center gap-3 text-sm text-slate-400"><span className="w-12 shrink-0 text-xs font-semibold text-slate-500 md:hidden">成交</span>{formatNumber(entry.quantity)} × {formatNumber(entry.price)}</span>
+                <span className="flex items-center gap-3 text-sm text-slate-400"><span className="w-12 shrink-0 text-xs font-semibold text-slate-500 md:hidden">金额</span>{formatNumber(entry.amount)} / {formatNumber(entry.fee)}</span>
+                <span className="flex items-center gap-3 md:justify-end"><span className="w-12 shrink-0 text-xs font-semibold text-slate-500 md:hidden">复盘</span><ReflectionStatus entry={entry} /></span>
               </button>
             ))}
           </div>

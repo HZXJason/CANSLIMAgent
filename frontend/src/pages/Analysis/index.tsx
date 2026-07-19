@@ -10,6 +10,10 @@ interface LocationState {
   name?: string;
 }
 
+function tabDomID(symbol: string) {
+  return symbol.replace(/[^a-zA-Z0-9_-]/g, '-');
+}
+
 export default function AnalysisPage() {
   const { symbol } = useParams();
   const location = useLocation();
@@ -68,8 +72,8 @@ export default function AnalysisPage() {
   };
 
   return (
-    <section className="mx-auto flex w-full max-w-[1600px] flex-col gap-4 px-3 py-4 sm:px-5 lg:px-6">
-      <header className="rounded-2xl border border-slate-800/90 bg-slate-900/70 p-2.5 shadow-xl shadow-slate-950/20 backdrop-blur">
+    <section className="mx-auto flex w-full max-w-[1600px] flex-col gap-3 px-3 py-3 sm:gap-4 sm:px-5 sm:py-4 lg:px-6">
+      <header className="min-w-0 rounded-[18px] border border-white/[0.075] bg-[#0d1421] p-1.5 shadow-[0_14px_38px_rgba(0,0,0,0.14)] sm:p-2" aria-label="股票分析工作区">
         <TabBar
           tabs={tabs}
           activeTabId={displayedTabId}
@@ -80,10 +84,20 @@ export default function AnalysisPage() {
       </header>
 
       {activeTab ? (
-        <AnalysisContent symbol={activeTab.symbol} tabName={activeTab.name} />
+        <div
+          id={`analysis-panel-${tabDomID(activeTab.symbol)}`}
+          role="tabpanel"
+          aria-labelledby={`analysis-tab-${tabDomID(activeTab.symbol)}`}
+          className="min-w-0"
+        >
+          <AnalysisContent symbol={activeTab.symbol} tabName={activeTab.name} />
+        </div>
       ) : (
-        <section className="flex min-h-72 items-center justify-center rounded-[1.25rem] border border-dashed border-slate-800 bg-slate-900/40 text-center text-slate-400">
-          <p className="text-sm font-semibold">添加股票开始分析</p>
+        <section className="flex min-h-72 items-center justify-center rounded-[20px] border border-dashed border-slate-700/80 bg-[#0d1421] px-5 text-center text-slate-400">
+          <div>
+            <p className="text-base font-bold text-slate-200">添加股票开始分析</p>
+            <p className="mt-2 text-sm text-slate-500">使用上方添加按钮输入股票代码</p>
+          </div>
         </section>
       )}
     </section>

@@ -32,65 +32,79 @@ export default function StockHeader({ symbol, tabName, summary }: StockHeaderPro
         name: summary.name,
         market: summary.market as Market,
         metrics: summary.metrics,
-		ai_analyzed: summary.ai_analyzed,
+        ai_analyzed: summary.ai_analyzed,
         data_as_of: summary.data_as_of
       }
     : null;
   const labels = stockForLabels ? computeStockLabels(stockForLabels, thresholds) : null;
+  const hasMetadata = Boolean(summary?.market || summary?.data_as_of || summary?.metrics.n || summary?.ai_analyzed);
 
   return (
-    <section className="sticky top-3 z-20 rounded-2xl border border-slate-800/90 bg-slate-950/90 px-3 py-3 shadow-xl shadow-slate-950/30 backdrop-blur sm:px-4">
-      <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-        <div className="flex min-w-0 items-center gap-3">
-          <Button variant="ghost" className="h-9 w-9 shrink-0 rounded-xl px-0" onClick={() => navigate('/screener')} aria-label="返回选股器">
+    <section
+      className="glass-chrome sticky top-[calc(4rem+0.5rem)] z-30 rounded-[18px] border border-white/[0.09] px-3 py-2.5 shadow-[0_18px_46px_rgba(0,0,0,0.28)] md:top-3 sm:px-4 sm:py-3"
+      aria-label={`${symbol} 股票摘要`}
+    >
+      <div className="flex flex-col gap-2.5 lg:flex-row lg:items-center lg:justify-between lg:gap-4">
+        <div className="flex min-w-0 items-center gap-2.5 sm:gap-3">
+          <Button
+            type="button"
+            variant="ghost"
+            className="h-11 w-11 shrink-0 px-0 sm:h-10 sm:w-10"
+            onClick={() => navigate('/screener')}
+            aria-label="返回选股器"
+          >
             <ArrowLeft className="h-4 w-4" />
           </Button>
-          <div className="min-w-0">
-            <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
-              <h1 className="text-xl font-black tracking-tight text-white sm:text-2xl">{symbol}</h1>
-              <span className="max-w-72 truncate text-sm font-semibold text-slate-300 sm:text-base">{summary?.name ?? tabName}</span>
-              {summary?.metrics.n ? (
-                <span className="inline-flex items-center gap-1.5 rounded-full border border-emerald-300/30 bg-emerald-400/10 px-2.5 py-1 text-xs font-bold text-emerald-200">
-                  <BadgeCheck className="h-3.5 w-3.5" />
-                  N
-                </span>
-              ) : null}
-              {summary?.ai_analyzed ? (
-                <span className="inline-flex items-center gap-1.5 rounded-full border border-violet-300/30 bg-violet-400/10 px-2.5 py-1 text-xs font-bold text-violet-200">
-                  <Sparkles className="h-3.5 w-3.5" />
-                  AI 已分析
-                </span>
-              ) : null}
+          <div className="min-w-0 flex-1">
+            <div className="flex min-w-0 items-baseline gap-2.5">
+              <h1 className="shrink-0 text-xl font-extrabold tracking-[-0.025em] text-white sm:text-2xl">{symbol}</h1>
+              <span className="min-w-0 truncate text-sm font-semibold text-slate-300 sm:max-w-80 sm:text-base">{summary?.name ?? tabName}</span>
             </div>
-            <div className="mt-1 flex flex-wrap items-center gap-2 text-xs font-medium text-slate-500">
-              {summary?.market ? <span>{marketLabel[summary.market] ?? summary.market}</span> : null}
-              {summary?.data_as_of ? (
-                <span className="inline-flex items-center gap-1">
-                  <CalendarDays className="h-3.5 w-3.5" />
-                  {formatDateCN(summary.data_as_of)}
-                </span>
-              ) : null}
-            </div>
+            {hasMetadata ? (
+              <div className="mt-1.5 flex min-w-0 items-center gap-2 overflow-x-auto whitespace-nowrap pb-0.5 text-xs font-medium text-slate-400">
+                {summary?.market ? <span className="shrink-0">{marketLabel[summary.market] ?? summary.market}</span> : null}
+                {summary?.data_as_of ? (
+                  <span className="inline-flex shrink-0 items-center gap-1">
+                    <CalendarDays className="h-3.5 w-3.5" />
+                    {formatDateCN(summary.data_as_of)}
+                  </span>
+                ) : null}
+                {summary?.metrics.n ? (
+                  <span className="inline-flex shrink-0 items-center gap-1 rounded-full border border-emerald-300/25 bg-emerald-400/10 px-2 py-0.5 font-bold text-emerald-200">
+                    <BadgeCheck className="h-3.5 w-3.5" />
+                    N
+                  </span>
+                ) : null}
+                {summary?.ai_analyzed ? (
+                  <span className="inline-flex shrink-0 items-center gap-1 rounded-full border border-violet-300/25 bg-violet-400/10 px-2 py-0.5 font-bold text-violet-200">
+                    <Sparkles className="h-3.5 w-3.5" />
+                    AI 已分析
+                  </span>
+                ) : null}
+              </div>
+            ) : null}
           </div>
         </div>
 
-        {labels ? <div className="flex flex-wrap gap-1.5 lg:justify-end">
-          {tagOrder.map((tag) => {
-            const label = labels?.[tag];
-            const status = label?.status ?? 'insufficient';
-            const value = Array.isArray(label?.value) ? label.value.map((item) => item.toFixed(1) + '%').join(' / ') : String(label?.value ?? '暂无');
-            const sourceKey = tag === 'S' ? 's' : tag === 'L' ? 'l' : tag === 'I' ? 'i' : null;
-            const source = sourceKey ? summary?.metric_sources?.[sourceKey] : undefined;
-            const sourceText = source ? '，数据源 ' + source.source + (source.status === 'unavailable' ? '（暂不可用）' : '') : '';
-            return (
-              <Tooltip key={tag} content={tag + '：' + labelStatusText(status) + '，原始值 ' + value + sourceText}>
-                <Badge variant={status === 'pass' ? 'pass' : status === 'fail' ? 'fail' : 'insufficient'} aria-label={tag + ' ' + labelStatusText(status)}>
-                  {status === 'insufficient' ? '?' : tag}
-                </Badge>
-              </Tooltip>
-            );
-          })}
-        </div> : null}
+        {labels ? (
+          <div className="flex flex-wrap gap-1.5 pl-[3.375rem] sm:pl-[3.625rem] lg:shrink-0 lg:justify-end lg:pl-0">
+            {tagOrder.map((tag) => {
+              const label = labels?.[tag];
+              const status = label?.status ?? 'insufficient';
+              const value = Array.isArray(label?.value) ? label.value.map((item) => item.toFixed(1) + '%').join(' / ') : String(label?.value ?? '暂无');
+              const sourceKey = tag === 'S' ? 's' : tag === 'L' ? 'l' : tag === 'I' ? 'i' : null;
+              const source = sourceKey ? summary?.metric_sources?.[sourceKey] : undefined;
+              const sourceText = source ? '，数据源 ' + source.source + (source.status === 'unavailable' ? '（暂不可用）' : '') : '';
+              return (
+                <Tooltip key={tag} content={tag + '：' + labelStatusText(status) + '，原始值 ' + value + sourceText}>
+                  <Badge variant={status === 'pass' ? 'pass' : status === 'fail' ? 'fail' : 'insufficient'} aria-label={tag + ' ' + labelStatusText(status)}>
+                    {status === 'insufficient' ? '?' : tag}
+                  </Badge>
+                </Tooltip>
+              );
+            })}
+          </div>
+        ) : null}
       </div>
     </section>
   );

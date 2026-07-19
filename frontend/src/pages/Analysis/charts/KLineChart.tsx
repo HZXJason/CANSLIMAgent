@@ -79,16 +79,23 @@ export default function KLineChart({ data, status, period, onPeriodChange }: KLi
       title="K 线与成交量"
       status={finalStatus}
       height={420}
+      heightClassName="h-[320px] sm:h-[360px] xl:h-[420px]"
       source={data?.source}
       dataAsOf={data?.data_as_of}
       action={
-        <div className="grid grid-cols-3 overflow-hidden rounded-xl border border-slate-700 bg-slate-950/30">
+        <div
+          className="grid grid-cols-3 overflow-hidden rounded-xl border border-slate-700/80 bg-slate-950/35"
+          role="group"
+          aria-label="K 线周期"
+        >
           {(Object.keys(periodLabels) as KLinePeriod[]).map((item) => (
             <button
               key={item}
+              type="button"
+              aria-pressed={period === item}
               className={cn(
-                'h-9 min-w-12 px-3 text-sm font-semibold transition',
-                period === item ? 'bg-cyan-400 text-slate-950' : 'text-slate-400 hover:bg-slate-800 hover:text-white'
+                'interactive-press min-h-11 min-w-11 px-3 text-sm font-bold transition-[background-color,color] duration-150',
+                period === item ? 'bg-cyan-300 text-slate-950' : 'text-slate-400 hover:bg-slate-800 hover:text-white'
               )}
               onClick={() => onPeriodChange(item)}
             >
@@ -103,12 +110,12 @@ export default function KLineChart({ data, status, period, onPeriodChange }: KLi
           <CartesianGrid stroke={chartGridColor} vertical={false} />
           <XAxis
             dataKey="date"
-            tick={{ fill: chartTextColor, fontSize: 12 }}
+            tick={{ fill: chartTextColor, fontSize: 11 }}
             tickFormatter={(value: string) => formatAxisDate(value, period)}
-            minTickGap={28}
+            minTickGap={34}
             stroke={chartGridColor}
           />
-          <YAxis yAxisId="price" domain={['dataMin', 'dataMax']} tick={{ fill: chartTextColor, fontSize: 12 }} stroke={chartGridColor} width={54} />
+          <YAxis yAxisId="price" domain={['dataMin', 'dataMax']} tick={{ fill: chartTextColor, fontSize: 11 }} stroke={chartGridColor} width={48} />
           <YAxis yAxisId="volume" orientation="right" hide domain={[0, maxVolume * 4]} />
           <RechartsTooltip content={<TooltipContent />} />
           <Bar yAxisId="volume" dataKey="volume" barSize={6} isAnimationActive={false}>

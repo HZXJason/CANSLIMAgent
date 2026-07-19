@@ -6,17 +6,17 @@ interface BadgeProps extends React.HTMLAttributes<HTMLSpanElement> {
 }
 
 const variantClass = {
-  pass: 'border-emerald-400 bg-emerald-400 text-slate-950 shadow-sm shadow-emerald-500/25',
-  fail: 'border-slate-700 bg-slate-800/70 text-slate-500',
-  insufficient: 'border-amber-300 bg-amber-300 text-slate-950 shadow-sm shadow-amber-400/20',
-  neutral: 'border-slate-700 bg-slate-800/80 text-slate-300'
+  pass: 'border-emerald-300/50 bg-emerald-300 text-emerald-950 shadow-sm shadow-emerald-500/15',
+  fail: 'border-slate-700/80 bg-slate-800/65 text-slate-400',
+  insufficient: 'border-amber-300/50 bg-amber-300 text-amber-950 shadow-sm shadow-amber-400/15',
+  neutral: 'border-slate-700/80 bg-slate-800/75 text-slate-300'
 };
 
 export function Badge({ className, variant = 'neutral', ...props }: BadgeProps) {
   return (
     <span
       className={cn(
-        'inline-flex h-7 min-w-7 items-center justify-center rounded-full border px-2 text-xs font-bold',
+        'inline-flex h-7 min-w-7 items-center justify-center rounded-full border px-2 text-xs font-extrabold tabular-nums',
         variantClass[variant],
         className
       )}

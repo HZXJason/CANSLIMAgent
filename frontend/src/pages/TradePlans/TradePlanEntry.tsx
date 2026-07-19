@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState, type TextareaHTMLAttributes } from 'react
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { ArrowLeft, BookOpenCheck, Clock3, FilePenLine, LockKeyhole, PlayCircle, Save, XCircle } from 'lucide-react';
 import { useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom';
+import { PageHeader } from '../../components/PageHeader';
 import { Button } from '../../components/ui/button';
 import { Card } from '../../components/ui/card';
 import { ConfirmDialog } from '../../components/ui/confirm-dialog';
@@ -215,9 +216,10 @@ function buildExecuteInput(form: ExecuteForm) {
 function Textarea({ className, invalid, ...props }: TextareaHTMLAttributes<HTMLTextAreaElement> & { invalid?: boolean }) {
   return (
     <textarea
+      aria-invalid={invalid || undefined}
       className={cn(
-        'min-h-24 w-full resize-y rounded-xl border bg-slate-950/60 px-3 py-3 text-sm text-slate-100 outline-none transition placeholder:text-slate-500 focus:border-cyan-400/60 focus:ring-2 focus:ring-cyan-400/20',
-        invalid ? 'border-red-500' : 'border-slate-700',
+        'min-h-28 w-full resize-y rounded-xl border bg-slate-950/55 px-3.5 py-3 text-sm leading-6 text-slate-100 outline-none transition-[border-color,background-color,box-shadow] duration-150 ease-out placeholder:text-slate-600 hover:bg-slate-950/75 focus:border-cyan-300/60 focus:bg-slate-950/80 focus:ring-2 focus:ring-cyan-300/15 disabled:cursor-not-allowed disabled:bg-slate-900/55 disabled:text-slate-500',
+        invalid ? 'border-red-400/80 focus:border-red-400 focus:ring-red-400/15' : 'border-slate-700/80',
         className
       )}
       {...props}
@@ -659,14 +661,19 @@ export default function TradePlanEntry() {
   const isNew = !id;
 
   return (
-    <section className="mx-auto flex w-full max-w-[1040px] flex-col gap-5 px-4 py-5 sm:px-6 lg:px-8 lg:py-7">
-      <header className="flex flex-col gap-4 border-b border-slate-800/90 pb-4 sm:flex-row sm:items-center sm:justify-between">
-        <h1 className="text-2xl font-black tracking-tight text-white sm:text-3xl">{isNew ? '新建交易计划' : '交易计划'}</h1>
-        <Button className="w-full sm:w-auto" variant="outline" onClick={() => navigate('/trade-plans')}>
-          <ArrowLeft className="h-4 w-4" />
-          返回列表
-        </Button>
-      </header>
+    <section className="mx-auto flex w-full max-w-[1040px] flex-col gap-6 px-4 py-6 sm:px-6 sm:py-8 lg:px-8 lg:py-10">
+      <PageHeader
+        eyebrow="执行工作台"
+        title={isNew ? '新建交易计划' : '交易计划'}
+        description={isNew ? '先定义触发条件与风险边界，再决定何时进入等待执行。' : '查看计划状态、执行条件与成交结果。'}
+        meta={isNew ? '草稿可随时修改' : '非草稿计划的核心字段将保持锁定'}
+        actions={
+          <Button className="w-full sm:w-auto" variant="outline" onClick={() => navigate('/trade-plans')}>
+            <ArrowLeft className="h-4 w-4" />
+            返回列表
+          </Button>
+        }
+      />
 
       {id ? <DetailView id={id} /> : <PlanFormCard />}
     </section>

@@ -1,5 +1,6 @@
 import { KeyRound, Loader2, RefreshCw, Save, SlidersHorizontal, Trash2 } from 'lucide-react';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { PageHeader } from '../../components/PageHeader';
 import { Button } from '../../components/ui/button';
 import { Card } from '../../components/ui/card';
 import { Checkbox } from '../../components/ui/checkbox';
@@ -41,6 +42,7 @@ export default function SettingsPage() {
   const [credentialSaving, setCredentialSaving] = useState(false);
   const [credentialError, setCredentialError] = useState<string | null>(null);
   const [deleteKeyConfirmOpen, setDeleteKeyConfirmOpen] = useState(false);
+  const credentialWriteVersionRef = useRef(0);
 
   useEffect(() => {
     let cancelled = false;
@@ -73,9 +75,14 @@ export default function SettingsPage() {
   );
   const customProvider = Boolean(provider.custom_models);
   const credentialBackendURL = customProvider ? config.backend_url.trim() : '';
+  const credentialTarget = `${provider.id}\n${credentialBackendURL}`;
+  const credentialTargetRef = useRef(credentialTarget);
 
   useEffect(() => {
-    setAPIKey('');
+    if (credentialTargetRef.current !== credentialTarget) {
+      credentialTargetRef.current = credentialTarget;
+      setAPIKey('');
+    }
     setCredentialError(null);
     if (!configReady || (customProvider && !credentialBackendURL)) {
       setCredentialStatus(null);
@@ -83,14 +90,15 @@ export default function SettingsPage() {
       return;
     }
     let cancelled = false;
+    const writeVersion = credentialWriteVersionRef.current;
     setCredentialLoading(true);
     const timeoutId = window.setTimeout(() => {
       void fetchLLMCredentialStatus(provider.id, credentialBackendURL)
         .then((status) => {
-          if (!cancelled) setCredentialStatus(status);
+          if (!cancelled && writeVersion === credentialWriteVersionRef.current) setCredentialStatus(status);
         })
         .catch((error) => {
-          if (!cancelled) {
+          if (!cancelled && writeVersion === credentialWriteVersionRef.current) {
             setCredentialStatus(null);
             setCredentialError(error instanceof Error ? error.message : '读取 Key 状态失败');
           }
@@ -103,7 +111,7 @@ export default function SettingsPage() {
       cancelled = true;
       window.clearTimeout(timeoutId);
     };
-  }, [configReady, credentialBackendURL, customProvider, provider.id]);
+  }, [configReady, credentialBackendURL, credentialTarget, customProvider, provider.id]);
 
   useEffect(() => {
     if (!configReady) return;
@@ -183,6 +191,7 @@ export default function SettingsPage() {
       setCredentialError('请先填写自定义 API 地址');
       return;
     }
+    credentialWriteVersionRef.current += 1;
     setCredentialSaving(true);
     setCredentialError(null);
     try {
@@ -198,6 +207,7 @@ export default function SettingsPage() {
   };
 
   const deleteAPIKey = async () => {
+    credentialWriteVersionRef.current += 1;
     setCredentialSaving(true);
     setCredentialError(null);
     try {
@@ -213,12 +223,15 @@ export default function SettingsPage() {
   };
 
   return (
-    <section className="mx-auto w-full max-w-[1040px] px-4 py-5 sm:px-6 lg:px-8 lg:py-7">
-      <header className="border-b border-slate-800/90 pb-4">
-        <h1 className="text-2xl font-black tracking-tight text-white sm:text-3xl">设置</h1>
-      </header>
+    <section className="mx-auto flex w-full max-w-[1040px] flex-col gap-6 px-4 py-6 sm:px-6 sm:py-8 lg:px-8 lg:py-10">
+      <PageHeader
+        eyebrow="工作区"
+        title="设置"
+        description="配置模型、联网能力与券商连接。API Key 仅由后端加密保存。"
+        meta="模型偏好保存在当前浏览器 · 密钥由服务端托管"
+      />
 
-      <Card className="mt-5 overflow-hidden p-0">
+      <Card className="overflow-hidden p-0">
         <div className="flex items-center gap-3 border-b border-slate-800 px-5 py-4 sm:px-6">
           <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-cyan-400/10 text-cyan-300">
             <SlidersHorizontal className="h-5 w-5" />
@@ -292,7 +305,7 @@ export default function SettingsPage() {
               <Button
                 className="shrink-0"
                 type="button"
-                disabled={credentialSaving || credentialLoading || credentialStatus?.storage_ready === false || !apiKey.trim() || (customProvider && !credentialBackendURL)}
+                disabled={credentialSaving || credentialStatus?.storage_ready === false || !apiKey.trim() || (customProvider && !credentialBackendURL)}
                 onClick={() => void saveAPIKey()}
               >
                 {credentialSaving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}

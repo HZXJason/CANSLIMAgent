@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Activity, LoaderCircle, Pause, Play, RefreshCw, X } from 'lucide-react';
+import { PageHeader } from '../../components/PageHeader';
 import { Button } from '../../components/ui/button';
 import { Card } from '../../components/ui/card';
 import { API_BASE_URL, createPreset, deletePreset, fetchCachedResults, fetchPresets, fetchRefreshJob, refreshMarket } from '../../lib/api';
@@ -475,43 +476,39 @@ export default function ScreenerPage() {
   };
 
   return (
-    <section className="mx-auto w-full max-w-[1440px] px-4 py-5 sm:px-6 lg:px-8">
-      <header className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <h1 className="text-2xl font-bold tracking-tight text-white sm:text-3xl">CANSLIM 选股</h1>
-        <span className="text-sm text-slate-400">
-          数据日期 <span className="font-medium text-slate-200">{formatDateCN(selectedMarketDataAsOf)}</span>
-        </span>
-      </header>
+    <section className="mx-auto w-full max-w-[1520px] px-4 py-6 sm:px-6 sm:py-8 lg:px-8 lg:py-10">
+      <PageHeader
+        eyebrow="市场研究"
+        title="CANSLIM 选股"
+        description="先用一致的增长与相对强度标准缩小范围，再进入个股证据与 AI 分析。"
+        meta={
+          <span className="inline-flex items-center gap-2 rounded-full border border-slate-800 bg-slate-950/35 px-3 py-1.5">
+            <span className="h-1.5 w-1.5 rounded-full bg-cyan-300" />
+            数据日期 <span className="font-bold text-slate-200">{formatDateCN(selectedMarketDataAsOf)}</span>
+          </span>
+        }
+      />
 
-      <Card className="mt-5 p-3 sm:p-4">
-        <div className="flex flex-col gap-3 lg:flex-row lg:items-center">
-          <h2 className="shrink-0 text-base font-semibold text-white">市场</h2>
-          <div className="min-w-0 flex-1 lg:ml-auto lg:max-w-3xl">
+      <Card className="mt-6 overflow-hidden p-0">
+        <div className="grid xl:grid-cols-[minmax(0,1.25fr)_minmax(360px,0.75fr)]">
+          <section className="border-b border-slate-800/80 p-4 sm:p-5 xl:border-b-0 xl:border-r" aria-labelledby="screener-market-title">
+            <div className="mb-3 flex items-center justify-between gap-3">
+              <div>
+                <h2 id="screener-market-title" className="text-base font-bold text-white">选择市场</h2>
+                <p className="mt-1 text-xs leading-5 text-slate-500">切换不会中断其他市场正在进行的扫描</p>
+              </div>
+              <span className="hidden rounded-full border border-slate-800 px-2.5 py-1 text-xs font-semibold text-slate-500 sm:inline-flex">3 个市场</span>
+            </div>
             <MarketSelector selectedMarket={selectedMarket} onChange={handleMarketChange} />
-          </div>
-        </div>
-      </Card>
+          </section>
 
-      <section className="mt-4 space-y-4">
-        <ThresholdPanel
-          open={thresholdPanelOpen}
-          thresholds={thresholds}
-          presets={presets}
-          activePresetId={activePresetId}
-          onToggle={toggleThresholdPanel}
-          onChange={setThresholds}
-          onApplyPreset={applyPreset}
-          onSavePreset={handleSavePreset}
-          onDeletePreset={handleDeletePreset}
-        />
-
-        <Card className="p-4 sm:p-5">
-          <div className="flex flex-col gap-4 md:flex-row md:items-center">
+          <section className="p-4 sm:p-5" aria-labelledby="screener-scan-title">
+            <div className="flex h-full flex-col gap-4 sm:flex-row sm:items-end xl:flex-col xl:items-stretch">
             <div className="min-w-0 flex-1">
-              <div className="mb-3 flex flex-wrap items-center gap-2">
-                <h2 className="text-base font-semibold text-white">市场扫描</h2>
+              <div className="mb-3 flex flex-wrap items-center gap-2.5">
+                <h2 id="screener-scan-title" className="text-base font-bold text-white">市场扫描</h2>
                 {operationMarket ? (
-                  <span className="rounded-lg bg-slate-800 px-2 py-1 text-xs font-medium text-slate-300">
+                  <span className="rounded-full border border-cyan-300/15 bg-cyan-300/[0.07] px-2.5 py-1 text-xs font-semibold text-cyan-100">
                     {marketLabel[operationMarket]}
                   </span>
                 ) : null}
@@ -527,7 +524,7 @@ export default function ScreenerPage() {
             </div>
             <Button
               type="button"
-              className="h-11 min-w-32 rounded-xl py-0 md:self-end"
+              className="w-full min-w-32 sm:w-auto xl:w-full"
               onClick={handlePrimaryAction}
               disabled={isRefreshing}
             >
@@ -545,27 +542,42 @@ export default function ScreenerPage() {
               {primaryActionLabel}
             </Button>
           </div>
-        </Card>
+          </section>
+        </div>
+      </Card>
+
+      <section className="mt-4">
+        <ThresholdPanel
+          open={thresholdPanelOpen}
+          thresholds={thresholds}
+          presets={presets}
+          activePresetId={activePresetId}
+          onToggle={toggleThresholdPanel}
+          onChange={setThresholds}
+          onApplyPreset={applyPreset}
+          onSavePreset={handleSavePreset}
+          onDeletePreset={handleDeletePreset}
+        />
       </section>
 
       {errorMessage ? (
-        <div className="mt-4 flex items-start justify-between gap-3 rounded-xl border border-red-800 bg-red-950/60 px-4 py-3 text-sm text-red-100" role="alert">
+        <div className="mt-4 flex items-start justify-between gap-3 rounded-2xl border border-red-500/30 bg-red-500/[0.08] px-4 py-3 text-sm text-red-100" role="alert">
           <span>{errorMessage}</span>
-          <button type="button" className="shrink-0 text-red-300 hover:text-white" onClick={() => setErrorMessage(null)} aria-label="关闭错误提示">
+          <button type="button" className="interactive-press -m-2 flex h-10 w-10 shrink-0 items-center justify-center rounded-xl text-red-300 hover:bg-red-500/10 hover:text-white" onClick={() => setErrorMessage(null)} aria-label="关闭错误提示">
             <X className="h-4 w-4" />
           </button>
         </div>
       ) : null}
       {notice ? (
-        <div className="mt-4 flex items-start justify-between gap-3 rounded-xl border border-cyan-400/40 bg-finance-navy/60 px-4 py-3 text-sm text-blue-100" role="status">
+        <div className="mt-4 flex items-start justify-between gap-3 rounded-2xl border border-cyan-300/25 bg-cyan-300/[0.07] px-4 py-3 text-sm text-cyan-50" role="status">
           <span>{notice}</span>
-          <button type="button" className="shrink-0 text-cyan-300 hover:text-white" onClick={() => setNotice(null)} aria-label="关闭提示">
+          <button type="button" className="interactive-press -m-2 flex h-10 w-10 shrink-0 items-center justify-center rounded-xl text-cyan-300 hover:bg-cyan-300/10 hover:text-white" onClick={() => setNotice(null)} aria-label="关闭提示">
             <X className="h-4 w-4" />
           </button>
         </div>
       ) : null}
 
-      <Card className="mt-4 p-4">
+      <Card className="mt-4 p-4 sm:p-5">
         <TagFilter activeTags={activeTagFilters} onToggle={toggleTagFilter} onClear={clearTagFilters} />
       </Card>
 

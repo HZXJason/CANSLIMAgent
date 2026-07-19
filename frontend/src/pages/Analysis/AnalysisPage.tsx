@@ -184,16 +184,16 @@ export default function AnalysisPage({ symbol, tabName }: AnalysisPageProps) {
   }, [normalized, updateChartStatus, updateState]);
 
   return (
-    <div className="space-y-4">
+    <div className="min-w-0 space-y-3 sm:space-y-4">
       <StockHeader symbol={normalized} tabName={tabName} summary={state.stockSummary} />
-      <section className="grid items-start gap-4 xl:grid-cols-[minmax(0,1.8fr)_minmax(340px,0.9fr)]">
+      <section className="grid min-w-0 items-start gap-3 sm:gap-4 xl:grid-cols-[minmax(0,1.72fr)_minmax(320px,0.82fr)]" aria-label="价格与公司概览">
         <KLineChart data={state.klineData} status={state.chartStatus.kline} period={state.klinePeriod} onPeriodChange={(period) => setKLinePeriod(normalized, period)} />
-        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-1">
+        <div className="grid min-w-0 gap-3 sm:gap-4 md:grid-cols-2 xl:grid-cols-1">
           <CompanyProfileCard data={state.companyProfile} status={state.chartStatus.profile} />
           <RSChart data={state.rsData} status={state.chartStatus.rs} period={state.klinePeriod} />
         </div>
       </section>
-      <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+      <section className="grid min-w-0 gap-3 sm:gap-4 md:grid-cols-2 xl:grid-cols-3" aria-label="基本面图表">
         <EPSChart data={state.epsData} status={state.chartStatus.eps} />
         <RevenueChart data={state.revenueData} status={state.chartStatus.revenue} />
         <div className="md:col-span-2 xl:col-span-1">

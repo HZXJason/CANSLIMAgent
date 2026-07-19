@@ -1,12 +1,11 @@
 import { memo, useCallback, useEffect, useMemo, useState } from 'react';
-import { BadgeCheck, BarChart3, SearchX, Sparkles } from 'lucide-react';
+import { BadgeCheck, BarChart3, ChevronRight, SearchX, Sparkles } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { Badge } from '../../components/ui/badge';
 import { Button } from '../../components/ui/button';
 import { Card } from '../../components/ui/card';
 import { Tooltip } from '../../components/ui/tooltip';
 import { SCORE_LABEL_KEYS, SCREENER_FILTER_KEYS, labelStatusText } from '../../lib/computeLabels';
-import { cn } from '../../lib/utils';
 import { hasGeneratedAIAnalysis, useAnalysisStore } from '../../stores/analysisStore';
 import { useTabStore } from '../../stores/tabStore';
 import type { ComputedStock, LabelResult, Market, ScreenerFilterKey } from '../../types';
@@ -15,7 +14,6 @@ const tagOrder: ScreenerFilterKey[] = SCREENER_FILTER_KEYS;
 const scoreDenominator = SCORE_LABEL_KEYS.length;
 const INITIAL_VISIBLE_STOCKS = 160;
 const VISIBLE_STOCK_INCREMENT = 160;
-const ROW_ANIMATION_LIMIT = 24;
 
 const marketLabel: Record<Market, string> = {
   SP500: '标普500',
@@ -40,13 +38,13 @@ function LabelBadge({ label }: { label: LabelResult }) {
   if (label.status === 'insufficient') {
     return (
       <Tooltip content="数据不足，谨慎参考，基准期以 0 计算">
-        <Badge variant="insufficient">?</Badge>
+        <Badge variant="insufficient" aria-label={`${label.key} 数据不足`}>?</Badge>
       </Tooltip>
     );
   }
   return (
     <Tooltip content={label.key + '：' + labelStatusText(label.status) + '，原始值 ' + formatValue(label)}>
-      <Badge variant={label.status === 'pass' ? 'pass' : 'fail'}>{label.key}</Badge>
+      <Badge variant={label.status === 'pass' ? 'pass' : 'fail'} aria-label={`${label.key} ${labelStatusText(label.status)}`}>{label.key}</Badge>
     </Tooltip>
   );
 }
@@ -55,14 +53,14 @@ function NLabelBadge({ written }: { written: boolean | null }) {
   if (!written) {
     return (
       <Tooltip content="N：AI 分析尚未写回 New 标签">
-        <Badge variant="neutral">N</Badge>
+        <Badge variant="neutral" aria-label="N 尚未由 AI 写回">N</Badge>
       </Tooltip>
     );
   }
 
   return (
     <Tooltip content="N：AI 分析已写回的 New 标签">
-      <Badge variant="pass">
+      <Badge variant="pass" aria-label="N 已由 AI 写回">
         <span className="inline-flex items-center gap-1">
           <BadgeCheck className="h-3 w-3" />
           N
@@ -75,7 +73,7 @@ function NLabelBadge({ written }: { written: boolean | null }) {
 function AIAnalysisBadge() {
   return (
     <Tooltip content="已生成 AI 分析报告">
-      <Badge variant="neutral" className="h-6 min-w-9 shrink-0 gap-1 border-cyan-400/50 bg-cyan-400/10 px-1.5 text-[11px] text-cyan-200">
+      <Badge variant="neutral" aria-label="已生成 AI 分析报告" className="h-6 min-w-9 shrink-0 gap-1 border-cyan-400/50 bg-cyan-400/10 px-1.5 text-[11px] text-cyan-200">
         <Sparkles className="h-3 w-3" />
         AI
       </Badge>
@@ -107,27 +105,23 @@ function stockHasAIAnalysis(stock: ComputedStock, aiAnalyzedSymbols: Set<string>
 
 interface StockRowProps {
   stock: ComputedStock;
-  index: number;
   hasAIAnalysis: boolean;
   onOpen: (stock: ComputedStock) => void;
 }
 
-const StockRow = memo(function StockRow({ stock, index, hasAIAnalysis, onOpen }: StockRowProps) {
-  const animated = index < ROW_ANIMATION_LIMIT;
+const StockRow = memo(function StockRow({ stock, hasAIAnalysis, onOpen }: StockRowProps) {
+  const passedTags = tagOrder.filter((tag) => tag === 'N' ? Boolean(stock.metrics.n) : stock.labels[tag].status === 'pass');
+  const rowSummary = `${stock.passCount}/${scoreDenominator} 项计分标签达标，通过 ${passedTags.length > 0 ? passedTags.join('、') : '暂无'}，权重 ${stock.weightSum}`;
 
   return (
     <button
       type="button"
-      className={cn(
-        'grid w-full grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 gap-y-2.5 px-4 py-3.5 text-left transition hover:bg-slate-800/70 sm:px-5 md:grid-cols-[0.9fr_1.4fr_2fr_0.9fr_0.7fr] md:gap-4',
-        animated ? 'animate-fade-in opacity-0' : 'opacity-100'
-      )}
-      style={animated ? { animationDelay: index * 16 + 'ms' } : undefined}
+      className="group grid w-full grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 gap-y-2.5 px-4 py-4 text-left transition-[background-color,box-shadow] duration-150 ease-out hover:bg-slate-800/55 active:bg-slate-800/75 sm:px-5 md:grid-cols-[0.9fr_1.4fr_2fr_0.9fr_0.7fr] md:gap-4"
       onClick={() => onOpen(stock)}
-      aria-label={`打开 ${stock.symbol} ${stock.name}`}
+      aria-label={`打开 ${stock.symbol} ${stock.name}，${rowSummary}`}
     >
       <span className="flex min-w-0 items-center gap-2 font-semibold text-white">
-        <BarChart3 className="h-4 w-4 text-finance-blue" />
+        <BarChart3 className="h-4 w-4 text-cyan-300/70" />
         <span className="truncate">{stock.symbol}</span>
         {hasAIAnalysis ? <AIAnalysisBadge /> : null}
       </span>
@@ -141,8 +135,9 @@ const StockRow = memo(function StockRow({ stock, index, hasAIAnalysis, onOpen }:
         ))}
       </span>
       <span className="hidden text-sm text-slate-400 md:block">{marketLabel[stock.market]}</span>
-      <span className="col-start-2 row-start-1 text-right text-sm tabular-nums text-slate-300 md:col-auto md:row-auto">
-        {stock.passCount}/{scoreDenominator} · {stock.weightSum}
+      <span className="col-start-2 row-start-1 inline-flex items-center justify-end gap-1.5 text-right text-sm font-bold tabular-nums text-slate-200 md:col-auto md:row-auto">
+        <span>{stock.passCount}/{scoreDenominator} · {stock.weightSum}</span>
+        <ChevronRight className="h-4 w-4 text-slate-600 transition-transform duration-150 group-hover:translate-x-0.5 group-hover:text-slate-400 md:hidden" />
       </span>
     </button>
   );
@@ -183,9 +178,12 @@ export default function StockList({ stocks, hasRawData, filtered }: StockListPro
 
   return (
     <Card className="overflow-hidden p-0">
-      <div className="flex items-center justify-between border-b border-slate-800 px-5 py-4">
-        <h2 className="text-base font-semibold text-white">候选股票</h2>
-        <span className="text-sm tabular-nums text-slate-400">{visibleStocks.length} / {stocks.length}</span>
+      <div className="flex items-center justify-between border-b border-slate-800/80 px-4 py-4 sm:px-5">
+        <div>
+          <h2 className="text-base font-bold text-white">候选股票</h2>
+          <p className="mt-1 text-xs text-slate-500">按综合权重排序，点击进入证据与图表</p>
+        </div>
+        <span className="rounded-full border border-slate-800 bg-slate-950/35 px-3 py-1.5 text-sm font-bold tabular-nums text-slate-300">{visibleStocks.length} / {stocks.length}</span>
       </div>
       <div className="hidden grid-cols-[0.9fr_1.4fr_2fr_0.9fr_0.7fr] gap-4 border-b border-slate-800 px-5 py-2.5 text-xs font-semibold text-slate-500 md:grid">
         <span>代码</span>
@@ -195,11 +193,10 @@ export default function StockList({ stocks, hasRawData, filtered }: StockListPro
         <span className="text-right">得分</span>
       </div>
       <div className="divide-y divide-slate-900">
-        {visibleStocks.map((stock, index) => (
+        {visibleStocks.map((stock) => (
           <StockRow
             key={stockIdentity(stock)}
             stock={stock}
-            index={index}
             hasAIAnalysis={stockHasAIAnalysis(stock, aiAnalyzedSymbols)}
             onOpen={handleOpenStock}
           />

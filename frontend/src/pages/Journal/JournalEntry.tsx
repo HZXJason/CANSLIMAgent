@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState, type TextareaHTMLAttributes } from 'react
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { ArrowLeft, LockKeyhole, Save, Trash2 } from 'lucide-react';
 import { useNavigate, useParams } from 'react-router-dom';
+import { PageHeader } from '../../components/PageHeader';
 import { Button } from '../../components/ui/button';
 import { Card } from '../../components/ui/card';
 import { ConfirmDialog } from '../../components/ui/confirm-dialog';
@@ -102,7 +103,7 @@ function buildInput(form: EntryForm): { input: NewJournalEntryInput | null; erro
 function Textarea({ className, ...props }: TextareaHTMLAttributes<HTMLTextAreaElement>) {
   return (
     <textarea
-      className={cn('min-h-24 w-full resize-y rounded-xl border border-slate-700 bg-slate-950/60 px-3 py-3 text-sm text-slate-100 outline-none transition placeholder:text-slate-500 focus:border-cyan-400/60 focus:ring-2 focus:ring-cyan-400/20', className)}
+      className={cn('min-h-28 w-full resize-y rounded-xl border border-slate-700/80 bg-slate-950/55 px-3.5 py-3 text-sm leading-6 text-slate-100 outline-none transition-[border-color,background-color,box-shadow] duration-150 ease-out placeholder:text-slate-600 hover:bg-slate-950/75 focus:border-cyan-300/60 focus:bg-slate-950/80 focus:ring-2 focus:ring-cyan-300/15 disabled:cursor-not-allowed disabled:bg-slate-900/55 disabled:text-slate-500', className)}
       {...props}
     />
   );
@@ -271,11 +272,19 @@ export default function JournalEntry() {
   const { id } = useParams();
   const navigate = useNavigate();
   return (
-    <section className="mx-auto flex w-full max-w-[1040px] flex-col gap-5 px-4 py-5 sm:px-6 lg:px-8 lg:py-7">
-      <header className="flex flex-col gap-4 border-b border-slate-800/90 pb-4 sm:flex-row sm:items-center sm:justify-between">
-        <h1 className="text-2xl font-black text-white sm:text-3xl">{id ? '成交记录' : '新建成交记录'}</h1>
-        <Button className="w-full sm:w-auto" variant="outline" onClick={() => navigate('/journal')}><ArrowLeft className="h-4 w-4" />返回列表</Button>
-      </header>
+    <section className="mx-auto flex w-full max-w-[1040px] flex-col gap-6 px-4 py-6 sm:px-6 sm:py-8 lg:px-8 lg:py-10">
+      <PageHeader
+        eyebrow="决策复盘"
+        title={id ? '成交记录' : '新建成交记录'}
+        description={id ? '核对成交事实，并把复盘结论留在原始记录旁。' : '记录真实成交信息，为后续表现分析保留可靠输入。'}
+        meta={id ? '成交信息只读 · 复盘内容可更新' : '成交数量与价格为必填项'}
+        actions={
+          <Button className="w-full sm:w-auto" variant="outline" onClick={() => navigate('/journal')}>
+            <ArrowLeft className="h-4 w-4" />
+            返回列表
+          </Button>
+        }
+      />
       {id ? <EntryDetail id={id} /> : <NewEntryView />}
     </section>
   );

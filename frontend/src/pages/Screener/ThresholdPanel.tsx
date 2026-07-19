@@ -4,6 +4,7 @@ import type { ThresholdConfig, ThresholdPreset } from '../../types';
 import { Button } from '../../components/ui/button';
 import { Card } from '../../components/ui/card';
 import { Input } from '../../components/ui/input';
+import { Select } from '../../components/ui/select';
 import { cn } from '../../lib/utils';
 
 type ThresholdKey = keyof ThresholdConfig;
@@ -73,43 +74,49 @@ export default function ThresholdPanel({
 
   return (
     <Card className="overflow-hidden p-0">
-      <div className="flex flex-col gap-3 p-4 sm:p-5 lg:flex-row lg:items-center lg:justify-between">
+      <div className="flex flex-col gap-4 p-4 sm:p-5 lg:flex-row lg:items-center lg:justify-between">
         <button
           type="button"
-          className="flex min-w-0 items-center gap-2.5 text-left"
+          className="interactive-press -m-2 flex min-h-11 min-w-0 items-center gap-3 rounded-xl p-2 text-left"
           onClick={onToggle}
           aria-expanded={open}
           aria-controls="screener-threshold-fields"
         >
-          <ChevronRight className={cn('h-5 w-5 shrink-0 text-cyan-300 transition-transform', open && 'rotate-90')} />
-          <span className="truncate text-base font-semibold text-white">筛选阈值</span>
+          <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-cyan-300/15 bg-cyan-300/[0.07]">
+            <ChevronRight className={cn('h-4 w-4 text-cyan-300 transition-transform duration-150', open && 'rotate-90')} />
+          </span>
+          <span className="min-w-0">
+            <span className="block truncate text-base font-bold text-white">筛选阈值</span>
+            <span className="mt-0.5 block text-xs font-medium text-slate-500">高级条件与方案管理</span>
+          </span>
         </button>
 
-        <div className="flex flex-wrap items-center gap-2">
-          <select
-            className="h-10 min-w-36 flex-1 rounded-xl border border-slate-700 bg-slate-950/60 px-3 text-sm text-slate-100 outline-none focus:border-cyan-400/60 lg:flex-none"
-            value={activePresetId ?? ''}
-            aria-label="阈值方案"
-            onChange={(event) => {
-              const preset = presets.find((item) => String(item.id) === event.target.value);
-              if (preset) {
-                setEditorMode(null);
-                setPresetName('');
-                onApplyPreset(preset);
-              }
-            }}
-          >
-            <option value="">自定义方案</option>
-            {presets.map((preset) => (
-              <option key={preset.id} value={preset.id}>
-                {displayPresetName(preset.name)}
-              </option>
-            ))}
-          </select>
+        <div className="flex flex-wrap items-center gap-2.5">
+          <div className="min-w-40 flex-1 lg:flex-none">
+            <Select
+              value={activePresetId ?? ''}
+              aria-label="阈值方案"
+              onValueChange={(value) => {
+                const preset = presets.find((item) => String(item.id) === value);
+                if (preset) {
+                  setEditorMode(null);
+                  setPresetName('');
+                  onApplyPreset(preset);
+                }
+              }}
+            >
+              <option value="">自定义方案</option>
+              {presets.map((preset) => (
+                <option key={preset.id} value={preset.id}>
+                  {displayPresetName(preset.name)}
+                </option>
+              ))}
+            </Select>
+          </div>
           <Button
             type="button"
             variant="secondary"
-            className="h-10 rounded-xl px-3 py-0"
+            className="px-3"
             onClick={() => {
               setEditorMode('save');
               setPresetName('');
@@ -122,7 +129,7 @@ export default function ThresholdPanel({
             <Button
               type="button"
               variant="danger"
-              className="h-10 rounded-xl px-3 py-0"
+              className="px-3"
               onClick={() => setEditorMode('delete')}
             >
               <Trash2 className="h-4 w-4" />
@@ -133,10 +140,10 @@ export default function ThresholdPanel({
       </div>
 
       {editorMode === 'save' ? (
-        <form className="flex flex-col gap-3 border-t border-slate-800 px-4 py-3 sm:flex-row sm:items-center sm:px-5" onSubmit={handleSave}>
+        <form className="flex flex-col gap-3 border-t border-slate-800/80 bg-slate-950/20 px-4 py-4 sm:flex-row sm:items-center sm:px-5" onSubmit={handleSave}>
           <Input
             autoFocus
-            className="h-10 max-w-sm rounded-xl"
+            className="max-w-sm"
             value={presetName}
             maxLength={50}
             placeholder="方案名称"
@@ -144,10 +151,10 @@ export default function ThresholdPanel({
             onChange={(event) => setPresetName(event.target.value)}
           />
           <div className="flex items-center gap-2">
-            <Button type="submit" className="h-10 rounded-xl py-0" disabled={!presetName.trim() || isSubmitting}>
+            <Button type="submit" disabled={!presetName.trim() || isSubmitting}>
               {isSubmitting ? '保存中' : '保存'}
             </Button>
-            <Button type="button" variant="ghost" className="h-10 rounded-xl py-0" onClick={closeEditor} disabled={isSubmitting}>
+            <Button type="button" variant="ghost" onClick={closeEditor} disabled={isSubmitting}>
               取消
             </Button>
           </div>
@@ -158,10 +165,10 @@ export default function ThresholdPanel({
         <div className="flex flex-col gap-3 border-t border-red-900/60 bg-red-950/20 px-4 py-3 sm:flex-row sm:items-center sm:justify-between sm:px-5">
           <span className="text-sm font-medium text-red-100">删除「{displayPresetName(activePreset.name)}」？</span>
           <div className="flex items-center gap-2">
-            <Button type="button" variant="danger" className="h-10 rounded-xl py-0" onClick={() => void handleDelete()} disabled={isSubmitting}>
+            <Button type="button" variant="danger" onClick={() => void handleDelete()} disabled={isSubmitting}>
               {isSubmitting ? '删除中' : '确认删除'}
             </Button>
-            <Button type="button" variant="ghost" className="h-10 rounded-xl py-0" onClick={closeEditor} disabled={isSubmitting}>
+            <Button type="button" variant="ghost" onClick={closeEditor} disabled={isSubmitting}>
               取消
             </Button>
           </div>
@@ -169,7 +176,7 @@ export default function ThresholdPanel({
       ) : null}
 
       {open ? (
-        <div id="screener-threshold-fields" className="grid gap-4 border-t border-slate-800 p-4 sm:grid-cols-2 sm:p-5 lg:grid-cols-3 xl:grid-cols-6">
+        <div id="screener-threshold-fields" className="grid gap-4 border-t border-slate-800/80 bg-slate-950/20 p-4 sm:grid-cols-2 sm:p-5 lg:grid-cols-3 2xl:grid-cols-6">
           {fields.map((field) => {
             const value = thresholds[field.key];
             const invalid = value < field.min || value > field.max;
@@ -178,7 +185,6 @@ export default function ThresholdPanel({
                 <span className="block text-sm font-medium leading-5 text-slate-300">{field.label}</span>
                 <div className="flex items-center gap-2">
                   <Input
-                    className="h-10 rounded-xl"
                     invalid={invalid}
                     type="number"
                     min={field.min}
