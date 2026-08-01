@@ -13,5 +13,8 @@
 | [`06-journal.png`](06-journal.png) | 真实交易日志与行为复盘 | 交易闭环与复盘能力 |
 | [`07-settings.png`](07-settings.png) | API、市场、AI 与券商设置入口 | 本地优先和安全配置 |
 | [`08-analysis-new-plan.png`](08-analysis-new-plan.png) | 从 MU 分析页进入、已预填代码的新建计划表单 | 分析到执行计划的跨模块闭环 |
+| [`09-screener-filters.png`](09-screener-filters.png) | 自定义 CANSLIM 阈值和必须通过标签 | 筛选能力与参数化研究 |
+| [`10-brokers.png`](10-brokers.png) | 长桥连接、富途 OpenD 与 IBKR 本机网关检测 | 券商只读同步与安全边界 |
 
 更新截图时应继续使用相同命名，先确认页面无系统确认框遮挡，并检查画面中没有任何密钥或账户敏感信息。
+主 README 使用两列、每张 410px 宽展示，源文件保留 1206×2622 Retina 分辨率，点击或单独打开图片时仍可查看完整细节。
