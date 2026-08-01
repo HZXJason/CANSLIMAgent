@@ -8,6 +8,13 @@ sidecar/data/
 .DS_Store
 *.log
 *.tsbuildinfo
+
+# Local AI workflow artifacts
+.claude/
+.superpowers/
+AGENT.md
+docs/superpowers/
+
 backend/tmp/
 backend/bin/
 backend/server

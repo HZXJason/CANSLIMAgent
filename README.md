@@ -1,74 +1,125 @@
-# CANSLIMAgent
+# AlphaLens · 人机协作投资研究工作台
 
-CANSLIMAgent 是一个面向美股与 A 股研究的本地优先工作台：从 CANSLIM 选股、个股证据核查，到多智能体研究、数据审计、交易计划和交易复盘，形成一条可复查的人机协作流程。它是研究决策支持工具，不会自动下单，也不构成投资建议或收益承诺。
+> 一项由我独立负责产品定义、交互设计与 Vibe Coding 交付的产品实践。
 
-界面与 AI 报告默认使用中文；数据、推理过程和最终动作都应由使用者自行复核。
+AlphaLens（项目仓库名：CANSLIMAgent）是一款覆盖美股与 A 股的本地优先投资研究工具。它把分散的选股、证据核查、AI 多视角讨论、交易计划与复盘连接成一条可追溯的工作流，帮助使用者更有依据地做判断，而不是替使用者做决定。
 
-## 核心能力
+![AlphaLens CANSLIM 选股工作台](docs/images/demo-screener.jpg)
 
-- 扫描 S&P 500、Nasdaq 100、Russell 2000，以及沪深主板、科创板、创业板与北交所股票池，并按 CANSLIM 指标筛选。
-- 在全局美股 / A 股市场之间切换；筛选、分析与 AI 操作保持一致，同时使用各自独立的数据路由与界面主题。
-- 展示价格、相对强度、EPS、营收、毛利率、公司概况与机构持仓等研究证据。
-- 运行基本面、情绪、新闻、技术、看多/看空、交易员、风控与投资组合经理组成的多智能体分析。
-- 在分析前按市场可用性通过 Vibe-Trading MCP 预取财务报表、行情、新闻与公司资料；A 股不会套用 SEC、美国内部人或美股期权数据。
-- 使用确定性的 `DataAuditor` 按来源、申报类型、报告期间和 accession 审计冲突数据；可验证事实进入分析上下文，期间不明或冲突的数值会被阻止引用并明确显示为未知。
-- 记录交易日志、生成 `vibe.trade_record.v1` 兼容导出，并给出确定性的交易行为复盘。
-- 可在设置中连接长桥、老虎、富途 OpenD 或 IBKR 本地 API，会先预览只读成交，再标准化导入交易日志；不提供自动下单。
-- 通过 SSE 实时显示进度和报告，支持暂停/续传，并可将完整 AI 报告另存为 Markdown。
+## 我想解决的问题
 
-## 架构
+个人投资研究并不缺信息，真正稀缺的是一条可信、连续的决策链路：
+
+| 用户问题 | 常见后果 | AlphaLens 的产品回应 |
+| --- | --- | --- |
+| 行情、财报、新闻与机构数据分散 | 来回切换工具，研究口径不一致 | 用 CANSLIM 统一初筛，再进入同一标的的证据工作台 |
+| AI 会给结论，但证据来源与冲突不透明 | 很难判断结论是否值得相信 | 在分析前审计来源、期间与冲突，缺失信息明确显示为未知 |
+| 看多 / 看空观点容易单边强化 | 忽略反方证据与风险条件 | 让多角色分别研究、辩论和审阅，最终决策仍由人完成 |
+| 研究、计划、成交与复盘彼此割裂 | 很难从真实执行中修正行为 | 把交易计划、只读成交导入和复盘放进同一条记录链路 |
+
+## 产品闭环
 
 ```text
-React + TypeScript
-        │ REST / SSE
-        ▼
-Go API（Gin） ── PostgreSQL
-        │
-        ▼
-Python sidecar（FastAPI）
-  ├─ 内置 TradingAgents 图
-  ├─ 内置 Vibe 桥接层
-  ├─ DataAuditor
-  └─ Vibe MCP / 独立的交易日志复盘运行时
+发现标的 → 核查证据 → 多视角讨论 → 人工决策 → 记录执行 → 交易复盘
 ```
 
-浏览器只访问 Go 服务的 `/api/v1`；Go 服务再代理到可替换的 Python sidecar（`AI_ANALYSIS_UPSTREAM_URL`）。因此前端、API 与 AI 编排解耦，同时保持流式事件契约稳定。
+AlphaLens 不自动下单，也不把 AI 输出包装成交易信号。产品的核心价值是降低研究摩擦、暴露证据边界，并让使用者保留最终判断权。
 
-项目拥有的 AI 源码均在 `sidecar/`：
+## Demo
 
-- `sidecar/main.py`：编排、审计接入与 SSE 生产者。
-- `sidecar/ai_runtime.py`：内置运行时和 Vibe 工具加载。
-- `sidecar/vendor/tradingagents/`：随项目提交的 TradingAgents 图运行时。
-- `sidecar/vendor/ta_vibe_bridge/`：随项目提交的 MCP 桥接层。
-- `sidecar/data_auditor.py`：来源与期间感知的数据审计。
-- `sidecar/vibe_decision_flow.py`：证据协调。
+### 1. 从跨市场候选池发现标的
 
-`Vibe-Trading` 本身保持为独立运行时：其 MCP 服务与交易日志复盘工具有单独的依赖栈。仅在启用 Vibe 工具或日志复盘时需要一个本地 checkout，并通过 `VIBE_TRADING_ROOT` 指定；核心 AI 编排与桥接源码不再依赖 `TradingAgent2.0` 目录。
+美股与 A 股使用各自独立的数据路由、股票池和视觉主题。用户可以用同一套 CANSLIM 语言筛选，但不会把 SEC、美国内部人或美股期权等证据错误套用到 A 股。
 
-## AI 研究流程
+| 美股市场 | A 股市场 |
+| --- | --- |
+| ![美股 CANSLIM 筛选](docs/images/demo-screener.jpg) | ![A 股创业板 CANSLIM 筛选](docs/images/demo-a-share.jpg) |
+
+筛选结果不会只给一个总分。C、A、N、S、L、I 标签分别保留达标状态和原始值，用户可以继续追问“为什么入选”。
+
+### 2. 在同一页面核查价格、增长与相对强度
+
+点击候选标的后，价格走势、成交量、RS 相对强度、EPS、营收、毛利率、公司资料与来源日期会集中展示。缺失或失败的图表会保持真实错误状态，不用伪造数据填满界面。
+
+![个股证据与图表工作台](docs/images/demo-analysis.jpg)
+
+### 3. 让 AI 输出成为可审阅的研究过程
+
+AI 分析不是一次性问答，而是一个带角色分工的研究流程：基本面、技术、新闻和情绪分析师先形成证据，再由看多 / 看空研究员、交易员、风险角色和投资组合经理逐层审阅。
+
+在证据进入分析前，确定性的 `DataAuditor` 会检查来源、申报类型、报告期间与 accession。期间不明、口径冲突或无法验证的数值不会被当作事实送入分析上下文。
 
 ```text
-Vibe MCP 证据预取
-  → DataAuditor（来源、表单、期间、accession）
+市场证据预取
+  → 来源与期间审计
   → 分析师团队
   → 看多 / 看空研究
-  → 交易员与风控审阅
-  → 投资组合经理初步结论
-  → Vibe 证据协调
-  → 面向人工的最终动作
+  → 交易与风险审阅
+  → 面向人工的最终观点
 ```
 
-DataAuditor 不是第二个会“猜测赢家”的 LLM。例如，一条没有 XBRL 期间长度的简化 10-K 数值，不能覆盖可追溯的 SEC 年度序列。冲突与排除原因会保留在输出中，歧义值不会进入分析师提示词。
+完整报告通过 SSE 实时展示，可暂停、续传并导出 Markdown。AI 结论与仓位建议被明确区分，避免把“方向判断”误解为“应该投入多少”。
 
-## 技术栈与要求
+### 4. 把计划、成交与复盘连起来
 
-- 前端：React、TypeScript、Vite、Zustand、TanStack Query、Tailwind CSS。
-- 后端：Go 1.25+（发布构建固定 toolchain 1.26.5）、Gin、PostgreSQL 15。
-- AI sidecar：Python 3.12+、FastAPI、LangGraph、TradingAgents；推荐用 `uv` 管理 Python 环境。
-- 运行环境：macOS 或 Linux、Node.js 22+、Docker Desktop。
-- AI 分析：至少配置一种受支持的 LLM API Key。
+交易日志支持手工记录，也可以从长桥、老虎、富途 OpenD 或 IBKR 本地会话只读预览成交。导入始终需要用户确认，系统不具备下单能力。
 
-## 快速启动
+![交易日志与复盘工作流](docs/images/demo-journal.jpg)
+
+日志可以导出为 `vibe.trade_record.v1` 兼容记录，并生成确定性的行为复盘，让下一次研究能够参考真实执行，而不是只回看模型观点。
+
+### 5. 桌面研究与移动查看保持同一套信息层级
+
+界面针对桌面与窄屏重新组织导航、市场切换和主要操作。移动端保留完整研究流程，不把关键状态藏在只适合桌面的表格里。
+
+<p align="center">
+  <img src="docs/images/demo-mobile.jpg" alt="AlphaLens 移动端 CANSLIM 筛选" width="390" />
+</p>
+
+## 我的产品角色与工作方式
+
+这是我的独立产品实践。我负责从问题识别到真实环境验收的完整过程：
+
+- 识别研究工具中的信息碎片、数据冲突、AI 信任与复盘断层；
+- 定义产品边界和验收标准，确保工具是决策支持而不是自动交易；
+- 设计跨市场信息架构、关键交互、错误状态和人机协作流程；
+- 使用 Vibe Coding 协助调研、方案拆解、原型、实现、测试与迭代；
+- 通过真实 API、浏览器、响应式视窗和自动化测试验证，而不是只检查代码是否完成。
+
+在这个工作方式里，AI 提高探索与交付速度；需求判断、产品取舍、风险边界和最终质量仍由我负责。
+
+## 关键产品取舍
+
+| 取舍 | 为什么这样做 |
+| --- | --- |
+| 本地优先，而不是默认托管用户凭据 | 降低 API Key、券商凭据和交易记录暴露面 |
+| 美股与 A 股共用研究语言，但隔离数据边界 | 保持体验一致，同时避免跨市场证据错配 |
+| 数据缺失显示未知，不把缺失当作 0 | 诚实的不确定性比完整但错误的评分更重要 |
+| 多角色给观点，人保留最终决策 | 避免把概率性研究包装成确定性交易指令 |
+| 移除误导性的静态“回测通过”门槛 | 无法代表真实执行的验证不应成为决策背书 |
+| 券商只读同步、预览后导入 | 打通复盘闭环，同时不扩大到自动交易风险 |
+
+## 当前能力
+
+- S&P 500、Nasdaq 100、Russell 2000 与沪深主板、科创板、创业板、北交所扫描；
+- CANSLIM 标签、阈值方案、非破坏性组合筛选与候选排序；
+- K 线、RS、EPS、营收、毛利率、公司资料和机构证据展示；
+- 多智能体研究、证据协调、数据审计与流式报告；
+- 交易计划、交易日志、券商只读成交预览与行为复盘；
+- LLM Key 服务端加密存储、模型发现、断线恢复和报告导出；
+- 桌面与移动端响应式交互。
+
+## 快速体验
+
+### 环境要求
+
+- macOS 或 Linux
+- Node.js 22+
+- Go 1.25+
+- Python 3.12+
+- Docker Desktop
+
+### 启动
 
 ```bash
 git clone git@github.com:HZXJason/CANSLIMAgent.git
@@ -81,180 +132,54 @@ cp sidecar/.env.example sidecar/.env
 make dev
 ```
 
-打开 `http://127.0.0.1:5173`。`make dev` 会在服务未运行时启动 Docker PostgreSQL、Python sidecar、Go API 和 Vite 前端。
+打开 `http://127.0.0.1:5173`。基础筛选与个股研究不要求 LLM Key；运行 AI 分析时，至少需要配置一种受支持的模型服务。
 
-## 配置
+本地 `.env`、Python 虚拟环境、`node_modules`、分析 checkpoint、数据库数据和构建产物均不会提交到 Git。
 
-本地配置不会提交到 Git：
-
-| 文件 | 用途 |
-|---|---|
-| `backend/.env` | 数据库、免费/可选行情源与 AI 上游地址 |
-| `sidecar/.env` | LLM 凭据、Vibe 运行时位置与 AI 开关 |
-| `frontend/.env` | 可选的浏览器 API 基地址；默认使用同源 `/api/v1` |
-
-A 股数据路由默认开启（`ENABLE_ASHARE_DATA=true`）。如需显式禁用东方财富与腾讯证券上游，可在 `backend/.env` 中设为 `false`；此时 A 股请求会明确返回数据源未启用，不会回退到美股数据源。
-
-启用券商绑定前，在 `backend/.env` 生成并保存一把只属于本机的加密主密钥：
-
-```bash
-openssl rand -base64 32
-```
-
-将结果写入 `BROKER_CREDENTIALS_ENCRYPTION_KEY`。没有这把 32 字节密钥，后端会拒绝保存任何券商凭据。凭据从不发送给浏览器、不会被 API 回显，且仅在一次同步期间通过本机 Go → sidecar 调用使用。长桥使用 OAuth access token；富途和 IBKR 连接用户已经登录的本地 OpenD / TWS 或 IB Gateway；老虎使用其开放平台凭据。
-
-本机开发时券商 sidecar 固定为 `BROKER_SYNC_UPSTREAM_URL=http://127.0.0.1:8765`。容器部署只允许带 32 字符以上共享密钥的固定 `sidecar` 服务名，浏览器不能提供或覆盖该地址。
-
-### 券商授权接入前检查清单
-
-1. 在 `backend/.env` 生成并设置 `BROKER_CREDENTIALS_ENCRYPTION_KEY`；没有它，系统不会保存任何连接凭据。
-2. 分别在长桥或老虎开放平台注册**服务器端 OAuth 开发者应用**。默认本地 API 的回调地址必须逐字登记为：
-
-   ```text
-   http://127.0.0.1:8080/api/v1/brokers/oauth/longport/callback
-   http://127.0.0.1:8080/api/v1/brokers/oauth/tiger/callback
-   ```
-
-   若修改 API 的 `PORT` 或部署地址，请同时将 `BROKER_*_REDIRECT_URL` 和开发者平台中登记的回调地址改成同一个 HTTPS/HTTP URL。
-3. 仅在 `backend/.env` 中填入 OAuth 服务器配置。长桥和老虎都需要各自的 `CLIENT_ID`、`CLIENT_SECRET`、`AUTHORIZE_URL`、`TOKEN_URL`、`ACCOUNT_URL`、`REDIRECT_URL` 与 `SCOPES`：
-
-   ```dotenv
-   BROKER_LONGPORT_CLIENT_ID=
-   BROKER_LONGPORT_CLIENT_SECRET=
-   BROKER_LONGPORT_AUTHORIZE_URL=
-   BROKER_LONGPORT_TOKEN_URL=
-   BROKER_LONGPORT_ACCOUNT_URL=
-   BROKER_LONGPORT_REDIRECT_URL=
-   BROKER_LONGPORT_SCOPES=
-
-   BROKER_TIGER_CLIENT_ID=
-   BROKER_TIGER_CLIENT_SECRET=
-   BROKER_TIGER_AUTHORIZE_URL=
-   BROKER_TIGER_TOKEN_URL=
-   BROKER_TIGER_ACCOUNT_URL=
-   BROKER_TIGER_REDIRECT_URL=
-   BROKER_TIGER_SCOPES=
-   ```
-
-   `SCOPES` 以逗号分隔，必须至少包含一项明确的只读权限；不要留空，也不要填入下单、交易或写入权限。它在 OAuth 启动时单独接受只读范围校验。
-4. 使用富途前，在本机启动并登录 OpenD；使用 IBKR 前，在本机启动并登录 TWS 或 IB Gateway。默认本机网关配置为：
-
-   ```dotenv
-   BROKER_FUTU_HOST=127.0.0.1
-   BROKER_FUTU_PORT=11111
-   BROKER_FUTU_ACCOUNT=
-   BROKER_IBKR_HOST=127.0.0.1
-   BROKER_IBKR_PORT=7497
-   BROKER_IBKR_CLIENT_ID=9901
-   BROKER_IBKR_ACCOUNT=
-   ```
-
-   后端只允许 loopback 网关地址；不要将其改成远程主机。
-5. 浏览器只接收服务端生成的授权跳转，并在回调完成后刷新连接状态。客户端密钥、OAuth access token、私钥、OpenD/TWS 网关地址或账户密码都绝不能放进浏览器、`frontend/.env` 或前端表单。
-
-长桥和老虎的 OAuth 卡片始终会显示，且不会因为服务端 OAuth 应用尚未配置而预先禁用。点击“连接账户”后，若缺少 `CLIENT_ID`、`CLIENT_SECRET` 或任一 OAuth 端点/回调 URL 配置，服务端会返回 HTTP 409 和 `OAuth 开发者应用尚未配置`，前端会显示该配置错误；不会退回为让用户在浏览器粘贴令牌或私钥。
-
-`*_SCOPES` 不参与上述开发者应用是否已配置的判定：即使客户端与端点配置齐全，空的或不符合只读规则的 scope 仍会在 OAuth 启动时被拒绝，并不保证返回该 409 配置错误。请改为至少一项显式只读 scope 后再重试。富途和 IBKR 则只检查已经登录的本机 loopback 网关。若本机发现多个账户，请在服务器环境变量中设置对应的 `BROKER_FUTU_ACCOUNT` 或 `BROKER_IBKR_ACCOUNT`；这些配置只会传给本机 sidecar，不会发送到浏览器。
-
-LLM Key 可以直接在设置页填写。Go 后端会使用 AES-GCM 加密后存入 PostgreSQL，前端只能读取“已配置/未配置”状态，不能取回原始 Key。下面的 sidecar 环境变量仍可作为无人值守部署的后备配置：
-
-```dotenv
-# 只填写实际使用的模型供应商
-OPENAI_API_KEY=
-ANTHROPIC_API_KEY=
-GOOGLE_API_KEY=
-OPENAI_COMPATIBLE_API_KEY=
-
-# 独立的 Vibe-Trading MCP / 交易日志复盘运行时；未设置时仅兼容旧的同级安装
-VIBE_TRADING_ROOT=/absolute/path/to/Vibe-Trading
-ENABLE_VIBE_MCP_TOOLS=true
-```
-
-Vibe 功能是可选的。禁用或不可用时，系统会明确记录能力降级，而不会生成替代证据。
-
-## 数据策略
-
-项目坚持免费优先、市场隔离和可追溯：
-
-- 美股财报与申报：SEC EDGAR 优先；FMP 与 yfinance 作为可用时的补充。
-- 美股价格与图表：Stooq、Yahoo Finance 与 yfinance 兜底；FMP/Polygon 可选增强。
-- A 股股票池、公司资料与财务指标：东方财富 A 股接口；代码在应用内部规范为 `.SH`、`.SZ` 与 `.BJ`。
-- A 股复权行情、成交量与相对强度：腾讯证券 A 股行情；相对强度基准为沪深 300。
-- 美股机构持仓：Nasdaq 的逐股票持仓数据。A 股没有同口径可靠来源时会明确显示数据不足，不会套用美股机构数据。
-
-来源失败、报告日期和数据不足会显示给用户；缺失数据不会被当作 0 或确认信号。
-
-## 主要 API
+## 架构概览
 
 ```text
-GET   /api/v1/health
-GET   /api/v1/screener/scan
-GET   /api/v1/screener/results
-POST  /api/v1/screener/refresh
-GET   /api/v1/stocks/:symbol/summary
-GET   /api/v1/stocks/:symbol/profile
-GET   /api/v1/stocks/:symbol/kline
-GET   /api/v1/stocks/:symbol/rs
-GET   /api/v1/stocks/:symbol/eps/quarterly
-GET   /api/v1/stocks/:symbol/revenue/annual
-POST  /api/v1/analysis/:symbol/ai
-GET   /api/v1/analysis/ai/config
-POST  /api/v1/analysis/ai/models
-GET   /api/v1/llm/credentials/:provider
-PUT   /api/v1/llm/credentials/:provider
-DELETE /api/v1/llm/credentials/:provider
-GET   /api/v1/journal
-POST  /api/v1/journal
-GET   /api/v1/journal/export
-POST  /api/v1/journal/reflections
-GET   /api/v1/trade-plans
-POST  /api/v1/trade-plans
-GET   /api/v1/brokers
-POST  /api/v1/brokers/connect/:broker
-POST  /api/v1/brokers/:id/sync
-POST  /api/v1/brokers/:id/import
-DELETE /api/v1/brokers/:id
+React / TypeScript
+        │ REST + SSE
+        ▼
+Go API ───────── PostgreSQL
+        │
+        ▼
+Python AI Sidecar
+  ├─ TradingAgents 研究图
+  ├─ Vibe MCP 桥接
+  ├─ DataAuditor
+  └─ 日志复盘运行时
 ```
 
-AI 分析会转发 `progress`、`result`、`report_start`、`report_delta`、`decision`、`done` 和 `error` 等 SSE 事件。设置页会通过 Go → sidecar 自动读取当前供应商可用模型；用户填写的 LLM Key 由 Go 加密保存，按提供商及自定义网关主机隔离，并只在一次固定 Go → sidecar 请求期间解密使用。
+浏览器只访问 Go 服务的 `/api/v1`。Go 负责稳定 API、凭据安全与流式代理，Python sidecar 负责 AI 编排和研究工具接入；两者通过可替换的上游地址解耦。
 
-本地开发允许设置页连接经过校验的公网 HTTPS 自定义网关；仍会拒绝内网、loopback、凭据型 URL 和重定向。生产环境始终强制 `AI_ALLOWED_BACKEND_HOSTS` 精确白名单；开发环境也可设置 `AI_REQUIRE_BACKEND_ALLOWLIST=true` 使用同一策略。
+### 数据策略
+
+- 美股财报与申报：SEC EDGAR 优先，FMP 与 yfinance 可选补充；
+- 美股价格与图表：Stooq、Yahoo Finance 与 yfinance 兜底；
+- A 股资料与财务指标：东方财富；复权行情与相对强度：腾讯证券；
+- 来源失败、数据日期与证据不足会直接展示，不生成替代结果。
+
+### 安全边界
+
+- LLM Key 使用 AES-GCM 加密保存，前端只能读取配置状态；
+- 券商 OAuth 凭据和本地网关配置不会返回浏览器；
+- 富途与 IBKR 只允许 loopback 地址，券商同步保持只读；
+- 生产部署默认使用非 root 容器、内部网络、共享密钥和显式 CORS / 网关白名单。
+
+详细部署与密钥轮换说明见 [`docs/production-operations.md`](docs/production-operations.md)，漏洞报告流程见 [`SECURITY.md`](SECURITY.md)。
 
 ## 验证
 
-在仓库根目录运行：
-
 ```bash
 cd backend && go test ./...
-cd ../sidecar && .venv/bin/python -m unittest test_main.py test_ai_runtime.py test_journal_reflection.py test_analysis_runs.py
-cd ../frontend && pnpm run typecheck && pnpm run build
-docker compose build sidecar
+cd ../sidecar && .venv/bin/python -m unittest
+cd ../frontend && pnpm run typecheck && pnpm test && pnpm run build
 ```
 
-## 生产部署安全边界
+本 README 中的界面截图来自本地真实服务与缓存数据，不是设计稿。数据日期仅代表截图时可用的数据快照，不构成实时行情或投资建议。
 
-`docker-compose.prod.yml` 提供非 root、最小权限、内部网络部署基线。先复制 `.env.production.example` 并生成三类彼此独立的随机秘密：
+---
 
-```bash
-cp .env.production.example .env.production
-openssl rand -hex 32   # API_AUTH_TOKEN
-openssl rand -hex 32   # SIDECAR_SHARED_SECRET
-openssl rand -base64 32 # BROKER_CREDENTIALS_ENCRYPTION_KEY
-openssl rand -base64 32 # LLM_CREDENTIALS_ENCRYPTION_KEY
-docker compose --env-file .env.production -f docker-compose.prod.yml up --build -d
-```
-
-容器入口仅绑定到宿主机 `127.0.0.1:${APP_PORT:-8088}`。发布到公网前，必须在其前方配置 HTTPS 和身份感知反向代理；代理应覆盖而不是转发客户端提供的 `X-Internal-API-Token`，并实施用户级限流。LLM Key 只允许以加密形式保存在后端数据库或作为 sidecar 服务端环境变量存在；自定义模型网关必须加入 `AI_ALLOWED_BACKEND_HOSTS` 精确白名单。
-
-上线、回滚、备份、密钥轮换和事件响应要求见 [`docs/production-operations.md`](docs/production-operations.md)；漏洞报告流程见 [`SECURITY.md`](SECURITY.md)。
-
-基本健康检查：
-
-```bash
-curl http://127.0.0.1:8080/api/v1/health
-curl http://127.0.0.1:8765/health
-```
-
-## 仓库约定
-
-提交的内容只包括运行源码、测试、配置示例、必要的第三方许可证和本 README。`frontend/dist`、Python `__pycache__`、本地虚拟环境、分析 checkpoint、`.env` 与其他生成文件均不纳入版本控制。
+AlphaLens 是研究与决策支持工具，不构成投资建议，不承诺收益，也不会自动执行交易。
