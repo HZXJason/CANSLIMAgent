@@ -15,6 +15,8 @@
 | [`08-analysis-new-plan.png`](08-analysis-new-plan.png) | 从 MU 分析页进入、已预填代码的新建计划表单 | 分析到执行计划的跨模块闭环 |
 | [`09-screener-filters.png`](09-screener-filters.png) | 自定义 CANSLIM 阈值和必须通过标签 | 筛选能力与参数化研究 |
 | [`10-brokers.png`](10-brokers.png) | 长桥连接、富途 OpenD 与 IBKR 本机网关检测 | 券商只读同步与安全边界 |
+| [`11-financial-charts.png`](11-financial-charts.png) | MU 季度 EPS、年度营收与季度毛利率 | 基本面趋势与 SEC EDGAR 来源 |
+| [`12-market-universe.png`](12-market-universe.png) | 美股/A 股及标普 500、纳斯达克 100、罗素 2000 菜单 | 跨市场与股票池切换 |
 
 更新截图时应继续使用相同命名，先确认页面无系统确认框遮挡，并检查画面中没有任何密钥或账户敏感信息。
 主 README 使用两列、每张 410px 宽展示，源文件保留 1206×2622 Retina 分辨率，点击或单独打开图片时仍可查看完整细节。

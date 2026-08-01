@@ -145,61 +145,108 @@ CANSLIM 筛选 / 实时扫描
 - 支持系统深色模式、Dynamic Type、下拉刷新、分享面板和系统确认框；
 - 模拟器、真机和部署地址的连接差异会在设置页明确说明。
 
-## 界面预览
+## 真实界面与功能说明
+
+以下画面来自 iPhone 17 / iOS 26.5 Simulator，并连接本地真实 API。截图保留了数据来源、
+数据日期、空状态和连接状态；没有为了展示效果伪造 AI 结论，也没有暴露密钥或券商账户信息。
 
 <table>
   <tr>
-    <td align="center"><strong>跨市场选股</strong></td>
-    <td align="center"><strong>研究图表</strong></td>
+    <td align="center"><strong>候选列表</strong></td>
+    <td align="center"><strong>市场与股票池</strong></td>
   </tr>
   <tr>
-    <td><img src="../docs/images/ios/01-screener.png" alt="iOS 选股" width="410" /></td>
-    <td><img src="../docs/images/ios/03-analysis-charts.png" alt="iOS 图表" width="410" /></td>
+    <td><img src="../docs/images/ios/01-screener.png" alt="iOS CANSLIM 候选列表" width="410" /></td>
+    <td><img src="../docs/images/ios/12-market-universe.png" alt="iOS 市场与股票池切换" width="410" /></td>
   </tr>
   <tr>
-    <td align="center"><strong>AI 研究配置</strong></td>
-    <td align="center"><strong>分析到计划</strong></td>
+    <td align="center"><strong>CANSLIM 阈值</strong></td>
+    <td align="center"><strong>公司概览</strong></td>
   </tr>
   <tr>
-    <td><img src="../docs/images/ios/04-analysis-ai.png" alt="iOS AI 研究" width="410" /></td>
-    <td><img src="../docs/images/ios/08-analysis-new-plan.png" alt="从分析新建计划" width="410" /></td>
+    <td><img src="../docs/images/ios/09-screener-filters.png" alt="iOS CANSLIM 筛选阈值" width="410" /></td>
+    <td><img src="../docs/images/ios/02-analysis-overview.png" alt="iOS MU 公司概览" width="410" /></td>
   </tr>
   <tr>
-    <td align="center"><strong>交易日志</strong></td>
-    <td align="center"><strong>安全设置</strong></td>
+    <td align="center"><strong>价格与相对强度</strong></td>
+    <td align="center"><strong>财务趋势</strong></td>
   </tr>
   <tr>
-    <td><img src="../docs/images/ios/06-journal.png" alt="iOS 交易日志" width="410" /></td>
-    <td><img src="../docs/images/ios/07-settings.png" alt="iOS 设置" width="410" /></td>
+    <td><img src="../docs/images/ios/03-analysis-charts.png" alt="iOS MU 价格与相对强度图表" width="410" /></td>
+    <td><img src="../docs/images/ios/11-financial-charts.png" alt="iOS MU 财务趋势图表" width="410" /></td>
   </tr>
   <tr>
-    <td align="center"><strong>CANSLIM 筛选配置</strong></td>
-    <td align="center"><strong>券商只读连接</strong></td>
+    <td align="center"><strong>多智能体研究</strong></td>
+    <td align="center"><strong>从分析创建计划</strong></td>
   </tr>
   <tr>
-    <td><img src="../docs/images/ios/09-screener-filters.png" alt="iOS CANSLIM 筛选配置" width="410" /></td>
-    <td><img src="../docs/images/ios/10-brokers.png" alt="iOS 券商只读连接" width="410" /></td>
+    <td><img src="../docs/images/ios/04-analysis-ai.png" alt="iOS 多智能体研究配置" width="410" /></td>
+    <td><img src="../docs/images/ios/08-analysis-new-plan.png" alt="iOS 从 MU 分析创建交易计划" width="410" /></td>
+  </tr>
+  <tr>
+    <td colspan="2" align="center"><strong>券商只读连接</strong></td>
+  </tr>
+  <tr>
+    <td colspan="2" align="center"><img src="../docs/images/ios/10-brokers.png" alt="iOS 券商只读连接" width="410" /></td>
   </tr>
 </table>
 
-[查看全部截图及 README 使用建议 →](../docs/images/ios/README.md)
+### 1. 用 CANSLIM 状态快速浏览候选
 
-### 高清截图建议
+选股首页直接显示 A、AAPL、ABBV、ABNB 等真实候选。每张卡片把 C、A、S、L、I、N
+拆成独立状态：绿色代表当前条件通过，灰色代表未通过或暂无结论；下方同时显示数据截止日期。
+顶部可以切换市场和股票池、搜索代码或公司名称、打开筛选器以及刷新数据。底部五栏导航让选股、
+分析、计划、日志和设置始终一跳可达。
 
-后续替换截图时可继续沿用现有文件名，README 会自动更新。建议保留以下状态：
+### 2. 在一个入口切换市场与指数成分池
 
-1. `01-screener.png`：至少三只真实候选，显示 CANSLIM 标签和数据日期；
-2. `02-analysis-overview.png`：顶部汇总、公司资料和来源信息同时可见；
-3. `03-analysis-charts.png`：K 线与 RS 至少各露出一张完整图表；
-4. `04-analysis-ai.png`：AI 配置已成功读取，但不要为了截图触发付费分析；
-5. `05-trade-plans.png`：有真实计划时使用列表，否则保留诚实空状态；
-6. `06-journal.png`：展示日志与行为复盘，但避开账户号或敏感备注；
-7. `07-settings.png`：API 地址可以出现，Token、LLM Key 和券商凭据必须留空；
-8. `08-analysis-new-plan.png`：从分析页进入，证明股票代码已经自动预填。
-9. `09-screener-filters.png`：展示阈值方案、CANSLIM 参数和必须通过的标签；
-10. `10-brokers.png`：展示只读连接状态和同步预览入口，避开账户详情。
+市场菜单同时承载资产市场和候选范围。截图中可以在美股与 A 股之间切换；美股下面继续选择
+标普 500、纳斯达克 100 或罗素 2000。当前选项使用勾选状态标识，切换后列表按新范围重新读取，
+不会把不同市场的候选混在一起。
 
-截图前建议使用浅色模式、标准字号、100% 模拟器缩放，关闭系统确认弹窗，并确保页面停止滚动、数据加载完成。
+### 3. 把筛选逻辑变成可检查、可复用的参数
+
+CANSLIM 筛选 Sheet 显示当前阈值方案，并允许逐项调整。截图中的自定义方案包括：当季 EPS
+增长 25%、年度 EPS 增长 25%、连续 3 年、成交量比例 150%、50 日均量、RS 评级 80、
+机构增持 1%，下方还可以指定必须通过的 C、A 等标签。方案可以命名保存，便于在不同研究场景间复用。
+
+### 4. 先看公司与数据背景，再进入结论
+
+MU 概览顶部给出公司、所属股票池、数据截止日期，以及 C、S、L、I 等关键值。公司资料卡显示
+Micron Technology 的行业、中文业务介绍、数据来源 FMP 和翻译日期。来源与日期和正文放在同一层级，
+方便判断资料是否足够新，而不是只展示一段无法追溯的摘要。
+
+### 5. 在原生图表中核对价格与相对强度
+
+图表页可以切换日、周、月周期。截图中的日线视图同时展示 MU K 线和相对强度曲线：价格数据来自
+Yahoo Finance，RS 结合 Yahoo Finance 与 Financial Modeling Prep，并明确标注数据日期。
+继续向下滚动即可查看财务证据，不需要离开个股详情。
+
+### 6. 把增长质量放到同一条时间线上
+
+财务图表继续展示季度 EPS、年度营收和季度毛利率。柱状图用颜色区分正负 EPS，营收和毛利率
+分别使用适合的柱状图与折线图；截图中同时保留 SEC EDGAR 来源和各序列日期，便于识别增长、
+回落或利润率变化，而不是只看单个当前值。
+
+### 7. 分析前先明确模型、强度和参与角色
+
+AI 页展示从服务端读取的真实配置：Anthropic 供应商、深度/快速模型、研究与风险辩论轮数、
+在线工具开关，以及基本面、情绪、新闻、技术等分析师角色。只有配置完成后才启动分析；截图停留在
+“待开始”，因此没有为展示而触发付费模型调用。运行后同一页面会继续接收实时进度、报告增量和最终状态。
+
+### 8. 从研究结果直接建立可执行计划
+
+点击个股页右上角的新建计划按钮后，表单自动带入 MU。截图展示了方向“观察”、状态“草稿”、
+计划日期和有效期开关，并预留入场触发条件、计划入场价、止损、止盈、仓位与研究依据。
+这一步把分析结论转为可复核的条件，但不会自动下单。
+
+### 9. 券商连接只负责同步，不负责交易
+
+券商页清楚区分连接状态和下一步动作：截图中长桥已连接，可以先“同步预览”或主动断开；老虎证券
+仍未连接；富途 OpenD 与 IBKR 提供本机网关检测。成交导入前必须先预览并由用户确认，App 不提供
+自动下单，也不会在页面上显示 Client Secret、access token 或账户敏感信息。
+
+[查看全部截图、原始尺寸及素材清单 →](../docs/images/ios/README.md)
 
 ## 技术结构
 
