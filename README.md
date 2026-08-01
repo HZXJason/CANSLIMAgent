@@ -1,8 +1,17 @@
-# AlphaLens · 人机协作投资研究工作台
+<p align="center">
+  <img src="docs/assets/alphalens-title.svg" alt="AlphaLens · AI 原生投资研究工作台" width="920" />
+</p>
+
+<p align="center">
+  <a href="#快速体验"><img src="https://img.shields.io/badge/Web-快速体验-0f766e?style=for-the-badge" alt="Web 快速体验" /></a>
+  <a href="ios/README.md"><img src="https://img.shields.io/badge/iOS-原生版本-2878ff?style=for-the-badge&amp;logo=apple&amp;logoColor=white" alt="iOS 原生版本" /></a>
+  <a href="#架构概览"><img src="https://img.shields.io/badge/Architecture-系统架构-334155?style=for-the-badge" alt="系统架构" /></a>
+  <a href="docs/images/ios/README.md"><img src="https://img.shields.io/badge/Screenshots-iOS%20截图-16a579?style=for-the-badge" alt="iOS 截图" /></a>
+</p>
 
 > 跨市场、本地优先、证据可追溯的投资研究与决策支持工具。
 
-AlphaLens（项目仓库名：CANSLIMAgent）是一款覆盖美股与 A 股的本地优先投资研究工具。它把分散的选股、证据核查、AI 多视角讨论、交易计划与复盘连接成一条可追溯的工作流，帮助使用者更有依据地做判断，而不是替使用者做决定。
+AlphaLens（项目仓库名：CANSLIMAgent）是一款覆盖美股与 A 股的本地优先投资研究工具。它把分散的选股、证据核查、AI 多视角讨论、交易计划与复盘连接成一条可追溯的工作流，帮助使用者更有依据地做判断，而不是替使用者做决定。产品同时提供 Web 工作台与[原生 iOS 客户端](ios/README.md)，共享同一套数据含义和 REST/SSE 契约。
 
 ![AlphaLens CANSLIM 选股工作台](docs/images/demo-screener.jpg)
 

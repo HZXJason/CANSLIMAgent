@@ -61,6 +61,20 @@ jobs:
       - run: pnpm run build
       - run: pnpm audit --prod --audit-level=low
 
+  ios:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build native iOS client
+        run: >-
+          xcodebuild
+          -project ios/CANSLIMIOS.xcodeproj
+          -scheme CANSLIMIOS
+          -destination 'generic/platform=iOS Simulator'
+          -configuration Debug
+          CODE_SIGNING_ALLOWED=NO
+          build
+
   containers:
     runs-on: ubuntu-latest
     steps:
