@@ -7,7 +7,7 @@ RUN pnpm install --frozen-lockfile
 COPY . .
 RUN pnpm run build
 
-FROM nginxinc/nginx-unprivileged:1.28.0-alpine
+FROM nginxinc/nginx-unprivileged:1.31.3-alpine
 COPY --chown=101:101 --from=build /app/dist /usr/share/nginx/html
 COPY --chown=101:101 nginx.conf.template /etc/nginx/templates/default.conf.template
 EXPOSE 8080
