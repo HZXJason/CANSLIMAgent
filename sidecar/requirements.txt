@@ -12,7 +12,7 @@ pandas>=2.3.0
 parsel>=1.10.0
 requests>=2.32.4
 rich>=14.0.0
-stockstats>=0.6.5
+stockstats>=0.6.8
 yfinance>=1.4.1
 python-dotenv>=1.0.0
 # Read-only broker adapters. They are imported only when a matching broker is synced.
