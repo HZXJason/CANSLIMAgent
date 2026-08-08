@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"sort"
 	"strings"
 	"time"
 
@@ -18,11 +19,15 @@ var lockedTradePlanFields = map[string]struct{}{
 	"direction":           {},
 	"plan_date":           {},
 	"valid_until":         {},
+	"user_thesis_id":      {},
 	"entry_trigger":       {},
 	"entry_price":         {},
 	"stop_loss":           {},
 	"take_profit":         {},
 	"position_size":       {},
+	"invalidation":        {},
+	"max_risk_amount":     {},
+	"max_risk_percent":    {},
 	"rationale":           {},
 	"ai_summary":          {},
 	"executed_at":         {},
@@ -36,19 +41,23 @@ type TradePlanHandler struct {
 }
 
 type createTradePlanRequest struct {
-	Ticker       string   `json:"ticker"`
-	Direction    string   `json:"direction"`
-	Status       *string  `json:"status"`
-	PlanDate     string   `json:"plan_date"`
-	ValidUntil   *string  `json:"valid_until"`
-	EntryTrigger *string  `json:"entry_trigger"`
-	EntryPrice   *float64 `json:"entry_price"`
-	StopLoss     *float64 `json:"stop_loss"`
-	TakeProfit   *float64 `json:"take_profit"`
-	PositionSize *float64 `json:"position_size"`
-	Rationale    *string  `json:"rationale"`
-	AISummary    *string  `json:"ai_summary"`
-	Notes        *string  `json:"notes"`
+	Ticker         string   `json:"ticker"`
+	Direction      string   `json:"direction"`
+	Status         *string  `json:"status"`
+	PlanDate       string   `json:"plan_date"`
+	ValidUntil     *string  `json:"valid_until"`
+	UserThesisID   *string  `json:"user_thesis_id"`
+	EntryTrigger   *string  `json:"entry_trigger"`
+	EntryPrice     *float64 `json:"entry_price"`
+	StopLoss       *float64 `json:"stop_loss"`
+	TakeProfit     *float64 `json:"take_profit"`
+	PositionSize   *float64 `json:"position_size"`
+	Invalidation   *string  `json:"invalidation"`
+	MaxRiskAmount  *float64 `json:"max_risk_amount"`
+	MaxRiskPercent *float64 `json:"max_risk_percent"`
+	Rationale      *string  `json:"rationale"`
+	AISummary      *string  `json:"ai_summary"`
+	Notes          *string  `json:"notes"`
 }
 
 type executeTradePlanRequest struct {
@@ -70,11 +79,15 @@ type tradePlanResponse struct {
 	Status            string     `json:"status"`
 	PlanDate          string     `json:"plan_date"`
 	ValidUntil        *string    `json:"valid_until"`
+	UserThesisID      *string    `json:"user_thesis_id"`
 	EntryTrigger      *string    `json:"entry_trigger"`
 	EntryPrice        *float64   `json:"entry_price"`
 	StopLoss          *float64   `json:"stop_loss"`
 	TakeProfit        *float64   `json:"take_profit"`
 	PositionSize      *float64   `json:"position_size"`
+	Invalidation      *string    `json:"invalidation"`
+	MaxRiskAmount     *float64   `json:"max_risk_amount"`
+	MaxRiskPercent    *float64   `json:"max_risk_percent"`
 	Rationale         *string    `json:"rationale"`
 	AISummary         *string    `json:"ai_summary"`
 	Notes             *string    `json:"notes"`
@@ -130,6 +143,21 @@ func (h *TradePlanHandler) Create(c *gin.Context) {
 	if validationErr != "" {
 		Fail(c, http.StatusBadRequest, validationErr)
 		return
+	}
+	if plan.UserThesisID != nil {
+		var thesis models.UserThesis
+		if err := h.db.WithContext(c.Request.Context()).First(&thesis, "id = ?", *plan.UserThesisID).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				Fail(c, http.StatusBadRequest, "user thesis not found")
+				return
+			}
+			Fail(c, http.StatusInternalServerError, "user thesis could not be loaded")
+			return
+		}
+		if strings.ToUpper(strings.TrimSpace(thesis.Symbol)) != plan.Ticker {
+			Fail(c, http.StatusBadRequest, "user thesis ticker does not match trade plan")
+			return
+		}
 	}
 
 	if err := h.db.WithContext(c.Request.Context()).Create(&plan).Error; err != nil {
@@ -201,7 +229,7 @@ func (h *TradePlanHandler) Patch(c *gin.Context) {
 		updates["valid_until"] = value
 	}
 
-	for _, field := range []string{"entry_price", "stop_loss", "take_profit", "position_size"} {
+	for _, field := range []string{"entry_price", "stop_loss", "take_profit", "position_size", "max_risk_amount", "max_risk_percent"} {
 		value, present, err := decodeOptionalFloat(raw, field)
 		if err != nil {
 			Fail(c, http.StatusBadRequest, err.Error())
@@ -219,7 +247,7 @@ func (h *TradePlanHandler) Patch(c *gin.Context) {
 		updates[field] = value
 	}
 
-	for _, field := range []string{"entry_trigger", "rationale", "ai_summary", "notes"} {
+	for _, field := range []string{"entry_trigger", "invalidation", "rationale", "ai_summary", "notes"} {
 		value, present, err := decodeCleanPatchString(raw, field)
 		if err != nil {
 			Fail(c, http.StatusBadRequest, err.Error())
@@ -258,6 +286,15 @@ func (h *TradePlanHandler) Execute(c *gin.Context) {
 		Fail(c, http.StatusBadRequest, "watch plans cannot be converted to journal entries")
 		return
 	}
+	unacknowledged, err := findUnacknowledgedHighRiskCodes(h.db.WithContext(c.Request.Context()), plan.ID)
+	if err != nil {
+		Fail(c, http.StatusInternalServerError, "pre-trade risk acknowledgements could not be checked")
+		return
+	}
+	if len(unacknowledged) > 0 {
+		Fail(c, http.StatusConflict, "high-risk findings require acknowledgement: "+strings.Join(unacknowledged, ", "))
+		return
+	}
 
 	var req executeTradePlanRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -272,7 +309,7 @@ func (h *TradePlanHandler) Execute(c *gin.Context) {
 
 	now := time.Now().UTC()
 	entry.ID = uuid.New()
-	err := h.db.WithContext(c.Request.Context()).Transaction(func(tx *gorm.DB) error {
+	err = h.db.WithContext(c.Request.Context()).Transaction(func(tx *gorm.DB) error {
 		claim := tx.Model(&models.TradePlan{}).
 			Where("id = ? AND status IN ?", plan.ID, []string{models.TradePlanStatusDraft, models.TradePlanStatusWaiting}).
 			Updates(map[string]interface{}{
@@ -309,6 +346,38 @@ func (h *TradePlanHandler) Execute(c *gin.Context) {
 		},
 		Error: nil,
 	})
+}
+
+func findUnacknowledgedHighRiskCodes(database *gorm.DB, planID uuid.UUID) ([]string, error) {
+	var review models.PreTradeRiskReview
+	err := database.Where("trade_plan_id = ?", planID).Order("version DESC").First(&review).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return []string{}, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	highRisk := make(map[string]bool)
+	for _, findings := range [][]models.PreTradeFinding{review.HardConflicts, review.RiskWarnings, review.BehaviorReminders, review.UnresolvedQuestions, review.ChangesSinceResearch} {
+		for _, finding := range findings {
+			if finding.Severity == "high" {
+				highRisk[finding.Code] = true
+			}
+		}
+	}
+	var acknowledgements []models.RiskAcknowledgement
+	if err := database.Where("review_id = ?", review.ID).Find(&acknowledgements).Error; err != nil {
+		return nil, err
+	}
+	for _, acknowledgement := range acknowledgements {
+		delete(highRisk, acknowledgement.FindingCode)
+	}
+	codes := make([]string, 0, len(highRisk))
+	for code := range highRisk {
+		codes = append(codes, code)
+	}
+	sort.Strings(codes)
+	return codes, nil
 }
 
 func (h *TradePlanHandler) findPlan(c *gin.Context) (models.TradePlan, bool) {
@@ -355,12 +424,22 @@ func (req createTradePlanRequest) toModel() (models.TradePlan, string) {
 	if validationErr != "" {
 		return models.TradePlan{}, validationErr
 	}
+	var userThesisID *uuid.UUID
+	if req.UserThesisID != nil && strings.TrimSpace(*req.UserThesisID) != "" {
+		parsed, err := uuid.Parse(strings.TrimSpace(*req.UserThesisID))
+		if err != nil {
+			return models.TradePlan{}, "user_thesis_id must be a valid UUID"
+		}
+		userThesisID = &parsed
+	}
 
 	for field, value := range map[string]*float64{
-		"entry_price":   req.EntryPrice,
-		"stop_loss":     req.StopLoss,
-		"take_profit":   req.TakeProfit,
-		"position_size": req.PositionSize,
+		"entry_price":      req.EntryPrice,
+		"stop_loss":        req.StopLoss,
+		"take_profit":      req.TakeProfit,
+		"position_size":    req.PositionSize,
+		"max_risk_amount":  req.MaxRiskAmount,
+		"max_risk_percent": req.MaxRiskPercent,
 	} {
 		if value != nil {
 			if validationErr := validatePlanNumber(field, *value); validationErr != "" {
@@ -370,19 +449,23 @@ func (req createTradePlanRequest) toModel() (models.TradePlan, string) {
 	}
 
 	return models.TradePlan{
-		Ticker:       ticker,
-		Direction:    direction,
-		Status:       status,
-		PlanDate:     planDate,
-		ValidUntil:   validUntil,
-		EntryTrigger: cleanOptionalString(req.EntryTrigger),
-		EntryPrice:   req.EntryPrice,
-		StopLoss:     req.StopLoss,
-		TakeProfit:   req.TakeProfit,
-		PositionSize: req.PositionSize,
-		Rationale:    cleanOptionalString(req.Rationale),
-		AISummary:    cleanOptionalString(req.AISummary),
-		Notes:        cleanOptionalString(req.Notes),
+		Ticker:         ticker,
+		Direction:      direction,
+		Status:         status,
+		PlanDate:       planDate,
+		ValidUntil:     validUntil,
+		UserThesisID:   userThesisID,
+		EntryTrigger:   cleanOptionalString(req.EntryTrigger),
+		EntryPrice:     req.EntryPrice,
+		StopLoss:       req.StopLoss,
+		TakeProfit:     req.TakeProfit,
+		PositionSize:   req.PositionSize,
+		Invalidation:   cleanOptionalString(req.Invalidation),
+		MaxRiskAmount:  req.MaxRiskAmount,
+		MaxRiskPercent: req.MaxRiskPercent,
+		Rationale:      cleanOptionalString(req.Rationale),
+		AISummary:      cleanOptionalString(req.AISummary),
+		Notes:          cleanOptionalString(req.Notes),
 	}, ""
 }
 
@@ -433,20 +516,27 @@ func (req executeTradePlanRequest) toJournalEntry(plan models.TradePlan) (models
 		notes = plan.Notes
 	}
 
+	var tradePlanID *uuid.UUID
+	if plan.ID != uuid.Nil {
+		id := plan.ID
+		tradePlanID = &id
+	}
+
 	return models.TradeJournalEntry{
-		ExecutedAt: executedAt,
-		Symbol:     plan.Ticker,
-		Name:       strings.TrimSpace(req.Name),
-		Side:       plan.Direction,
-		Quantity:   *req.Quantity,
-		Price:      *price,
-		Amount:     *req.Quantity * *price,
-		Fee:        fee,
-		Market:     market,
-		Currency:   currency,
-		OrderID:    cleanOptionalString(req.OrderID),
-		Source:     "trade_plan",
-		Notes:      notes,
+		ExecutedAt:  executedAt,
+		Symbol:      plan.Ticker,
+		Name:        strings.TrimSpace(req.Name),
+		Side:        plan.Direction,
+		Quantity:    *req.Quantity,
+		Price:       *price,
+		Amount:      *req.Quantity * *price,
+		Fee:         fee,
+		Market:      market,
+		Currency:    currency,
+		OrderID:     cleanOptionalString(req.OrderID),
+		TradePlanID: tradePlanID,
+		Source:      "trade_plan",
+		Notes:       notes,
 	}, ""
 }
 
@@ -458,11 +548,15 @@ func newTradePlanResponse(plan models.TradePlan) tradePlanResponse {
 		Status:            plan.Status,
 		PlanDate:          plan.PlanDate.Format(journalDateLayout),
 		ValidUntil:        formatDatePointer(plan.ValidUntil),
+		UserThesisID:      formatUUIDPointer(plan.UserThesisID),
 		EntryTrigger:      plan.EntryTrigger,
 		EntryPrice:        plan.EntryPrice,
 		StopLoss:          plan.StopLoss,
 		TakeProfit:        plan.TakeProfit,
 		PositionSize:      plan.PositionSize,
+		Invalidation:      plan.Invalidation,
+		MaxRiskAmount:     plan.MaxRiskAmount,
+		MaxRiskPercent:    plan.MaxRiskPercent,
 		Rationale:         plan.Rationale,
 		AISummary:         plan.AISummary,
 		Notes:             plan.Notes,
@@ -500,8 +594,8 @@ func validatePlanNumber(field string, value float64) string {
 	if value <= 0 {
 		return field + " must be positive"
 	}
-	if field == "position_size" && value > 100 {
-		return "position_size must be 100 or less"
+	if (field == "position_size" || field == "max_risk_percent") && value > 100 {
+		return field + " must be 100 or less"
 	}
 	return ""
 }

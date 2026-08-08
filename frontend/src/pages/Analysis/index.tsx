@@ -126,8 +126,8 @@ export default function AnalysisPage() {
   };
 
   return (
-    <section className="mx-auto flex w-full max-w-[1600px] flex-col gap-3 px-3 py-3 sm:gap-4 sm:px-5 sm:py-4 lg:px-6">
-      <header className="min-w-0 rounded-[18px] border border-white/[0.075] bg-surface p-1.5 shadow-[0_14px_38px_rgba(0,0,0,0.14)] sm:p-2" aria-label="股票分析工作区">
+    <section className="page-ledger mx-auto flex w-full max-w-[1600px] flex-col gap-4 px-3 py-3 sm:px-5 sm:py-4 lg:px-6">
+      <header className="min-w-0 rounded-sm border border-rule bg-surface/80 p-1.5 shadow-lift sm:p-2" aria-label="股票分析工作区">
         <TabBar
           tabs={tabs}
           activeTabId={displayedTabId}
@@ -148,7 +148,7 @@ export default function AnalysisPage() {
           <AnalysisContent symbol={activeTab.symbol} tabName={activeTab.name} />
         </div>
       ) : (
-        <section className="flex min-h-72 items-center justify-center rounded-[20px] border border-dashed border-slate-700/80 bg-surface px-5 text-center text-slate-400">
+        <section className="flex min-h-72 items-center justify-center rounded-sm border border-dashed border-slate-700/80 bg-surface px-5 text-center text-slate-400">
           <div>
             <p className="text-base font-bold text-slate-200">{routeError ? '代码不适用于当前市场' : '添加股票开始分析'}</p>
             <p className={routeError ? 'mt-2 max-w-xl text-sm text-red-300' : 'mt-2 text-sm text-slate-500'} role={routeError ? 'alert' : undefined}>

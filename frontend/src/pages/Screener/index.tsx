@@ -17,6 +17,7 @@ import ScanProgress from './ScanProgress';
 import StockList from './StockList';
 import TagFilter from './TagFilter';
 import ThresholdPanel from './ThresholdPanel';
+import DiscoveryTemplates from './DiscoveryTemplates';
 
 const SCAN_STALL_TIMEOUT_MS = 45_000;
 const EMPTY_PROGRESS = { analyzed: 0, total: 0 };
@@ -37,6 +38,7 @@ export default function ScreenerPage() {
   const [hasReceivedScanProgress, setHasReceivedScanProgress] = useState(false);
   const [scanCompletedMarkets, setScanCompletedMarkets] = useState<Set<Market>>(() => new Set());
   const [refreshingMarket, setRefreshingMarket] = useState<Market | null>(null);
+  const [unknownRuleLabels, setUnknownRuleLabels] = useState<string[]>([]);
   const isRefreshing = refreshingMarket !== null;
 
   const {
@@ -481,28 +483,20 @@ export default function ScreenerPage() {
   };
 
   return (
-    <section className="mx-auto w-full max-w-[1520px] px-4 py-6 sm:px-6 sm:py-8 lg:px-8 lg:py-10">
+    <section className="page-ledger mx-auto w-full max-w-[1520px] px-4 py-6 sm:px-6 sm:py-8 lg:px-8 lg:py-10">
       <PageHeader
-        eyebrow="市场研究"
-        title="CANSLIM 选股"
-        description="先用一致的增长与相对强度标准缩小范围，再进入个股证据与 AI 分析。"
+        title="发现候选"
         meta={
-          <span className="inline-flex items-center gap-2 rounded-full border border-slate-800 bg-slate-950/35 px-3 py-1.5">
-            <span className="h-1.5 w-1.5 rounded-full bg-brand-300" />
+          <span className="source-stamp">
             数据日期 <span className="font-bold text-slate-200">{formatDateCN(selectedMarketDataAsOf)}</span>
           </span>
         }
       />
-
-      <Card className="mt-6 overflow-hidden p-0">
+      <Card className="mt-5 overflow-hidden p-0">
         <div className="grid xl:grid-cols-[minmax(0,1.25fr)_minmax(360px,0.75fr)]">
           <section className="border-b border-slate-800/80 p-4 sm:p-5 xl:border-b-0 xl:border-r" aria-labelledby="screener-market-title">
             <div className="mb-3 flex items-center justify-between gap-3">
-              <div>
-                <h2 id="screener-market-title" className="text-base font-bold text-white">选择市场</h2>
-                <p className="mt-1 text-xs leading-5 text-slate-500">切换不会中断其他市场正在进行的扫描</p>
-              </div>
-              <span className="hidden rounded-full border border-slate-800 px-2.5 py-1 text-xs font-semibold text-slate-500 sm:inline-flex">{SCREENER_MARKETS[assetMarket].length} 个市场</span>
+              <h2 id="screener-market-title" className="font-display text-lg font-bold text-ink">选择市场</h2>
             </div>
             <MarketSelector assetMarket={assetMarket} selectedMarket={selectedMarket} onChange={handleMarketChange} />
           </section>
@@ -511,7 +505,7 @@ export default function ScreenerPage() {
             <div className="flex h-full flex-col gap-4 sm:flex-row sm:items-end xl:flex-col xl:items-stretch">
             <div className="min-w-0 flex-1">
               <div className="mb-3 flex flex-wrap items-center gap-2.5">
-                <h2 id="screener-scan-title" className="text-base font-bold text-white">市场扫描</h2>
+                <h2 id="screener-scan-title" className="font-display text-lg font-bold text-ink">市场扫描</h2>
                 {operationMarket ? (
                   <span className="rounded-full border border-brand-300/15 bg-brand-300/[0.07] px-2.5 py-1 text-xs font-semibold text-brand-100">
                     {screenerMarketLabel(operationMarket)}
@@ -563,10 +557,13 @@ export default function ScreenerPage() {
           onSavePreset={handleSavePreset}
           onDeletePreset={handleDeletePreset}
         />
+        {thresholdPanelOpen ? <div className="mt-3">
+          <DiscoveryTemplates assetMarket={assetMarket} stockPool={selectedMarket} thresholds={thresholds} onApply={setThresholds} onUnknownRules={setUnknownRuleLabels} />
+        </div> : null}
       </section>
 
       {errorMessage ? (
-        <div className="mt-4 flex items-start justify-between gap-3 rounded-2xl border border-red-500/30 bg-red-500/[0.08] px-4 py-3 text-sm text-red-100" role="alert">
+        <div className="mt-4 flex items-start justify-between gap-3 rounded-sm border border-red-500/30 bg-red-500/[0.08] px-4 py-3 text-sm text-red-100" role="alert">
           <span>{errorMessage}</span>
           <button type="button" className="interactive-press -m-2 flex h-10 w-10 shrink-0 items-center justify-center rounded-xl text-red-300 hover:bg-red-500/10 hover:text-white" onClick={() => setErrorMessage(null)} aria-label="关闭错误提示">
             <X className="h-4 w-4" />
@@ -574,7 +571,7 @@ export default function ScreenerPage() {
         </div>
       ) : null}
       {notice ? (
-        <div className="mt-4 flex items-start justify-between gap-3 rounded-2xl border border-brand-300/25 bg-brand-300/[0.07] px-4 py-3 text-sm text-brand-50" role="status">
+        <div className="mt-4 flex items-start justify-between gap-3 rounded-sm border border-brand-300/25 bg-brand-300/[0.07] px-4 py-3 text-sm text-brand-50" role="status">
           <span>{notice}</span>
           <button type="button" className="interactive-press -m-2 flex h-10 w-10 shrink-0 items-center justify-center rounded-xl text-brand-300 hover:bg-brand-300/10 hover:text-white" onClick={() => setNotice(null)} aria-label="关闭提示">
             <X className="h-4 w-4" />
@@ -587,7 +584,7 @@ export default function ScreenerPage() {
       </Card>
 
       <div className="mt-4">
-        <StockList stocks={filteredStocks} hasRawData={selectedMarketStocks.length > 0} filtered={activeTagFilters.length > 0} />
+        <StockList stocks={filteredStocks} hasRawData={selectedMarketStocks.length > 0} filtered={activeTagFilters.length > 0} unknownRuleLabels={unknownRuleLabels} />
       </div>
     </section>
   );

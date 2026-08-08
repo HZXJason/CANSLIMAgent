@@ -14,6 +14,7 @@ export interface JournalEntry {
   market: TradeMarket;
   currency: string;
   order_id: string | null;
+  trade_plan_id: string | null;
   source: string;
   notes: string | null;
   reflection: string | null;

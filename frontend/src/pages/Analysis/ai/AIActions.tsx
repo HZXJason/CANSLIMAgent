@@ -83,7 +83,7 @@ export default function AIActions({ symbol, reportContent, nLabelWritten, analys
             variant="outline"
             disabled={writing || nLabelWritten}
             onClick={handleWriteNLabel}
-            className={'h-9 rounded-xl px-3 ' + (nLabelWritten ? 'border-emerald-400 bg-emerald-400 text-slate-950 opacity-100 hover:bg-emerald-400 disabled:opacity-100' : '')}
+            className={'h-9 rounded-sm px-3 ' + (nLabelWritten ? 'border-emerald-400 bg-emerald-400 text-emerald-950 opacity-100 hover:bg-emerald-400 disabled:opacity-100' : '')}
           >
             {nLabelWritten ? <Check className="h-4 w-4" /> : <Tag className="h-4 w-4" />}
             {nLabelWritten ? 'N 已写回' : writing ? '写回中' : '写回 N 标签'}

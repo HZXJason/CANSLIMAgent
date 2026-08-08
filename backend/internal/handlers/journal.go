@@ -38,23 +38,24 @@ type createJournalEntryRequest struct {
 }
 
 type journalEntryResponse struct {
-	ID         string    `json:"id"`
-	Datetime   string    `json:"datetime"`
-	Symbol     string    `json:"symbol"`
-	Name       string    `json:"name"`
-	Side       string    `json:"side"`
-	Quantity   float64   `json:"quantity"`
-	Price      float64   `json:"price"`
-	Amount     float64   `json:"amount"`
-	Fee        float64   `json:"fee"`
-	Market     string    `json:"market"`
-	Currency   string    `json:"currency"`
-	OrderID    *string   `json:"order_id"`
-	Source     string    `json:"source"`
-	Notes      *string   `json:"notes"`
-	Reflection *string   `json:"reflection"`
-	CreatedAt  time.Time `json:"created_at"`
-	UpdatedAt  time.Time `json:"updated_at"`
+	ID          string    `json:"id"`
+	Datetime    string    `json:"datetime"`
+	Symbol      string    `json:"symbol"`
+	Name        string    `json:"name"`
+	Side        string    `json:"side"`
+	Quantity    float64   `json:"quantity"`
+	Price       float64   `json:"price"`
+	Amount      float64   `json:"amount"`
+	Fee         float64   `json:"fee"`
+	Market      string    `json:"market"`
+	Currency    string    `json:"currency"`
+	OrderID     *string   `json:"order_id"`
+	TradePlanID *string   `json:"trade_plan_id"`
+	Source      string    `json:"source"`
+	Notes       *string   `json:"notes"`
+	Reflection  *string   `json:"reflection"`
+	CreatedAt   time.Time `json:"created_at"`
+	UpdatedAt   time.Time `json:"updated_at"`
 }
 
 // pythonTradeRecord is the exact Vibe-Trading TradeRecord contract.
@@ -440,23 +441,24 @@ func defaultTradeCurrency(market string) string {
 
 func newJournalEntryResponse(entry models.TradeJournalEntry) journalEntryResponse {
 	return journalEntryResponse{
-		ID:         entry.ID.String(),
-		Datetime:   entry.ExecutedAt.Format(time.RFC3339),
-		Symbol:     entry.Symbol,
-		Name:       entry.Name,
-		Side:       entry.Side,
-		Quantity:   entry.Quantity,
-		Price:      entry.Price,
-		Amount:     entry.Amount,
-		Fee:        entry.Fee,
-		Market:     entry.Market,
-		Currency:   entry.Currency,
-		OrderID:    entry.OrderID,
-		Source:     entry.Source,
-		Notes:      entry.Notes,
-		Reflection: entry.Reflection,
-		CreatedAt:  entry.CreatedAt,
-		UpdatedAt:  entry.UpdatedAt,
+		ID:          entry.ID.String(),
+		Datetime:    entry.ExecutedAt.Format(time.RFC3339),
+		Symbol:      entry.Symbol,
+		Name:        entry.Name,
+		Side:        entry.Side,
+		Quantity:    entry.Quantity,
+		Price:       entry.Price,
+		Amount:      entry.Amount,
+		Fee:         entry.Fee,
+		Market:      entry.Market,
+		Currency:    entry.Currency,
+		OrderID:     entry.OrderID,
+		TradePlanID: formatUUIDPointer(entry.TradePlanID),
+		Source:      entry.Source,
+		Notes:       entry.Notes,
+		Reflection:  entry.Reflection,
+		CreatedAt:   entry.CreatedAt,
+		UpdatedAt:   entry.UpdatedAt,
 	}
 }
 

@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1440" height="360" viewBox="0 0 1440 360" role="img" aria-labelledby="title desc">
   <title id="title">AlphaLens</title>
-  <desc id="desc">AlphaLens AI-native equity research workbench</desc>
+  <desc id="desc">AlphaLens evidence-first AI equity research workbench</desc>
   <defs>
     <linearGradient id="brand" x1="0" y1="0" x2="1" y2="1">
       <stop offset="0" stop-color="#16b981"/>
@@ -19,6 +19,6 @@
     <path d="M41 66 H73" stroke="#64748b" stroke-width="8" stroke-linecap="round" opacity=".7"/>
   </g>
   <text x="390" y="170" fill="#0f172a" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif" font-size="94" font-weight="650" letter-spacing="4">ALPHALENS</text>
-  <text x="396" y="228" fill="#16a579" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif" font-size="28" font-weight="600" letter-spacing="7">AI-NATIVE EQUITY RESEARCH</text>
-  <text x="397" y="277" fill="#64748b" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif" font-size="22" letter-spacing="2">Evidence first · Human in control · Web + native iOS</text>
+  <text x="396" y="228" fill="#16a579" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif" font-size="28" font-weight="600" letter-spacing="7">EVIDENCE-FIRST AI RESEARCH</text>
+  <text x="397" y="277" fill="#64748b" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif" font-size="22" letter-spacing="2">Verify the evidence · Compare perspectives · Own the decision</text>
 </svg>

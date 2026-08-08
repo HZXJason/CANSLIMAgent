@@ -1,4 +1,4 @@
-import { Download, Loader2, Upload, X } from 'lucide-react';
+import { ChevronDown, Download, Loader2, Upload, X } from 'lucide-react';
 import { useState } from 'react';
 import { Button } from '../ui/button';
 import { Card } from '../ui/card';
@@ -21,6 +21,7 @@ export default function BrokerJournalImport({ connections, onImported }: BrokerJ
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [preview, setPreview] = useState<{ connectionID: string; result: BrokerSyncResult } | null>(null);
+  const [expanded, setExpanded] = useState(false);
   const [startDate, setStartDate] = useState(defaultStartDate);
   const [endDate, setEndDate] = useState(defaultEndDate);
   const connected = connections.filter((connection) => connection.connected && connection.id);
@@ -61,11 +62,12 @@ export default function BrokerJournalImport({ connections, onImported }: BrokerJ
 
   return (
     <Card className="overflow-hidden p-0">
-      <div className="border-b border-slate-800 px-5 py-4 sm:px-6">
-        <h2 className="text-lg font-bold text-white">从券商导入</h2>
-      </div>
+      <button type="button" className="flex min-h-14 w-full items-center justify-between px-5 text-left sm:px-6" aria-expanded={expanded} onClick={() => setExpanded((value) => !value)}>
+        <span className="text-base font-bold text-white">从券商导入</span>
+        <ChevronDown className={`h-4 w-4 text-slate-400 transition-transform ${expanded ? 'rotate-180' : ''}`} />
+      </button>
 
-      <div className="space-y-4 p-5 sm:p-6">
+      {expanded || preview || error || message ? <div className="space-y-4 border-t border-slate-800 p-5 sm:p-6">
         {connected.length === 0 ? (
           <div className="flex flex-col gap-3 rounded-xl border border-slate-800 bg-slate-950/35 p-4 sm:flex-row sm:items-center sm:justify-between">
             <p className="text-sm text-slate-300">尚未连接券商账户</p>
@@ -126,7 +128,7 @@ export default function BrokerJournalImport({ connections, onImported }: BrokerJ
             {preview.result.executions.length > 10 ? <p className="mt-2 text-sm text-slate-400">仅展示前 10 笔，确认后将导入全部预览成交。</p> : null}
           </div>
         ) : null}
-      </div>
+      </div> : null}
     </Card>
   );
 }

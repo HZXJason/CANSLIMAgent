@@ -23,10 +23,7 @@ interface TagFilterProps {
 export default function TagFilter({ activeTags, onToggle, onClear }: TagFilterProps) {
   return (
     <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center">
-      <div className="min-w-0 sm:mr-2">
-        <span className="block text-sm font-bold text-slate-100">标签筛选</span>
-        <span className="mt-0.5 block text-xs text-slate-500">组合条件只保留同时达标的股票</span>
-      </div>
+      <span className="min-w-0 text-sm font-bold text-slate-100 sm:mr-2">标签筛选</span>
       <div className="flex flex-wrap items-center gap-2">
         {tags.map((tag) => (
           <Tooltip key={tag} content={tagTooltips[tag]}>
@@ -35,7 +32,7 @@ export default function TagFilter({ activeTags, onToggle, onClear }: TagFilterPr
               className={cn(
                 'interactive-press inline-flex h-11 min-w-11 items-center justify-center rounded-xl border px-3 text-sm font-extrabold sm:h-10 sm:min-w-10',
                 activeTags.includes(tag)
-                  ? 'border-emerald-400 bg-emerald-400 text-slate-950 shadow-sm shadow-emerald-500/20'
+                  ? 'border-emerald-400 bg-emerald-400 text-emerald-950 shadow-sm shadow-emerald-500/20'
                   : 'border-slate-700/80 bg-slate-950/40 text-slate-400 hover:border-brand-300/35 hover:bg-slate-800/50 hover:text-slate-100'
               )}
               onClick={() => onToggle(tag)}

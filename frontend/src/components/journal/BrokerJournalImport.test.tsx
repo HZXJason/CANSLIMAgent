@@ -20,6 +20,8 @@ describe('BrokerJournalImport', () => {
     const onImported = vi.fn();
     render(<BrokerJournalImport connections={[connection]} onImported={onImported} />);
 
+    expect(screen.queryByLabelText('开始日期')).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: '从券商导入' }));
     fireEvent.change(screen.getByLabelText('开始日期'), { target: { value: '2026-01-01' } });
     fireEvent.change(screen.getByLabelText('结束日期'), { target: { value: '2026-01-31' } });
     fireEvent.click(screen.getByRole('button', { name: '获取 长桥 LongPort 成交' }));
@@ -38,6 +40,7 @@ describe('BrokerJournalImport', () => {
       { ...connection, id: 'ibkr-3', broker: 'ibkr', label: longLabel, account_name: '盈透账户' }
     ]} onImported={vi.fn()} />);
 
+    fireEvent.click(screen.getByRole('button', { name: '从券商导入' }));
     const actions = screen.getAllByRole('button', { name: /获取 .* 成交/ });
     expect(actions).toHaveLength(3);
     actions.forEach((button) => expect(button).toHaveClass('min-w-0', 'w-full'));

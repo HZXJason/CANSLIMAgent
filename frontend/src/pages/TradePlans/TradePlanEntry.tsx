@@ -14,12 +14,14 @@ import { cn } from '../../lib/utils';
 import { useMarketStore } from '../../stores/marketStore';
 import type { AssetMarket } from '../../types';
 import type { ExecuteTradePlanInput, NewTradePlanInput, TradePlan, TradePlanDirection, TradePlanStatus, TradePlanUpdateInput } from '../../types/tradePlan';
+import PreTradeRiskReviewCard from './PreTradeRiskReviewCard';
 
 interface LocationState {
   aiSummary?: string;
+  userThesisId?: string;
 }
 
-interface PlanForm {
+export interface PlanForm {
   ticker: string;
   direction: TradePlanDirection | '';
   status: TradePlanStatus;
@@ -30,6 +32,9 @@ interface PlanForm {
   stop_loss: string;
   take_profit: string;
   position_size: string;
+  invalidation: string;
+  max_risk_amount: string;
+  max_risk_percent: string;
   rationale: string;
   ai_summary: string;
   notes: string;
@@ -89,6 +94,9 @@ function initialPlanForm(symbol = '', aiSummary = '', assetMarket: AssetMarket =
     stop_loss: '',
     take_profit: '',
     position_size: '',
+    invalidation: '',
+    max_risk_amount: '',
+    max_risk_percent: '',
     rationale: '',
     ai_summary: aiSummary,
     notes: ''
@@ -107,6 +115,9 @@ function formFromPlan(plan: TradePlan): PlanForm {
     stop_loss: plan.stop_loss === null ? '' : String(plan.stop_loss),
     take_profit: plan.take_profit === null ? '' : String(plan.take_profit),
     position_size: plan.position_size === null ? '' : String(plan.position_size),
+    invalidation: plan.invalidation ?? '',
+    max_risk_amount: plan.max_risk_amount === null ? '' : String(plan.max_risk_amount),
+    max_risk_percent: plan.max_risk_percent === null ? '' : String(plan.max_risk_percent),
     rationale: plan.rationale ?? '',
     ai_summary: plan.ai_summary ?? '',
     notes: plan.notes ?? ''
@@ -158,7 +169,7 @@ function parseExecuteNumber(value: string, field: keyof ExecuteForm, label: stri
   return parsed;
 }
 
-function buildPlanInput(form: PlanForm, coreLocked: boolean, assetMarket: AssetMarket) {
+export function buildPlanInput(form: PlanForm, coreLocked: boolean, assetMarket: AssetMarket, userThesisId?: string) {
   const errors: PlanFormErrors = {};
   if (coreLocked) {
     return { errors, input: { notes: cleanText(form.notes) } as TradePlanUpdateInput };
@@ -180,6 +191,8 @@ function buildPlanInput(form: PlanForm, coreLocked: boolean, assetMarket: AssetM
   const stopLoss = parseOptionalPositive(form.stop_loss, 'stop_loss', '止损价', errors);
   const takeProfit = parseOptionalPositive(form.take_profit, 'take_profit', '止盈价', errors);
   const positionSize = parseOptionalPositive(form.position_size, 'position_size', '计划仓位', errors, 100);
+  const maxRiskAmount = parseOptionalPositive(form.max_risk_amount, 'max_risk_amount', '最大风险金额', errors);
+  const maxRiskPercent = parseOptionalPositive(form.max_risk_percent, 'max_risk_percent', '最大风险比例', errors, 100);
 
   if (Object.keys(errors).length > 0 || !form.direction) return { errors, input: null };
 
@@ -189,11 +202,15 @@ function buildPlanInput(form: PlanForm, coreLocked: boolean, assetMarket: AssetM
     status: form.status === 'waiting' ? 'waiting' : 'draft',
     plan_date: form.plan_date,
     valid_until: form.valid_until || null,
+    user_thesis_id: userThesisId ?? null,
     entry_trigger: cleanText(form.entry_trigger),
     entry_price: entryPrice,
     stop_loss: stopLoss,
     take_profit: takeProfit,
     position_size: positionSize,
+    invalidation: cleanText(form.invalidation),
+    max_risk_amount: maxRiskAmount,
+    max_risk_percent: maxRiskPercent,
     rationale: cleanText(form.rationale),
     ai_summary: cleanText(form.ai_summary),
     notes: cleanText(form.notes)
@@ -298,7 +315,7 @@ function PlanFormCard({ plan }: { plan?: TradePlan }) {
   };
 
   const submit = () => {
-    const result = buildPlanInput(form, coreLocked, planAssetMarket);
+    const result = buildPlanInput(form, coreLocked, planAssetMarket, plan?.user_thesis_id ?? locationState?.userThesisId);
     setErrors(result.errors);
     if (!result.input) return;
     if (!coreLocked && form.status === 'waiting') {
@@ -327,6 +344,12 @@ function PlanFormCard({ plan }: { plan?: TradePlan }) {
       ) : null}
 
       <div className="space-y-6 p-5 sm:p-6">
+        {plan?.user_thesis_id || locationState?.userThesisId ? (
+          <div className="rounded-xl border border-brand-400/30 bg-brand-400/10 px-4 py-3">
+            <p className="text-sm font-semibold text-brand-100">来源：已保存研究论点</p>
+            <p className="mt-1 break-all text-xs text-slate-400">论点版本 ID：{plan?.user_thesis_id ?? locationState?.userThesisId}</p>
+          </div>
+        ) : null}
         <div>
           <h3 className="mb-3 font-bold text-slate-100">基本信息</h3>
           <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
@@ -384,6 +407,16 @@ function PlanFormCard({ plan }: { plan?: TradePlan }) {
               <Input className="mt-2" type="number" min="0" step="0.0001" value={form.take_profit} disabled={coreLocked} invalid={Boolean(errors.take_profit)} onChange={(event) => updateField('take_profit', event.target.value)} />
               <FieldError value={errors.take_profit} />
             </label>
+            <label>
+              <span className="text-sm font-semibold text-slate-300">最大风险金额</span>
+              <Input className="mt-2" type="number" min="0" step="0.01" value={form.max_risk_amount} disabled={coreLocked} invalid={Boolean(errors.max_risk_amount)} onChange={(event) => updateField('max_risk_amount', event.target.value)} />
+              <FieldError value={errors.max_risk_amount} />
+            </label>
+            <label>
+              <span className="text-sm font-semibold text-slate-300">最大风险（%）</span>
+              <Input className="mt-2" type="number" min="0" max="100" step="0.01" value={form.max_risk_percent} disabled={coreLocked} invalid={Boolean(errors.max_risk_percent)} onChange={(event) => updateField('max_risk_percent', event.target.value)} />
+              <FieldError value={errors.max_risk_percent} />
+            </label>
           </div>
         </div>
 
@@ -395,6 +428,10 @@ function PlanFormCard({ plan }: { plan?: TradePlan }) {
           <label>
             <span className="text-sm font-semibold text-slate-300">计划依据</span>
             <Textarea className="mt-2" value={form.rationale} disabled={coreLocked} onChange={(event) => updateField('rationale', event.target.value)} />
+          </label>
+          <label>
+            <span className="text-sm font-semibold text-slate-300">论点失效条件</span>
+            <Textarea className="mt-2" value={form.invalidation} disabled={coreLocked} onChange={(event) => updateField('invalidation', event.target.value)} />
           </label>
           <label>
             <span className="text-sm font-semibold text-slate-300">AI 分析摘要</span>
@@ -662,6 +699,7 @@ function DetailView({ id }: { id: string }) {
   return (
     <div className="space-y-5">
       <PlanFormCard plan={planQuery.data} />
+      <PreTradeRiskReviewCard planId={planQuery.data.id} />
       <ExecutionCard plan={planQuery.data} />
       <StatusActions plan={planQuery.data} />
     </div>
@@ -674,11 +712,9 @@ export default function TradePlanEntry() {
   const isNew = !id;
 
   return (
-    <section className="mx-auto flex w-full max-w-[1040px] flex-col gap-6 px-4 py-6 sm:px-6 sm:py-8 lg:px-8 lg:py-10">
+    <section className="page-ledger mx-auto flex w-full max-w-[1040px] flex-col gap-6 px-4 py-6 sm:px-6 sm:py-8 lg:px-8 lg:py-10">
       <PageHeader
-        eyebrow="执行工作台"
         title={isNew ? '新建交易计划' : '交易计划'}
-        description={isNew ? '先定义触发条件与风险边界，再决定何时进入等待执行。' : '查看计划状态、执行条件与成交结果。'}
         meta={isNew ? '草稿可随时修改' : '非草稿计划的核心字段将保持锁定'}
         actions={
           <Button className="w-full sm:w-auto" variant="outline" onClick={() => navigate('/trade-plans')}>

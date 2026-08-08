@@ -86,8 +86,7 @@ export default function ThresholdPanel({
             <ChevronRight className={cn('h-4 w-4 text-brand-300 transition-transform duration-150', open && 'rotate-90')} />
           </span>
           <span className="min-w-0">
-            <span className="block truncate text-base font-bold text-white">筛选阈值</span>
-            <span className="mt-0.5 block text-xs font-medium text-slate-500">高级条件与方案管理</span>
+            <span className="block truncate text-base font-bold text-white">筛选条件</span>
           </span>
         </button>
 

@@ -34,6 +34,8 @@ from analysis_runs import (
 )
 from data_auditor import audit_data, render_data_audit
 from journal_reflection import build_journal_reflection
+from playbook_suggestion import suggest_playbooks
+from pretrade_review import review_with_llm
 from broker_sync import discover_broker_account, sync_broker
 from ai_runtime import (
     is_china_a_symbol,
@@ -192,6 +194,37 @@ class ModelDiscoveryRequest(StrictRequestModel):
 class JournalReflectionRequest(StrictRequestModel):
     schema_version: str = "vibe.trade_record.v1"
     records: list[dict[str, Any]] = Field(default_factory=list, max_length=5000)
+
+
+class PreTradeReviewRequest(StrictRequestModel):
+    ticker: str = Field(..., min_length=1, max_length=32, pattern=r"^[A-Za-z0-9][A-Za-z0-9.^=_-]{0,31}$")
+    llm_provider: str = Field(..., min_length=1, max_length=64)
+    model: str = Field(..., min_length=1, max_length=256)
+    backend_url: str | None = Field(default=None, max_length=2048)
+    api_key: str | None = Field(default=None, min_length=1, max_length=8192, repr=False)
+    plan_snapshot: dict[str, Any]
+    research_evidence: dict[str, Any] = Field(default_factory=dict)
+    current_evidence: dict[str, Any] = Field(default_factory=dict)
+    behavior_observations: list[dict[str, Any]] = Field(default_factory=list, max_length=100)
+    trading_profile: dict[str, Any] = Field(default_factory=dict)
+    trading_principles: list[dict[str, Any]] = Field(default_factory=list, max_length=100)
+    trading_playbooks: list[dict[str, Any]] = Field(default_factory=list, max_length=100)
+
+    @field_validator("plan_snapshot", "research_evidence", "current_evidence")
+    @classmethod
+    def validate_review_context_size(cls, value: dict[str, Any]) -> dict[str, Any]:
+        if len(json.dumps(value, ensure_ascii=False, default=str).encode("utf-8")) > 1024 * 1024:
+            raise ValueError("review context exceeds 1 MiB")
+        return value
+
+
+class PlaybookSuggestionRequest(StrictRequestModel):
+    llm_provider: str = Field(..., min_length=1, max_length=64)
+    model: str = Field(..., min_length=1, max_length=256)
+    backend_url: str | None = Field(default=None, max_length=2048)
+    api_key: str | None = Field(default=None, min_length=1, max_length=8192, repr=False)
+    reviews: list[dict[str, Any]] = Field(default_factory=list, max_length=100)
+    observations: list[dict[str, Any]] = Field(default_factory=list, max_length=100)
 
 
 class BrokerSyncRequest(StrictRequestModel):
@@ -1818,6 +1851,72 @@ async def reflect_journal(request: JournalReflectionRequest):
     if request.schema_version != "vibe.trade_record.v1":
         raise HTTPException(status_code=400, detail="schema_version must be vibe.trade_record.v1")
     return await asyncio.to_thread(build_journal_reflection, request.records)
+
+
+@app.post("/trade-plans/review")
+async def review_trade_plan(request: PreTradeReviewRequest):
+    analysis_request = AnalysisRequest(
+        ticker=request.ticker,
+        llm_provider=request.llm_provider,
+        deep_think_llm=request.model,
+        quick_think_llm=request.model,
+        backend_url=request.backend_url,
+        online_tools=False,
+        analysts=["technical"],
+        api_key=request.api_key,
+    )
+    try:
+        bundle = await prefetch_vibe_evidence_async(
+            request.ticker,
+            analysis_date=date.today().isoformat(),
+            analysts=["market", "news", "social"],
+        )
+        llm = create_role_llm(analysis_request)
+        payload = request.model_dump(exclude={"api_key", "llm_provider", "model", "backend_url"})
+        current_evidence = copy.deepcopy(payload.get("current_evidence") or {})
+        supplied_sources = list(current_evidence.get("sources") or [])
+        for index, trace in enumerate(bundle.get("source_traces", [])):
+            if not isinstance(trace, dict):
+                continue
+            supplied_sources.append(
+                {
+                    "id": f"vibe-{index}",
+                    "label": str(trace.get("source") or trace.get("tool") or "vibe-trading"),
+                    "url": None,
+                    "data_as_of": bundle.get("analysis_date"),
+                    "status": "available" if trace.get("status") == "ok" else "unavailable",
+                }
+            )
+        current_evidence["sources"] = supplied_sources
+        current_evidence["vibe_trading"] = bundle
+        payload["current_evidence"] = current_evidence
+        return await asyncio.to_thread(review_with_llm, payload, llm)
+    except ValueError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=user_error_message(exc, analysis_request)) from exc
+
+
+@app.post("/profile/playbooks/suggest")
+async def suggest_profile_playbooks(request: PlaybookSuggestionRequest):
+    analysis_request = AnalysisRequest(
+        ticker="PROFILE",
+        llm_provider=request.llm_provider,
+        deep_think_llm=request.model,
+        quick_think_llm=request.model,
+        backend_url=request.backend_url,
+        online_tools=False,
+        analysts=["technical"],
+        api_key=request.api_key,
+    )
+    try:
+        llm = create_role_llm(analysis_request)
+        payload = request.model_dump(exclude={"api_key", "llm_provider", "model", "backend_url"})
+        return await asyncio.to_thread(suggest_playbooks, payload, llm)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=user_error_message(exc, analysis_request)) from exc
 
 
 @app.post("/broker/sync")

@@ -20,6 +20,7 @@ interface StockListProps {
   stocks: ComputedStock[];
   hasRawData: boolean;
   filtered: boolean;
+  unknownRuleLabels?: string[];
 }
 
 function formatValue(label: LabelResult) {
@@ -106,9 +107,10 @@ interface StockRowProps {
   stock: ComputedStock;
   hasAIAnalysis: boolean;
   onOpen: (stock: ComputedStock) => void;
+  unknownRuleLabels: string[];
 }
 
-const StockRow = memo(function StockRow({ stock, hasAIAnalysis, onOpen }: StockRowProps) {
+const StockRow = memo(function StockRow({ stock, hasAIAnalysis, onOpen, unknownRuleLabels }: StockRowProps) {
   const passedTags = tagOrder.filter((tag) => tag === 'N' ? Boolean(stock.metrics.n) : stock.labels[tag].status === 'pass');
   const rowSummary = `${stock.passCount}/${scoreDenominator} 项计分标签达标，通过 ${passedTags.length > 0 ? passedTags.join('、') : '暂无'}，权重 ${stock.weightSum}`;
 
@@ -132,6 +134,7 @@ const StockRow = memo(function StockRow({ stock, hasAIAnalysis, onOpen }: StockR
         {tagOrder.map((tag) => (
           <FilterBadge key={tag} stock={stock} tag={tag} />
         ))}
+        {unknownRuleLabels.map((label) => <Badge variant="insufficient" aria-label={`${label} 数据未知`} key={label}>{label} ?</Badge>)}
       </span>
       <span className="hidden text-sm text-slate-400 md:block">{screenerMarketLabel(stock.market, true)}</span>
       <span className="col-start-2 row-start-1 inline-flex items-center justify-end gap-1.5 text-right text-sm font-bold tabular-nums text-slate-200 md:col-auto md:row-auto">
@@ -142,7 +145,7 @@ const StockRow = memo(function StockRow({ stock, hasAIAnalysis, onOpen }: StockR
   );
 });
 
-export default function StockList({ stocks, hasRawData, filtered }: StockListProps) {
+export default function StockList({ stocks, hasRawData, filtered, unknownRuleLabels = [] }: StockListProps) {
   const navigate = useNavigate();
   const openTab = useTabStore((state) => state.openTab);
   const analysisStates = useAnalysisStore((state) => state.analysisStates);
@@ -180,10 +183,7 @@ export default function StockList({ stocks, hasRawData, filtered }: StockListPro
   return (
     <Card className="overflow-hidden p-0">
       <div className="flex items-center justify-between border-b border-slate-800/80 px-4 py-4 sm:px-5">
-        <div>
-          <h2 className="text-base font-bold text-white">候选股票</h2>
-          <p className="mt-1 text-xs text-slate-500">按综合权重排序，点击进入证据与图表</p>
-        </div>
+        <h2 className="text-base font-bold text-white">候选股票</h2>
         <span className="rounded-full border border-slate-800 bg-slate-950/35 px-3 py-1.5 text-sm font-bold tabular-nums text-slate-300">{visibleStocks.length} / {stocks.length}</span>
       </div>
       <div className="hidden grid-cols-[0.9fr_1.4fr_2fr_0.9fr_0.7fr] gap-4 border-b border-slate-800 px-5 py-2.5 text-xs font-semibold text-slate-500 md:grid">
@@ -200,6 +200,7 @@ export default function StockList({ stocks, hasRawData, filtered }: StockListPro
             stock={stock}
             hasAIAnalysis={stockHasAIAnalysis(stock, aiAnalyzedSymbols)}
             onOpen={handleOpenStock}
+            unknownRuleLabels={unknownRuleLabels}
           />
         ))}
       </div>

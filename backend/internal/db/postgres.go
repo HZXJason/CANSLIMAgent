@@ -52,7 +52,29 @@ func Migrate(database *gorm.DB) error {
 		)`).Error; err != nil {
 			return err
 		}
-		if err := tx.AutoMigrate(&models.Stock{}, &models.StockMetric{}, &models.ThresholdPreset{}, &models.TradeJournalEntry{}, &models.TradeJournalReflection{}, &models.TradePlan{}, &models.BrokerConnection{}, &models.BrokerAuthorizationSession{}, &models.LLMCredential{}); err != nil {
+		if err := tx.AutoMigrate(
+			&models.Stock{},
+			&models.StockMetric{},
+			&models.ThresholdPreset{},
+			&models.CandidateSnapshot{},
+			&models.ResearchCase{},
+			&models.UserThesis{},
+			&models.PreTradeRiskReview{},
+			&models.RiskAcknowledgement{},
+			&models.TradeReview{},
+			&models.BehaviorObservation{},
+			&models.TradingProfile{},
+			&models.TradingPrinciple{},
+			&models.TradingPlaybook{},
+			&models.AIMemoryPreference{},
+			&models.ScreenDefinition{},
+			&models.TradeJournalEntry{},
+			&models.TradeJournalReflection{},
+			&models.TradePlan{},
+			&models.BrokerConnection{},
+			&models.BrokerAuthorizationSession{},
+			&models.LLMCredential{},
+		); err != nil {
 			return err
 		}
 		if err := migrateTradeJournalSchema(tx); err != nil {
@@ -67,10 +89,32 @@ func Migrate(database *gorm.DB) error {
 		if err := seedDefaultPreset(tx); err != nil {
 			return err
 		}
+		if err := seedDefaultScreenDefinition(tx); err != nil {
+			return err
+		}
 		return tx.Exec(`INSERT INTO app_schema_migrations (version)
 			VALUES ('2026-07-13-enterprise-baseline')
 			ON CONFLICT (version) DO NOTHING`).Error
 	})
+}
+
+func seedDefaultScreenDefinition(database *gorm.DB) error {
+	definitions := []models.ScreenDefinition{models.DefaultCANSLIMScreenDefinition()}
+	cn := models.DefaultCANSLIMScreenDefinition()
+	cn.Name, cn.AssetMarket, cn.StockPool = "CANSLIM A股基础模板", "CN", models.MarketSSEMain
+	definitions = append(definitions, cn)
+	for _, definition := range definitions {
+		var existing models.ScreenDefinition
+		if err := database.Where("is_system = ? AND name = ?", true, definition.Name).First(&existing).Error; err == nil {
+			continue
+		} else if !errors.Is(err, gorm.ErrRecordNotFound) {
+			return err
+		}
+		if err := database.Create(&definition).Error; err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func enforceBrokerExecutionUniqueness(database *gorm.DB) error {

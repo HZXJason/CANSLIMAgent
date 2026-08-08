@@ -39,7 +39,7 @@ function StatusBadge({ status }: { status: TradePlanStatus }) {
   return <span className={cn('inline-flex h-7 items-center rounded-full border px-2.5 text-xs font-bold', statusClass[status])}>{statusLabel[status]}</span>;
 }
 
-export default function TradePlanPanel({ symbol, aiSummary }: { symbol: string; aiSummary?: string }) {
+export default function TradePlanPanel({ symbol, aiSummary, userThesisId }: { symbol: string; aiSummary?: string; userThesisId?: string }) {
   const navigate = useNavigate();
   const visibleSymbol = displaySymbol(symbol);
   const plansQuery = useQuery({
@@ -50,7 +50,7 @@ export default function TradePlanPanel({ symbol, aiSummary }: { symbol: string; 
   const activePlans = (plansQuery.data ?? []).filter((plan) => plan.status === 'draft' || plan.status === 'waiting').slice(0, 3);
   const createPlan = () => {
     navigate('/trade-plans/new?symbol=' + encodeURIComponent(symbol), {
-      state: aiSummary ? { aiSummary } : undefined
+      state: aiSummary || userThesisId ? { aiSummary, userThesisId } : undefined
     });
   };
 

@@ -13,7 +13,7 @@ import type { JournalEntry, StoredJournalReflection } from '../../types/journal'
 
 function SideBadge({ side }: { side: JournalEntry['side'] }) {
   return (
-    <span className={cn('inline-flex h-8 items-center rounded-full border px-3 text-xs font-bold', side === 'buy' ? 'border-emerald-400 bg-emerald-400 text-slate-950' : 'border-red-400 bg-red-500 text-white')}>
+    <span className={cn('font-data inline-flex h-8 items-center rounded-sm border px-3 text-xs font-bold', side === 'buy' ? 'border-emerald-400 bg-emerald-400 text-emerald-950' : 'border-red-400 bg-red-500 text-white')}>
       {side === 'buy' ? '买入' : '卖出'}
     </span>
   );
@@ -22,7 +22,7 @@ function SideBadge({ side }: { side: JournalEntry['side'] }) {
 function ReflectionStatus({ entry }: { entry: JournalEntry }) {
   const reflected = Boolean(entry.reflection?.trim());
   return (
-    <span className={cn('inline-flex items-center gap-2 rounded-full border px-3 py-1 text-xs font-semibold', reflected ? 'border-brand-400/50 bg-brand-400/10 text-brand-200' : 'border-slate-700 bg-slate-950/30 text-slate-500')}>
+    <span className={cn('inline-flex items-center gap-2 rounded-sm border px-3 py-1 text-xs font-semibold', reflected ? 'border-brand-400/50 bg-brand-400/10 text-brand-200' : 'border-slate-700 bg-slate-950/30 text-slate-500')}>
       {reflected ? <CircleCheck className="h-3.5 w-3.5" /> : <Circle className="h-3.5 w-3.5" />}
       {reflected ? '已复盘' : '待复盘'}
     </span>
@@ -80,11 +80,9 @@ export default function JournalList() {
   const structuredEntries = entries.filter((entry) => entry.quantity > 0 && entry.price > 0);
 
   return (
-    <section className="mx-auto flex w-full max-w-[1180px] flex-col gap-6 px-4 py-6 sm:px-6 sm:py-8 lg:px-8 lg:py-10">
+    <section className="page-ledger mx-auto flex w-full max-w-[1240px] flex-col gap-6 px-4 py-6 sm:px-6 sm:py-8 lg:px-8 lg:py-10">
       <PageHeader
-        eyebrow="决策复盘"
         title="交易日志"
-        description="把成交、来源与复盘放在同一条记录链路中，持续校准自己的执行。"
         meta={query.isLoading ? '正在同步成交记录' : `${entries.length} 笔成交 · ${structuredEntries.length} 笔可纳入分析`}
         actions={
           <>

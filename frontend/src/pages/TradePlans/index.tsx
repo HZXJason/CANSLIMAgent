@@ -36,17 +36,17 @@ const statusClass: Record<TradePlanStatus, string> = {
 };
 
 const directionClass: Record<TradePlan['direction'], string> = {
-  buy: 'border-emerald-400/70 bg-emerald-400 text-slate-950',
+  buy: 'border-emerald-400/70 bg-emerald-400 text-emerald-950',
   sell: 'border-red-400/70 bg-red-500 text-white',
   watch: 'border-slate-600 bg-slate-800 text-slate-100'
 };
 
 function StatusBadge({ status }: { status: TradePlanStatus }) {
-  return <span className={cn('inline-flex h-7 items-center rounded-full border px-2.5 text-xs font-bold', statusClass[status])}>{statusLabel[status]}</span>;
+  return <span className={cn('font-data inline-flex h-7 items-center rounded-sm border px-2.5 text-xs font-bold', statusClass[status])}>{statusLabel[status]}</span>;
 }
 
 function DirectionBadge({ direction }: { direction: TradePlan['direction'] }) {
-  return <span className={cn('inline-flex h-7 items-center rounded-full border px-2.5 text-xs font-bold', directionClass[direction])}>{directionLabel[direction]}</span>;
+  return <span className={cn('font-data inline-flex h-7 items-center rounded-sm border px-2.5 text-xs font-bold', directionClass[direction])}>{directionLabel[direction]}</span>;
 }
 
 function formatMoney(value: number | null) {
@@ -81,11 +81,9 @@ export default function TradePlanList() {
   const plans = plansQuery.data ?? [];
 
   return (
-    <section className="mx-auto flex w-full max-w-[1120px] flex-col gap-6 px-4 py-6 sm:px-6 sm:py-8 lg:px-8 lg:py-10">
+    <section className="page-ledger mx-auto flex w-full max-w-[1180px] flex-col gap-6 px-4 py-6 sm:px-6 sm:py-8 lg:px-8 lg:py-10">
       <PageHeader
-        eyebrow="执行工作台"
         title="交易计划"
-        description="在入场前写清触发条件、仓位边界与退出方案，让每次执行都有依据。"
         meta={plansQuery.isLoading ? '正在同步计划' : `${plans.length} 个计划`}
         actions={
           <>
@@ -169,7 +167,7 @@ export default function TradePlanList() {
                 <span className="flex items-center gap-3 text-sm font-medium text-slate-300 md:block">
                   <span className="w-12 shrink-0 text-xs font-semibold text-slate-500 md:hidden">价格</span>
                   <span className="md:hidden">入场 {formatMoney(plan.entry_price)} / 止损 {formatMoney(plan.stop_loss)}</span>
-                  <span className="hidden md:inline">{formatMoney(plan.entry_price)} / {formatMoney(plan.stop_loss)}</span>
+                  <span className="font-data hidden md:inline">{formatMoney(plan.entry_price)} / {formatMoney(plan.stop_loss)}</span>
                 </span>
               </button>
             ))}

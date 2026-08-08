@@ -16,7 +16,7 @@ export function Badge({ className, variant = 'neutral', ...props }: BadgeProps) 
   return (
     <span
       className={cn(
-        'inline-flex h-7 min-w-7 items-center justify-center rounded-full border px-2 text-xs font-extrabold tabular-nums',
+        'font-data inline-flex h-7 min-w-7 items-center justify-center rounded-sm border px-2 text-xs font-extrabold tabular-nums',
         variantClass[variant],
         className
       )}

@@ -28,11 +28,15 @@ type TradePlan struct {
 	Status            string     `gorm:"type:text;not null;default:'draft';index:idx_trade_plans_ticker_status;check:status IN ('draft','waiting','executed','cancelled','expired')"`
 	PlanDate          time.Time  `gorm:"type:date;not null"`
 	ValidUntil        *time.Time `gorm:"type:date"`
+	UserThesisID      *uuid.UUID `gorm:"type:uuid;index"`
 	EntryTrigger      *string    `gorm:"type:text"`
 	EntryPrice        *float64   `gorm:"type:numeric(12,4)"`
 	StopLoss          *float64   `gorm:"type:numeric(12,4)"`
 	TakeProfit        *float64   `gorm:"type:numeric(12,4)"`
 	PositionSize      *float64   `gorm:"type:numeric(6,2)"`
+	Invalidation      *string    `gorm:"type:text"`
+	MaxRiskAmount     *float64   `gorm:"type:numeric(20,4)"`
+	MaxRiskPercent    *float64   `gorm:"type:numeric(8,4)"`
 	Rationale         *string    `gorm:"type:text"`
 	AISummary         *string    `gorm:"column:ai_summary;type:text"`
 	Notes             *string    `gorm:"type:text"`

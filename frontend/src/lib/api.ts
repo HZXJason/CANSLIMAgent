@@ -25,7 +25,7 @@ export const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? '/api/v1';
 
 const DEFAULT_REQUEST_TIMEOUT_MS = 30_000;
 
-async function request<T>(path: string, init?: RequestInit): Promise<T> {
+export async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const headers = new Headers(init?.headers);
   if (init?.body && !headers.has('Content-Type')) {
     headers.set('Content-Type', 'application/json');

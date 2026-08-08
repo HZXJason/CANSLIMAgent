@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState, type TextareaHTMLAttributes } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { ArrowLeft, LockKeyhole, Save, Trash2 } from 'lucide-react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { Link, useNavigate, useParams } from 'react-router-dom';
 import { PageHeader } from '../../components/PageHeader';
 import { Button } from '../../components/ui/button';
 import { Card } from '../../components/ui/card';
@@ -20,6 +20,8 @@ import type {
   TradeMarket,
   TradeSide
 } from '../../types/journal';
+import TradeReviewCard from './TradeReviewCard';
+import BehaviorObservationsCard from './BehaviorObservationsCard';
 
 interface EntryForm {
   datetime: string;
@@ -247,6 +249,11 @@ function DetailView({ entry }: { entry: JournalEntryType }) {
             <ReadOnlyValue label="来源" value={entry.source} />
           </div>
           {entry.notes ? <div className="mt-4"><ReadOnlyValue label="备注" value={entry.notes} /></div> : null}
+          {entry.trade_plan_id ? (
+            <Link className="mt-4 inline-flex text-sm font-bold text-brand-200 hover:text-brand-100" to={'/trade-plans/' + entry.trade_plan_id}>
+              查看原交易计划
+            </Link>
+          ) : null}
           {deleteMutation.isError ? <p className="mt-4 text-sm text-red-300">{deleteMutation.error instanceof Error ? deleteMutation.error.message : '删除失败'}</p> : null}
         </div>
         <div className="flex border-t border-slate-800 px-5 py-4 sm:justify-end sm:px-6">
@@ -263,6 +270,8 @@ function DetailView({ entry }: { entry: JournalEntryType }) {
           <Button className="w-full sm:w-auto" onClick={() => mutation.mutate({ reflection: reflection.trim() || null })} disabled={mutation.isPending}><Save className="h-4 w-4" />{mutation.isPending ? '保存中' : '保存复盘'}</Button>
         </div>
       </Card>
+      <TradeReviewCard journalId={entry.id} />
+      <BehaviorObservationsCard />
       <ConfirmDialog
         open={deleteConfirmOpen}
         title="删除成交记录"
@@ -287,11 +296,9 @@ export default function JournalEntry() {
   const { id } = useParams();
   const navigate = useNavigate();
   return (
-    <section className="mx-auto flex w-full max-w-[1040px] flex-col gap-6 px-4 py-6 sm:px-6 sm:py-8 lg:px-8 lg:py-10">
+    <section className="page-ledger mx-auto flex w-full max-w-[1040px] flex-col gap-6 px-4 py-6 sm:px-6 sm:py-8 lg:px-8 lg:py-10">
       <PageHeader
-        eyebrow="决策复盘"
         title={id ? '成交记录' : '新建成交记录'}
-        description={id ? '核对成交事实，并把复盘结论留在原始记录旁。' : '记录真实成交信息，为后续表现分析保留可靠输入。'}
         meta={id ? '成交信息只读 · 复盘内容可更新' : '成交数量与价格为必填项'}
         actions={
           <Button className="w-full sm:w-auto" variant="outline" onClick={() => navigate('/journal')}>

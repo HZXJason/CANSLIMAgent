@@ -1,10 +1,11 @@
-import { useEffect, useMemo, useRef } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { fetchCompanyProfile, fetchEPSQuarterly, fetchGrossMarginQuarterly, fetchKLine, fetchRevenueAnnual, fetchRS, fetchSecondLayerData, fetchStockSummary } from '../../lib/api';
 import { assetMarketForSymbol } from '../../lib/markets';
 import { createInitialAnalysisState, useAnalysisStore } from '../../stores/analysisStore';
 import type { ChartStatus } from '../../types/analysis';
 import AISection from './ai/AISection';
 import CompanyProfileCard from './CompanyProfileCard';
+import DecisionThesisPanel from './DecisionThesisPanel';
 import EPSChart from './charts/EPSChart';
 import GrossMarginChart from './charts/GrossMarginChart';
 import KLineChart from './charts/KLineChart';
@@ -12,6 +13,8 @@ import RSChart from './charts/RSChart';
 import RevenueChart from './charts/RevenueChart';
 import StockHeader from './StockHeader';
 import TradePlanPanel from './TradePlanPanel';
+import type { UserThesis } from '../../types/decisionSpine';
+import type { Market } from '../../types';
 
 interface AnalysisPageProps {
   symbol: string;
@@ -26,8 +29,10 @@ export default function AnalysisPage({ symbol, tabName }: AnalysisPageProps) {
 	const normalized = symbol.toUpperCase();
 	const assetMarket = assetMarketForSymbol(normalized) ?? 'US';
 	const profileRefreshRef = useRef(new Set<string>());
+  const [savedThesis, setSavedThesis] = useState<UserThesis | null>(null);
   const fallbackState = useMemo(() => createInitialAnalysisState(), [normalized]);
   const state = useAnalysisStore((store) => store.analysisStates[normalized]) ?? fallbackState;
+  const decisionMarket = (state.stockSummary?.market ?? (assetMarket === 'CN' ? 'SSE_MAIN' : 'NASDAQ100')) as Market;
   const setSummary = useAnalysisStore((store) => store.setSummary);
   const setKLinePeriod = useAnalysisStore((store) => store.setKLinePeriod);
   const updateState = useAnalysisStore((store) => store.updateState);
@@ -186,16 +191,16 @@ export default function AnalysisPage({ symbol, tabName }: AnalysisPageProps) {
   }, [normalized, updateChartStatus, updateState]);
 
   return (
-    <div className="min-w-0 space-y-3 sm:space-y-4">
+    <div className="min-w-0 space-y-5">
       <StockHeader symbol={normalized} tabName={tabName} summary={state.stockSummary} assetMarket={assetMarket} />
-      <section className="grid min-w-0 items-start gap-3 sm:gap-4 xl:grid-cols-[minmax(0,1.72fr)_minmax(320px,0.82fr)]" aria-label="价格与公司概览">
+      <section className="dossier-section grid min-w-0 items-start gap-3 sm:gap-4 xl:grid-cols-[minmax(0,1.72fr)_minmax(320px,0.82fr)]" aria-label="价格与公司概览">
         <KLineChart data={state.klineData} status={state.chartStatus.kline} period={state.klinePeriod} assetMarket={assetMarket} onPeriodChange={(period) => setKLinePeriod(normalized, period)} />
         <div className="grid min-w-0 gap-3 sm:gap-4 md:grid-cols-2 xl:grid-cols-1">
           <CompanyProfileCard data={state.companyProfile} status={state.chartStatus.profile} />
           <RSChart data={state.rsData} status={state.chartStatus.rs} period={state.klinePeriod} />
         </div>
       </section>
-      <section className="grid min-w-0 gap-3 sm:gap-4 md:grid-cols-2 xl:grid-cols-3" aria-label="基本面图表">
+      <section className="dossier-section grid min-w-0 gap-3 sm:gap-4 md:grid-cols-2 xl:grid-cols-3" aria-label="基本面图表">
         <EPSChart data={state.epsData} status={state.chartStatus.eps} />
         <RevenueChart data={state.revenueData} status={state.chartStatus.revenue} />
         <div className="md:col-span-2 xl:col-span-1">
@@ -203,7 +208,8 @@ export default function AnalysisPage({ symbol, tabName }: AnalysisPageProps) {
         </div>
       </section>
       <AISection symbol={normalized} state={state} />
-      <TradePlanPanel symbol={normalized} aiSummary={state.aiDecision?.summary ?? undefined} />
+      <DecisionThesisPanel symbol={normalized} market={decisionMarket} aiSummary={state.aiDecision?.summary ?? undefined} onSaved={setSavedThesis} />
+      <TradePlanPanel symbol={normalized} aiSummary={state.aiDecision?.summary ?? undefined} userThesisId={savedThesis?.id} />
     </div>
   );
 }

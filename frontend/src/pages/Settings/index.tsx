@@ -223,20 +223,18 @@ export default function SettingsPage() {
   };
 
   return (
-    <section className="mx-auto flex w-full max-w-[1040px] flex-col gap-6 px-4 py-6 sm:px-6 sm:py-8 lg:px-8 lg:py-10">
+    <section className="page-ledger mx-auto flex w-full max-w-[1100px] flex-col gap-6 px-4 py-6 sm:px-6 sm:py-8 lg:px-8 lg:py-10">
       <PageHeader
-        eyebrow="工作区"
         title="设置"
-        description="配置模型、联网能力与券商连接。API Key 仅由后端加密保存。"
         meta="模型偏好保存在当前浏览器 · 密钥由服务端托管"
       />
 
       <Card className="overflow-hidden p-0">
         <div className="flex items-center gap-3 border-b border-slate-800 px-5 py-4 sm:px-6">
-          <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-brand-400/10 text-brand-300">
+          <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-sm border border-brand-400/20 bg-brand-400/10 text-brand-300">
             <SlidersHorizontal className="h-5 w-5" />
           </div>
-          <h2 className="text-lg font-bold text-white">AI 分析</h2>
+          <h2 className="font-display text-xl font-bold text-ink">AI 分析配置</h2>
         </div>
 
         <div className="space-y-6 p-5 sm:p-6">
@@ -267,7 +265,7 @@ export default function SettingsPage() {
             ) : null}
           </div>
 
-          <div className="rounded-2xl border border-slate-800 bg-slate-950/25 p-4">
+          <div className="rounded-sm border border-rule bg-slate-950/25 p-4">
             <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
               <div className="flex min-w-0 items-center gap-3">
                 <h3 className="font-bold text-slate-100">API Key</h3>
@@ -368,7 +366,7 @@ export default function SettingsPage() {
             {modelError ? <p className="mt-3 text-sm text-amber-300">{modelError}</p> : null}
           </div>
 
-          <label className="flex cursor-pointer items-center gap-3 rounded-2xl border border-slate-800 bg-slate-950/25 px-4 py-3 transition hover:border-brand-400/40">
+          <label className="flex cursor-pointer items-center gap-3 rounded-sm border border-rule bg-slate-950/25 px-4 py-3 transition hover:border-brand-400/40">
             <Checkbox
               checked={config.online_tools}
               onCheckedChange={(checked) => setConfig((current) => ({ ...current, online_tools: checked }))}
