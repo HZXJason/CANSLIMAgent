@@ -81,6 +81,10 @@ describe('SettingsPage LLM credentials', () => {
   it('changes the shared investor market preference', () => {
     render(<SettingsPage />);
 
+    expect(screen.queryByText('市场与模型偏好保存在当前浏览器 · 密钥由服务端托管')).not.toBeInTheDocument();
+    expect(screen.queryByText('控制“今日”、发现和个股分析的数据范围。')).not.toBeInTheDocument();
+    expect(screen.queryByText('切换后，全局页面会立即使用对应市场；两个市场的数据不会混合。')).not.toBeInTheDocument();
+
     fireEvent.change(screen.getByLabelText('主要投资市场'), { target: { value: 'CN' } });
 
     expect(useMarketStore.getState()).toMatchObject({ assetMarket: 'CN', hasSelectedMarket: true });

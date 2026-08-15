@@ -24,6 +24,13 @@ const customPreset: ThresholdPreset = {
   ...thresholds
 };
 
+const defaultPreset: ThresholdPreset = {
+  ...customPreset,
+  id: 1,
+  name: '欧奈尔默认',
+  is_default: true
+};
+
 function renderPanel(overrides: Partial<ComponentProps<typeof ThresholdPanel>> = {}) {
   const props: ComponentProps<typeof ThresholdPanel> = {
     open: false,
@@ -45,7 +52,7 @@ describe('Screener ThresholdPanel', () => {
   afterEach(() => cleanup());
 
   it('saves a named preset through the inline editor', async () => {
-    const props = renderPanel();
+    const props = renderPanel({ open: true });
 
     fireEvent.click(screen.getByRole('button', { name: '保存方案' }));
     fireEvent.change(screen.getByRole('textbox', { name: '方案名称' }), { target: { value: '动量方案' } });
@@ -53,6 +60,19 @@ describe('Screener ThresholdPanel', () => {
 
     await waitFor(() => expect(props.onSavePreset).toHaveBeenCalledWith('动量方案'));
     await waitFor(() => expect(screen.queryByRole('textbox', { name: '方案名称' })).not.toBeInTheDocument());
+  });
+
+  it('keeps the save action inside the expanded parameter settings', () => {
+    renderPanel({ open: false });
+
+    expect(screen.queryByRole('button', { name: '保存方案' })).not.toBeInTheDocument();
+  });
+
+  it("shows the default preset as O'Neil", () => {
+    renderPanel({ presets: [defaultPreset], activePresetId: defaultPreset.id });
+
+    expect(screen.getByRole('option', { name: "O'Neil" })).toBeInTheDocument();
+    expect(screen.queryByRole('option', { name: '欧奈尔默认' })).not.toBeInTheDocument();
   });
 
   it('requires an inline confirmation before deleting a preset', async () => {

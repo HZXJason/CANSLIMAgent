@@ -93,6 +93,9 @@ describe('AppShell market theme', () => {
   it('uses concise navigation without decorative English labels or slogans', () => {
     renderShell();
 
+    const mobileHeader = screen.getByRole('banner');
+    expect(within(mobileHeader).getByText('AlphaLens')).toBeInTheDocument();
+    expect(within(mobileHeader).queryByText('发现')).not.toBeInTheDocument();
     expect(screen.queryByText('DISCOVERY')).not.toBeInTheDocument();
     expect(screen.queryByText('研究先于决策')).not.toBeInTheDocument();
     expect(screen.queryByText('风险始终可见')).not.toBeInTheDocument();

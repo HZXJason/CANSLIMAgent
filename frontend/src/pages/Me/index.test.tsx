@@ -28,8 +28,12 @@ describe('MePage', () => {
 
   it('shows a focused overview and reveals each workspace on demand', async () => {
     render(<MemoryRouter><QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}><MePage /></QueryClientProvider></MemoryRouter>);
-    expect(await screen.findByRole('heading', { name: '当前状态' })).toBeInTheDocument();
-    expect(screen.getByRole('link', { name: '设置' })).toHaveAttribute('href', '/settings');
+    const currentStatusHeading = await screen.findByRole('heading', { name: '当前状态' });
+    expect(currentStatusHeading).toBeInTheDocument();
+    const settingsLink = screen.getByRole('link', { name: '设置' });
+    expect(settingsLink).toHaveAttribute('href', '/settings');
+    expect(currentStatusHeading.compareDocumentPosition(settingsLink) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(screen.queryByText(/数据截至/)).not.toBeInTheDocument();
     expect(screen.getByRole('heading', { name: '执行趋势' })).toBeInTheDocument();
     expect(screen.queryByRole('heading', { name: '交易规则' })).not.toBeInTheDocument();
     expect(profileApi.fetchPrinciples).not.toHaveBeenCalled();

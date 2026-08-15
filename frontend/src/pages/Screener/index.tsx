@@ -391,7 +391,7 @@ export default function ScreenerPage() {
 
   const handleDeletePreset = async (preset: ThresholdPreset) => {
     if (preset.is_default) {
-      setErrorMessage('欧奈尔默认方案不可删除');
+      setErrorMessage("O'Neil 方案不可删除");
       return false;
     }
     try {

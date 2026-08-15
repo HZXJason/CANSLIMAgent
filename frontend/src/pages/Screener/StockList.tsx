@@ -6,15 +6,23 @@ import { Button } from '../../components/ui/button';
 import { Card } from '../../components/ui/card';
 import { Tooltip } from '../../components/ui/tooltip';
 import { SCORE_LABEL_KEYS, SCREENER_FILTER_KEYS, labelStatusText } from '../../lib/computeLabels';
-import { assetMarketForScreenerMarket, displaySymbol, normalizeSymbolForAsset, screenerMarketLabel } from '../../lib/markets';
+import { assetMarketForScreenerMarket, displaySymbol, normalizeSymbolForAsset } from '../../lib/markets';
 import { hasGeneratedAIAnalysis, useAnalysisStore } from '../../stores/analysisStore';
 import { useTabStore } from '../../stores/tabStore';
-import type { ComputedStock, LabelResult, ScreenerFilterKey } from '../../types';
+import type { ComputedStock, LabelKey, LabelResult, ScreenerFilterKey } from '../../types';
 
 const tagOrder: ScreenerFilterKey[] = SCREENER_FILTER_KEYS;
 const scoreDenominator = SCORE_LABEL_KEYS.length;
 const INITIAL_VISIBLE_STOCKS = 160;
 const VISIBLE_STOCK_INCREMENT = 160;
+
+const labelMetricNames: Record<LabelKey, string> = {
+  C: 'EPS（当季增长）',
+  A: 'EPS（年度增长）',
+  S: '成交量比率',
+  L: 'RS',
+  I: '机构持仓变化'
+};
 
 interface StockListProps {
   stocks: ComputedStock[];
@@ -23,23 +31,26 @@ interface StockListProps {
   unknownRuleLabels?: string[];
 }
 
-function formatValue(label: LabelResult) {
+function formatLabelTooltip(label: LabelResult) {
+  const metricName = labelMetricNames[label.key];
+  if (!label.sufficient) return metricName + '：暂无数据';
   if (Array.isArray(label.value)) {
-    return label.value.map((value) => value.toFixed(1) + '%').join(' / ');
+    return metricName + '：' + label.value.map((value) => value.toFixed(1) + '%').join(' / ');
   }
-  return String(label.value);
+  const suffix = label.key === 'C' || label.key === 'S' ? '%' : '';
+  return metricName + '：' + String(label.value) + suffix;
 }
 
 function LabelBadge({ label }: { label: LabelResult }) {
   if (label.status === 'insufficient') {
     return (
-      <Tooltip content="数据不足，谨慎参考，基准期以 0 计算">
+      <Tooltip content={formatLabelTooltip(label)} singleLine>
         <Badge variant="insufficient" aria-label={`${label.key} 数据不足`}>?</Badge>
       </Tooltip>
     );
   }
   return (
-    <Tooltip content={label.key + '：' + labelStatusText(label.status) + '，原始值 ' + formatValue(label)}>
+    <Tooltip content={formatLabelTooltip(label)} singleLine>
       <Badge variant={label.status === 'pass' ? 'pass' : 'fail'} aria-label={`${label.key} ${labelStatusText(label.status)}`}>{label.key}</Badge>
     </Tooltip>
   );
@@ -48,14 +59,14 @@ function LabelBadge({ label }: { label: LabelResult }) {
 function NLabelBadge({ written }: { written: boolean | null }) {
   if (!written) {
     return (
-      <Tooltip content="N：AI 分析尚未写回 New 标签">
+      <Tooltip content="New 标签" singleLine>
         <Badge variant="neutral" aria-label="N 尚未由 AI 写回">N</Badge>
       </Tooltip>
     );
   }
 
   return (
-    <Tooltip content="N：AI 分析已写回的 New 标签">
+    <Tooltip content="New 标签" singleLine>
       <Badge variant="pass" aria-label="N 已由 AI 写回">
         <span className="inline-flex items-center gap-1">
           <BadgeCheck className="h-3 w-3" />
@@ -117,18 +128,17 @@ const StockRow = memo(function StockRow({ stock, hasAIAnalysis, onOpen, unknownR
   return (
     <button
       type="button"
-      className="group grid w-full grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 gap-y-2.5 px-4 py-4 text-left transition-[background-color,box-shadow] duration-150 ease-out hover:bg-slate-800/55 active:bg-slate-800/75 sm:px-5 md:grid-cols-[0.9fr_1.4fr_2fr_0.9fr_0.7fr] md:gap-4"
+      className="group grid w-full grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 gap-y-2.5 px-4 py-4 text-left transition-[background-color,box-shadow] duration-150 ease-out hover:bg-slate-800/55 active:bg-slate-800/75 sm:px-5 md:grid-cols-[minmax(6.5rem,1fr)_minmax(0,1.25fr)_minmax(0,3.4fr)_minmax(5rem,0.65fr)] md:gap-4"
       onClick={() => onOpen(stock)}
       aria-label={`打开 ${displaySymbol(stock.symbol)} ${stock.name}，${rowSummary}`}
     >
       <span className="flex min-w-0 items-center gap-2 font-semibold text-white">
         <BarChart3 className="h-4 w-4 text-brand-300/70" />
-        <span className="truncate">{displaySymbol(stock.symbol)}</span>
+        <span className="whitespace-nowrap">{displaySymbol(stock.symbol)}</span>
         {hasAIAnalysis ? <AIAnalysisBadge /> : null}
       </span>
       <span className="col-span-2 row-start-2 flex min-w-0 items-center gap-2 truncate text-sm text-slate-400 md:col-span-1 md:row-auto md:block md:text-base md:text-slate-300">
         <span className="truncate">{stock.name}</span>
-        <span className="shrink-0 text-slate-600 md:hidden">· {screenerMarketLabel(stock.market, true)}</span>
       </span>
       <span className="col-span-2 row-start-3 flex flex-wrap gap-1.5 md:col-span-1 md:row-auto md:gap-2">
         {tagOrder.map((tag) => (
@@ -136,7 +146,6 @@ const StockRow = memo(function StockRow({ stock, hasAIAnalysis, onOpen, unknownR
         ))}
         {unknownRuleLabels.map((label) => <Badge variant="insufficient" aria-label={`${label} 数据未知`} key={label}>{label} ?</Badge>)}
       </span>
-      <span className="hidden text-sm text-slate-400 md:block">{screenerMarketLabel(stock.market, true)}</span>
       <span className="col-start-2 row-start-1 inline-flex items-center justify-end gap-1.5 text-right text-sm font-bold tabular-nums text-slate-200 md:col-auto md:row-auto">
         <span>{stock.passCount}/{scoreDenominator} · {stock.weightSum}</span>
         <ChevronRight className="h-4 w-4 text-slate-600 transition-transform duration-150 group-hover:translate-x-0.5 group-hover:text-slate-400 md:hidden" />
@@ -186,11 +195,10 @@ export default function StockList({ stocks, hasRawData, filtered, unknownRuleLab
         <h2 className="text-base font-bold text-white">候选股票</h2>
         <span className="rounded-full border border-slate-800 bg-slate-950/35 px-3 py-1.5 text-sm font-bold tabular-nums text-slate-300">{visibleStocks.length} / {stocks.length}</span>
       </div>
-      <div className="hidden grid-cols-[0.9fr_1.4fr_2fr_0.9fr_0.7fr] gap-4 border-b border-slate-800 px-5 py-2.5 text-xs font-semibold text-slate-500 md:grid">
+      <div className="hidden grid-cols-[minmax(6.5rem,1fr)_minmax(0,1.25fr)_minmax(0,3.4fr)_minmax(5rem,0.65fr)] gap-4 border-b border-slate-800 px-5 py-2.5 text-xs font-semibold text-slate-500 md:grid">
         <span>代码</span>
         <span>名称</span>
         <span>标签</span>
-        <span>市场</span>
         <span className="text-right">得分</span>
       </div>
       <div className="divide-y divide-slate-900">

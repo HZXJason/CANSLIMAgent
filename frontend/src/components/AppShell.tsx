@@ -1,6 +1,6 @@
 import { Suspense, useLayoutEffect } from 'react';
 import { BarChart3, BookOpenCheck, CalendarDays, ClipboardList, Filter, UserRound } from 'lucide-react';
-import { NavLink, Outlet, useLocation } from 'react-router-dom';
+import { NavLink, Outlet } from 'react-router-dom';
 import { cn } from '../lib/utils';
 import { useMarketStore } from '../stores/marketStore';
 import { MarketOnboarding } from './MarketOnboarding';
@@ -79,10 +79,8 @@ function MobileNavItem({ to, label, icon: Icon }: { to: string; label: string; i
 }
 
 export default function AppShell() {
-  const location = useLocation();
   const assetMarket = useMarketStore((state) => state.assetMarket);
   const hasSelectedMarket = useMarketStore((state) => state.hasSelectedMarket);
-  const currentItem = [...topItems, ...bottomItems].find((item) => location.pathname.startsWith(item.to)) ?? topItems[0];
 
   useLayoutEffect(() => {
     document.documentElement.dataset.market = assetMarket;
@@ -140,7 +138,6 @@ export default function AppShell() {
           <div className="flex min-w-0 items-center gap-2.5">
             <NavLink to="/today" className="interactive-press flex min-w-0 items-center gap-2.5 rounded-sm" aria-label="AlphaLens 首页">
               <span className="font-display text-lg leading-none text-white">AlphaLens</span>
-              <span className="hidden min-w-0 text-xs text-slate-500 sm:block">{currentItem.label}</span>
             </NavLink>
           </div>
           <NavLink

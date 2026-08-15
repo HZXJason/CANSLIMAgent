@@ -18,7 +18,8 @@ const fields: Array<{ key: ThresholdKey; label: string; suffix: string; min: num
   { key: 'l_min_rs', label: 'L · RS 评级 ≥', suffix: '', min: 50, max: 99, step: 1 }
 ];
 
-const displayPresetName = (name: string) => name.replace(/奥尼尔/g, '欧奈尔');
+const displayPresetName = (name: string) =>
+  name === '奥尼尔默认' || name === '欧奈尔默认' ? "O'Neil" : name;
 
 interface ThresholdPanelProps {
   open: boolean;
@@ -112,18 +113,6 @@ export default function ThresholdPanel({
               ))}
             </Select>
           </div>
-          <Button
-            type="button"
-            variant="secondary"
-            className="px-3"
-            onClick={() => {
-              setEditorMode('save');
-              setPresetName('');
-            }}
-          >
-            <Save className="h-4 w-4" />
-            保存方案
-          </Button>
           {activePreset && !activePreset.is_default ? (
             <Button
               type="button"
@@ -137,28 +126,6 @@ export default function ThresholdPanel({
           ) : null}
         </div>
       </div>
-
-      {editorMode === 'save' ? (
-        <form className="flex flex-col gap-3 border-t border-slate-800/80 bg-slate-950/20 px-4 py-4 sm:flex-row sm:items-center sm:px-5" onSubmit={handleSave}>
-          <Input
-            autoFocus
-            className="max-w-sm"
-            value={presetName}
-            maxLength={50}
-            placeholder="方案名称"
-            aria-label="方案名称"
-            onChange={(event) => setPresetName(event.target.value)}
-          />
-          <div className="flex items-center gap-2">
-            <Button type="submit" disabled={!presetName.trim() || isSubmitting}>
-              {isSubmitting ? '保存中' : '保存'}
-            </Button>
-            <Button type="button" variant="ghost" onClick={closeEditor} disabled={isSubmitting}>
-              取消
-            </Button>
-          </div>
-        </form>
-      ) : null}
 
       {editorMode === 'delete' && activePreset && !activePreset.is_default ? (
         <div className="flex flex-col gap-3 border-t border-red-900/60 bg-red-950/20 px-4 py-3 sm:flex-row sm:items-center sm:justify-between sm:px-5">
@@ -175,29 +142,68 @@ export default function ThresholdPanel({
       ) : null}
 
       {open ? (
-        <div id="screener-threshold-fields" className="grid gap-4 border-t border-slate-800/80 bg-slate-950/20 p-4 sm:grid-cols-2 sm:p-5 lg:grid-cols-3 2xl:grid-cols-6">
-          {fields.map((field) => {
-            const value = thresholds[field.key];
-            const invalid = value < field.min || value > field.max;
-            return (
-              <label key={field.key} className="min-w-0 space-y-2">
-                <span className="block text-sm font-medium leading-5 text-slate-300">{field.label}</span>
-                <div className="flex items-center gap-2">
-                  <Input
-                    invalid={invalid}
-                    type="number"
-                    min={field.min}
-                    max={field.max}
-                    step={field.step}
-                    value={value}
-                    onChange={(event) => onChange({ [field.key]: Number(event.target.value) } as Partial<ThresholdConfig>)}
-                  />
-                  {field.suffix ? <span className="shrink-0 text-sm text-slate-400">{field.suffix}</span> : null}
-                </div>
-                {invalid ? <span className="block text-xs text-red-300">可用范围 {field.min}–{field.max}</span> : null}
-              </label>
-            );
-          })}
+        <div id="screener-threshold-fields" className="border-t border-slate-800/80 bg-slate-950/20">
+          <div className="flex justify-end px-4 pt-4 sm:px-5 sm:pt-5">
+            <Button
+              type="button"
+              variant="secondary"
+              className="px-3"
+              onClick={() => {
+                setEditorMode('save');
+                setPresetName('');
+              }}
+            >
+              <Save className="h-4 w-4" />
+              保存方案
+            </Button>
+          </div>
+
+          {editorMode === 'save' ? (
+            <form className="flex flex-col gap-3 px-4 pt-4 sm:flex-row sm:items-center sm:px-5" onSubmit={handleSave}>
+              <Input
+                autoFocus
+                className="max-w-sm"
+                value={presetName}
+                maxLength={50}
+                placeholder="方案名称"
+                aria-label="方案名称"
+                onChange={(event) => setPresetName(event.target.value)}
+              />
+              <div className="flex items-center gap-2">
+                <Button type="submit" disabled={!presetName.trim() || isSubmitting}>
+                  {isSubmitting ? '保存中' : '保存'}
+                </Button>
+                <Button type="button" variant="ghost" onClick={closeEditor} disabled={isSubmitting}>
+                  取消
+                </Button>
+              </div>
+            </form>
+          ) : null}
+
+          <div className="grid gap-4 p-4 sm:grid-cols-2 sm:p-5 lg:grid-cols-3 2xl:grid-cols-6">
+            {fields.map((field) => {
+              const value = thresholds[field.key];
+              const invalid = value < field.min || value > field.max;
+              return (
+                <label key={field.key} className="min-w-0 space-y-2">
+                  <span className="block text-sm font-medium leading-5 text-slate-300">{field.label}</span>
+                  <div className="flex items-center gap-2">
+                    <Input
+                      invalid={invalid}
+                      type="number"
+                      min={field.min}
+                      max={field.max}
+                      step={field.step}
+                      value={value}
+                      onChange={(event) => onChange({ [field.key]: Number(event.target.value) } as Partial<ThresholdConfig>)}
+                    />
+                    {field.suffix ? <span className="shrink-0 text-sm text-slate-400">{field.suffix}</span> : null}
+                  </div>
+                  {invalid ? <span className="block text-xs text-red-300">可用范围 {field.min}–{field.max}</span> : null}
+                </label>
+              );
+            })}
+          </div>
         </div>
       ) : null}
     </Card>

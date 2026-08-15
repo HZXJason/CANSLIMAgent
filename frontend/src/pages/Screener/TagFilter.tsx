@@ -26,7 +26,7 @@ export default function TagFilter({ activeTags, onToggle, onClear }: TagFilterPr
       <span className="min-w-0 text-sm font-bold text-slate-100 sm:mr-2">标签筛选</span>
       <div className="flex flex-wrap items-center gap-2">
         {tags.map((tag) => (
-          <Tooltip key={tag} content={tagTooltips[tag]}>
+          <Tooltip key={tag} content={tagTooltips[tag]} singleLine>
             <button
               type="button"
               className={cn(

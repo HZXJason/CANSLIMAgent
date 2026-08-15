@@ -229,10 +229,7 @@ export default function SettingsPage() {
 
   return (
     <section className="page-ledger mx-auto flex w-full max-w-[1100px] flex-col gap-6 px-4 py-6 sm:px-6 sm:py-8 lg:px-8 lg:py-10">
-      <PageHeader
-        title="设置"
-        meta="市场与模型偏好保存在当前浏览器 · 密钥由服务端托管"
-      />
+      <PageHeader title="设置" />
 
       <Card className="overflow-hidden p-0">
         <div className="flex items-center gap-3 border-b border-slate-800 px-5 py-4 sm:px-6">
@@ -241,7 +238,6 @@ export default function SettingsPage() {
           </div>
           <div>
             <h2 className="font-display text-xl font-bold text-ink">市场偏好</h2>
-            <p className="mt-1 text-xs leading-5 text-slate-500">控制“今日”、发现和个股分析的数据范围。</p>
           </div>
         </div>
         <div className="p-5 sm:p-6">
@@ -250,7 +246,6 @@ export default function SettingsPage() {
             <Select id="settings-asset-market" value={assetMarket} onValueChange={(value) => setAssetMarket(value as AssetMarket)}>
               {ASSET_MARKET_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
             </Select>
-            <p className="text-xs leading-5 text-slate-500">切换后，全局页面会立即使用对应市场；两个市场的数据不会混合。</p>
           </div>
         </div>
       </Card>

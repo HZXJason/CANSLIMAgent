@@ -31,7 +31,6 @@ function EventRow({ event }: { event: WeekCalendarEvent }) {
           {event.importance === 'high' ? <span className="text-[11px] font-bold text-amber-200">高影响</span> : null}
         </div>
         <p className="mt-1.5 text-sm font-bold text-white sm:text-base">{event.title}</p>
-        <p className="mt-1 text-xs leading-5 text-slate-500">{event.subtitle} · {event.source}</p>
       </div>
     </div>
     {event.href ? <ArrowUpRight className="h-4 w-4 shrink-0 text-slate-600 transition group-hover:text-slate-200" aria-hidden="true" /> : null}
@@ -52,23 +51,11 @@ export function WeeklyCalendar({ calendar, localDate }: { calendar: WeekCalendar
   const selectedEvents = calendar.events.filter(event => event.date === selectedDate);
   const selectedDay = days.find(day => day.date === selectedDate) ?? days[0];
   const eventKinds = (date: string) => Array.from(new Set(calendar.events.filter(event => event.date === date).map(event => event.kind))).slice(0, 4);
-  const statusMessage = calendar.status === 'partial'
-    ? '部分外部日历读取失败，已显示其余可用事件。'
-    : calendar.status === 'local_only'
-      ? '外部事件日历当前不可用，当前仅显示本地交易计划。'
-      : null;
 
   return <section aria-labelledby="week-calendar-title" className="mt-8">
-    <div className="flex flex-col gap-3 border-b border-rule-strong pb-4 sm:flex-row sm:items-end sm:justify-between">
-      <div>
-        <h2 id="week-calendar-title" className="font-display text-xl font-bold text-white sm:text-2xl">本周大事</h2>
-        <p className="mt-1.5 text-xs text-slate-500">{monthDay(calendar.week_start)}—{monthDay(calendar.week_end)} · 只显示当前市场与研究范围内的事件</p>
-      </div>
-      {calendar.sources.length ? <div className="flex flex-wrap gap-x-3 gap-y-1">
-        {calendar.sources.map(source => <a key={source.name} href={source.url} target="_blank" rel="noreferrer" className="w-fit text-xs font-bold text-slate-400 underline decoration-slate-700 underline-offset-4 transition hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-300/70">
-          {source.name}
-        </a>)}
-      </div> : null}
+    <div className="border-b border-rule-strong pb-4">
+      <h2 id="week-calendar-title" className="font-display text-xl font-bold text-white sm:text-2xl">本周大事</h2>
+      <p className="mt-1.5 text-xs text-slate-500">{`${monthDay(calendar.week_start)}—${monthDay(calendar.week_end)}`}</p>
     </div>
 
     <div className="grid grid-cols-5 border-b border-rule" role="tablist" aria-label="本周交易日">
@@ -99,11 +86,9 @@ export function WeeklyCalendar({ calendar, localDate }: { calendar: WeekCalendar
       {(Object.keys(kindLabels) as WeekCalendarEventKind[]).map(kind => <span key={kind} className="flex items-center gap-2"><span className={cn('h-2 w-2 rounded-full', kindDots[kind])} aria-hidden="true" />{kindLabels[kind]}</span>)}
     </div>
 
-    {statusMessage ? <div className="border-b border-rule py-3 text-xs leading-5 text-amber-200">{statusMessage}</div> : null}
     <div aria-live="polite">
-      <div className="flex items-center justify-between gap-4 py-4">
+      <div className="py-4">
         <p className="text-sm font-bold text-white">{selectedDay.label} · {monthDay(selectedDate)}</p>
-        <p className="font-data text-xs text-slate-500">{selectedEvents.length} EVENTS</p>
       </div>
       {selectedEvents.length
         ? <div className="divide-y divide-rule border-y border-rule">{selectedEvents.map(event => <EventRow key={event.id} event={event} />)}</div>
