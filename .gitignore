@@ -11,6 +11,7 @@ sidecar/data/
 
 # Local AI workflow artifacts
 .claude/
+.impeccable/
 .superpowers/
 AGENT.md
 docs/superpowers/
