@@ -1,18 +1,30 @@
 package handlers
 
 import (
+	"context"
+	"log"
 	"net/http"
+	"sort"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/alphalens/canslimagent/backend/internal/models"
+	"github.com/alphalens/canslimagent/backend/internal/services"
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 )
 
 type TodayHandler struct {
-	db  *gorm.DB
-	now func() time.Time
+	db              *gorm.DB
+	calendar        todayCalendarProvider
+	calendarTimeout time.Duration
+	now             func() time.Time
+}
+
+type todayCalendarProvider interface {
+	Configured() bool
+	FetchWeekEvents(context.Context, string, time.Time, time.Time, []string) (services.CalendarFetchResult, error)
 }
 
 type todayItem struct {
@@ -25,17 +37,44 @@ type todayItem struct {
 }
 
 type todayResponse struct {
-	Market         string      `json:"market"`
-	Timezone       string      `json:"timezone"`
-	LocalDate      string      `json:"local_date"`
-	Session        string      `json:"session"`
-	CalendarStatus string      `json:"calendar_status"`
-	DataAsOf       *time.Time  `json:"data_as_of"`
-	Items          []todayItem `json:"items"`
+	Market         string            `json:"market"`
+	Timezone       string            `json:"timezone"`
+	LocalDate      string            `json:"local_date"`
+	Session        string            `json:"session"`
+	CalendarStatus string            `json:"calendar_status"`
+	DataAsOf       *time.Time        `json:"data_as_of"`
+	WeekCalendar   todayWeekCalendar `json:"week_calendar"`
+	Items          []todayItem       `json:"items"`
+}
+
+type todayCalendarEvent struct {
+	ID         string  `json:"id"`
+	Date       string  `json:"date"`
+	Time       *string `json:"time"`
+	Kind       string  `json:"kind"`
+	Title      string  `json:"title"`
+	Subtitle   string  `json:"subtitle"`
+	Symbol     *string `json:"symbol"`
+	Importance string  `json:"importance"`
+	Source     string  `json:"source"`
+	Href       *string `json:"href"`
+}
+
+type todayWeekCalendar struct {
+	WeekStart string                    `json:"week_start"`
+	WeekEnd   string                    `json:"week_end"`
+	Status    string                    `json:"status"`
+	Sources   []services.CalendarSource `json:"sources"`
+	FetchedAt *time.Time                `json:"fetched_at"`
+	Events    []todayCalendarEvent      `json:"events"`
 }
 
 func NewTodayHandler(database *gorm.DB) *TodayHandler {
-	return &TodayHandler{db: database, now: time.Now}
+	return NewTodayHandlerWithCalendarProvider(database, nil)
+}
+
+func NewTodayHandlerWithCalendarProvider(database *gorm.DB, provider todayCalendarProvider) *TodayHandler {
+	return &TodayHandler{db: database, calendar: provider, calendarTimeout: 6 * time.Second, now: time.Now}
 }
 
 func (h *TodayHandler) Get(c *gin.Context) {
@@ -49,11 +88,28 @@ func (h *TodayHandler) Get(c *gin.Context) {
 	}
 	location, _ := time.LoadLocation(zone)
 	now := h.now().In(location)
-	response := todayResponse{Market: market, Timezone: zone, LocalDate: now.Format("2006-01-02"), Session: marketSession(market, now), CalendarStatus: "weekday_only_unverified", Items: []todayItem{}}
+	weekStart, weekEnd := currentWorkWeek(now)
+	response := todayResponse{
+		Market: market, Timezone: zone, LocalDate: now.Format("2006-01-02"), Session: marketSession(market, now), CalendarStatus: "weekday_only_unverified", Items: []todayItem{},
+		WeekCalendar: todayWeekCalendar{WeekStart: weekStart.Format("2006-01-02"), WeekEnd: weekEnd.Format("2006-01-02"), Status: "local_only", Sources: []services.CalendarSource{}, Events: []todayCalendarEvent{}},
+	}
+	relevantSymbols := map[string]struct{}{}
 
 	stockMarkets := []string{models.MarketSP500, models.MarketNASDAQ100, models.MarketRUSSELL2000}
 	if market == "CN" {
 		stockMarkets = []string{models.MarketSSEMain, models.MarketSZSEMain, models.MarketSTAR, models.MarketChiNext, models.MarketBSE}
+	}
+	var analyzedSymbols []string
+	if err := h.db.WithContext(c).
+		Model(&models.Stock{}).
+		Joins("JOIN stock_metrics ON stock_metrics.stock_id = stocks.id").
+		Where("stocks.market IN ? AND stock_metrics.ai_analysis_at IS NOT NULL", stockMarkets).
+		Order("stock_metrics.ai_analysis_at DESC").
+		Pluck("stocks.symbol", &analyzedSymbols).Error; err != nil {
+		log.Printf("已分析标的读取失败（market=%s）：%v", market, err)
+	}
+	for _, symbol := range analyzedSymbols {
+		relevantSymbols[strings.ToUpper(strings.TrimSpace(symbol))] = struct{}{}
 	}
 	var metric models.StockMetric
 	if err := h.db.WithContext(c).Joins("JOIN stocks ON stocks.id = stock_metrics.stock_id").Where("stocks.market IN ?", stockMarkets).Order("stock_metrics.data_as_of desc").First(&metric).Error; err == nil {
@@ -75,6 +131,12 @@ func (h *TodayHandler) Get(c *gin.Context) {
 			kind, priority = "unreviewed_plan", todayPriority(response.Session, "unreviewed_plan")
 		}
 		response.Items = append(response.Items, todayItem{ID: plan.ID.String(), Kind: kind, Title: plan.Ticker + " 交易计划", Subtitle: plan.Status, Href: "/trade-plans/" + plan.ID.String(), Priority: priority})
+		relevantSymbols[strings.ToUpper(strings.TrimSpace(plan.Ticker))] = struct{}{}
+		if plan.ValidUntil != nil && dateWithinWorkWeek(*plan.ValidUntil, weekStart, weekEnd) {
+			symbol := strings.ToUpper(strings.TrimSpace(plan.Ticker))
+			href := "/trade-plans/" + plan.ID.String()
+			response.WeekCalendar.Events = append(response.WeekCalendar.Events, todayCalendarEvent{ID: "plan-" + plan.ID.String(), Date: plan.ValidUntil.Format("2006-01-02"), Kind: "plan_deadline", Title: symbol + " 计划到期", Subtitle: "到期前重新核查交易条件", Symbol: &symbol, Importance: "medium", Source: "AlphaLens", Href: &href})
+		}
 	}
 	var entries []models.TradeJournalEntry
 	if err := h.db.WithContext(c).Order("executed_at desc").Limit(40).Find(&entries).Error; err != nil {
@@ -90,6 +152,7 @@ func (h *TodayHandler) Get(c *gin.Context) {
 		if completed > 0 {
 			continue
 		}
+		relevantSymbols[strings.ToUpper(strings.TrimSpace(entry.Symbol))] = struct{}{}
 		kind := "pending_review"
 		if entry.TradePlanID == nil {
 			kind = "off_plan_execution"
@@ -100,9 +163,75 @@ func (h *TodayHandler) Get(c *gin.Context) {
 	h.db.WithContext(c).Where("created_at >= ? AND market IN ?", h.now().Add(-24*time.Hour), stockMarkets).Order("created_at desc").Limit(12).Find(&candidates)
 	for _, candidate := range candidates {
 		response.Items = append(response.Items, todayItem{ID: candidate.ID.String(), Kind: "candidate", Title: candidate.Symbol + " 候选", Subtitle: candidate.ScreenName, Href: "/analysis/" + candidate.Symbol, Priority: todayPriority(response.Session, "candidate")})
+		relevantSymbols[strings.ToUpper(strings.TrimSpace(candidate.Symbol))] = struct{}{}
 	}
+	if h.calendar != nil && h.calendar.Configured() {
+		symbols := make([]string, 0, len(relevantSymbols))
+		for symbol := range relevantSymbols {
+			if symbol != "" {
+				symbols = append(symbols, symbol)
+			}
+		}
+		sort.Strings(symbols)
+		calendarContext, cancelCalendar := context.WithTimeout(c.Request.Context(), h.calendarTimeout)
+		external, calendarErr := h.calendar.FetchWeekEvents(calendarContext, market, weekStart, weekEnd, symbols)
+		cancelCalendar()
+		fetchedAt := h.now().UTC()
+		response.WeekCalendar.FetchedAt = &fetchedAt
+		response.WeekCalendar.Sources = external.Sources
+		if calendarErr == nil && len(external.Sources) > 0 {
+			response.WeekCalendar.Status = "live"
+		} else if len(external.Events) > 0 || len(external.Sources) > 0 {
+			response.WeekCalendar.Status = "partial"
+		}
+		if calendarErr != nil {
+			log.Printf("本周事件日历降级（market=%s）：%v", market, calendarErr)
+		}
+		for index, event := range external.Events {
+			if !dateWithinWorkWeek(event.Date, weekStart, weekEnd) {
+				continue
+			}
+			var clock, symbol, href *string
+			if event.Time != "" {
+				value := event.Time
+				clock = &value
+			}
+			if event.Symbol != "" {
+				value := event.Symbol
+				symbol = &value
+				link := "/analysis/" + event.Symbol
+				href = &link
+			}
+			response.WeekCalendar.Events = append(response.WeekCalendar.Events, todayCalendarEvent{ID: event.Kind + "-" + event.Date.Format("20060102") + "-" + event.Symbol + "-" + strconv.Itoa(index), Date: event.Date.Format("2006-01-02"), Time: clock, Kind: event.Kind, Title: event.Title, Subtitle: event.Subtitle, Symbol: symbol, Importance: event.Importance, Source: event.Source, Href: href})
+		}
+	}
+	sort.SliceStable(response.WeekCalendar.Events, func(i, j int) bool {
+		left, right := response.WeekCalendar.Events[i], response.WeekCalendar.Events[j]
+		if left.Date != right.Date {
+			return left.Date < right.Date
+		}
+		leftTime, rightTime := "", ""
+		if left.Time != nil {
+			leftTime = *left.Time
+		}
+		if right.Time != nil {
+			rightTime = *right.Time
+		}
+		return leftTime < rightTime
+	})
 	sortTodayItems(response.Items)
 	OK(c, response)
+}
+
+func currentWorkWeek(local time.Time) (time.Time, time.Time) {
+	daysSinceMonday := (int(local.Weekday()) + 6) % 7
+	start := time.Date(local.Year(), local.Month(), local.Day(), 0, 0, 0, 0, local.Location()).AddDate(0, 0, -daysSinceMonday)
+	return start, start.AddDate(0, 0, 4)
+}
+
+func dateWithinWorkWeek(value, start, end time.Time) bool {
+	date := value.Format("2006-01-02")
+	return date >= start.Format("2006-01-02") && date <= end.Format("2006-01-02")
 }
 
 func todayTradeMarketMatches(assetMarket, tradeMarket string) bool {

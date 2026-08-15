@@ -111,7 +111,8 @@ func main() {
 	playbookSuggester := services.NewHTTPPlaybookSuggester(cfg.AIAnalysisUpstreamURL, 2*time.Minute, cfg.SidecarSharedSecret)
 	profileHandler := handlers.NewProfileHandler(database, playbookSuggester).WithCredentialStore(llmCredentialStore)
 	decisionSpineHandler := handlers.NewDecisionSpineHandler(database)
-	todayHandler := handlers.NewTodayHandler(database)
+	researchCalendarClient := services.NewHTTPResearchCalendarClient(cfg.AIAnalysisUpstreamURL, 10*time.Second, cfg.SidecarSharedSecret)
+	todayHandler := handlers.NewTodayHandlerWithCalendarProvider(database, researchCalendarClient)
 	screenDefinitionHandler := handlers.NewScreenDefinitionHandler(database)
 	brokerVault, brokerVaultErr := services.NewBrokerCredentialVault(cfg.BrokerCredentialsKey)
 	if brokerVaultErr != nil {

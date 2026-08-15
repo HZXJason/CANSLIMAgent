@@ -336,7 +336,10 @@ func (c *FMPClient) getJSON(ctx context.Context, path string, query url.Values, 
 	}
 	resp, err := c.client.Do(req)
 	if err != nil {
-		return err
+		if requestErr, ok := err.(*url.Error); ok {
+			return fmt.Errorf("FMP 请求失败：%v", requestErr.Err)
+		}
+		return errors.New("FMP 请求失败：网络错误")
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {

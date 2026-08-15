@@ -5,6 +5,7 @@ import { PageHeader } from '../../components/PageHeader';
 import { Card } from '../../components/ui/card';
 import { fetchTodayBrief } from '../../lib/todayApi';
 import { useMarketStore } from '../../stores/marketStore';
+import { WeeklyCalendar } from './WeeklyCalendar';
 
 const sessionLabels = { premarket: '盘前准备', intraday: '盘中检查', postmarket: '盘后复盘', non_trading: '非交易时段' } as const;
 const kindLabels = { candidate: '研究候选', waiting_plan: '等待中的计划', unreviewed_plan: '计划待审查', off_plan_execution: '计划外成交', pending_review: '成交待复盘' } as const;
@@ -25,6 +26,7 @@ export default function TodayPage() {
           <span title={brief.timezone}>{brief.timezone}</span>
           <span className="flex items-center gap-1 text-amber-200"><CircleAlert className="h-3.5 w-3.5" />节假日状态待确认</span>
         </div>
+        <WeeklyCalendar key={`${brief.market}-${brief.week_calendar.week_start}`} calendar={brief.week_calendar} localDate={brief.local_date} />
         {nextItem ? <section aria-labelledby="next-action-title" className="mt-8">
           <h2 id="next-action-title" className="font-display text-xl font-bold text-white">下一步</h2>
           <Link to={nextItem.href} className="group mt-3 flex min-h-36 items-center justify-between gap-5 border-y border-rule-strong py-6 transition hover:border-brand-300/60">

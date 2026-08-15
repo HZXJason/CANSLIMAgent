@@ -9,6 +9,31 @@ export interface TodayItem {
   priority: number;
 }
 
+export type WeekCalendarStatus = 'live' | 'partial' | 'local_only';
+export type WeekCalendarEventKind = 'economic' | 'earnings' | 'dividend' | 'plan_deadline';
+
+export interface WeekCalendarEvent {
+  id: string;
+  date: string;
+  time: string | null;
+  kind: WeekCalendarEventKind;
+  title: string;
+  subtitle: string;
+  symbol: string | null;
+  importance: 'high' | 'medium' | 'low';
+  source: string;
+  href: string | null;
+}
+
+export interface WeekCalendar {
+  week_start: string;
+  week_end: string;
+  status: WeekCalendarStatus;
+  sources: Array<{ name: string; url: string }>;
+  fetched_at: string | null;
+  events: WeekCalendarEvent[];
+}
+
 export interface TodayBrief {
   market: 'US' | 'CN';
   timezone: string;
@@ -16,5 +41,6 @@ export interface TodayBrief {
   session: TodaySession;
   calendar_status: 'weekday_only_unverified';
   data_as_of: string | null;
+  week_calendar: WeekCalendar;
   items: TodayItem[];
 }

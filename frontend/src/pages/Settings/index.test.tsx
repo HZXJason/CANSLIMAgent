@@ -14,6 +14,7 @@ vi.mock('../../lib/api', () => ({
 }));
 
 import SettingsPage from './index';
+import { useMarketStore } from '../../stores/marketStore';
 import {
   discoverAIModels,
   fetchAIAnalysisConfig,
@@ -40,6 +41,7 @@ const options = {
 describe('SettingsPage LLM credentials', () => {
   beforeEach(() => {
     window.localStorage.clear();
+    useMarketStore.setState({ assetMarket: 'US', hasSelectedMarket: true });
     mockFetchConfig.mockResolvedValue(options);
     mockDiscoverModels.mockResolvedValue({ models: ['claude-opus-4-6'], source: 'api.anthropic.com' });
     mockFetchCredential.mockResolvedValue({
@@ -74,5 +76,13 @@ describe('SettingsPage LLM credentials', () => {
     await waitFor(() => expect(mockSaveCredential).toHaveBeenCalledWith('anthropic', 'sk-user-entered-key', ''));
     await waitFor(() => expect(input).toHaveValue(''));
     expect(await screen.findByText('已加密保存在后端')).toBeInTheDocument();
+  });
+
+  it('changes the shared investor market preference', () => {
+    render(<SettingsPage />);
+
+    fireEvent.change(screen.getByLabelText('主要投资市场'), { target: { value: 'CN' } });
+
+    expect(useMarketStore.getState()).toMatchObject({ assetMarket: 'CN', hasSelectedMarket: true });
   });
 });

@@ -1,9 +1,9 @@
 import { Suspense, useLayoutEffect } from 'react';
-import { BarChart3, BookOpenCheck, CalendarDays, ClipboardList, Filter, Settings, UserRound } from 'lucide-react';
+import { BarChart3, BookOpenCheck, CalendarDays, ClipboardList, Filter, UserRound } from 'lucide-react';
 import { NavLink, Outlet, useLocation } from 'react-router-dom';
-import GlobalMarketSelector from './GlobalMarketSelector';
 import { cn } from '../lib/utils';
 import { useMarketStore } from '../stores/marketStore';
+import { MarketOnboarding } from './MarketOnboarding';
 
 const topItems = [
   { to: '/today', label: '今日', icon: CalendarDays },
@@ -14,8 +14,7 @@ const topItems = [
 ];
 
 const bottomItems = [
-  { to: '/me', label: '我的', icon: UserRound },
-  { to: '/settings', label: '设置', icon: Settings }
+  { to: '/me', label: '我的', icon: UserRound }
 ];
 
 function DesktopNavItem({ to, label, icon: Icon }: { to: string; label: string; icon: typeof Filter }) {
@@ -82,11 +81,14 @@ function MobileNavItem({ to, label, icon: Icon }: { to: string; label: string; i
 export default function AppShell() {
   const location = useLocation();
   const assetMarket = useMarketStore((state) => state.assetMarket);
+  const hasSelectedMarket = useMarketStore((state) => state.hasSelectedMarket);
   const currentItem = [...topItems, ...bottomItems].find((item) => location.pathname.startsWith(item.to)) ?? topItems[0];
 
   useLayoutEffect(() => {
     document.documentElement.dataset.market = assetMarket;
   }, [assetMarket]);
+
+  if (!hasSelectedMarket) return <MarketOnboarding />;
 
   return (
     <div className="flex min-h-screen bg-transparent text-slate-100">
@@ -95,7 +97,7 @@ export default function AppShell() {
       </a>
 
       <aside className="glass-chrome sticky top-0 hidden h-screen w-[76px] shrink-0 flex-col border-r border-white/[0.07] px-3 py-4 md:flex xl:w-[248px] xl:px-4">
-        <div>
+        <div className="border-b border-white/[0.08] pb-3">
           <div className="flex min-h-12 items-center justify-center gap-3 xl:justify-start xl:px-0.5">
             <NavLink
               to="/today"
@@ -107,9 +109,6 @@ export default function AppShell() {
               </span>
               <span className="font-display text-lg leading-none text-white xl:hidden">AL</span>
             </NavLink>
-          </div>
-          <div className="mt-3 flex items-center justify-center gap-1.5 border-b border-white/[0.08] pb-3 xl:justify-start">
-            <GlobalMarketSelector compact />
           </div>
         </div>
 
@@ -127,7 +126,7 @@ export default function AppShell() {
         </nav>
 
         <div className="mt-auto">
-          <nav aria-label="个人与设置" className="space-y-1">
+          <nav aria-label="个人导航" className="space-y-1">
             {bottomItems.map(item => <div key={item.to} className="hidden xl:block"><DesktopNavItem to={item.to} label={item.label} icon={item.icon} /></div>)}
             <div className="hidden justify-center gap-1 md:flex xl:hidden">
               {bottomItems.map(item => <RailNavItem key={item.to} to={item.to} label={item.label} icon={item.icon} />)}
@@ -143,7 +142,6 @@ export default function AppShell() {
               <span className="font-display text-lg leading-none text-white">AlphaLens</span>
               <span className="hidden min-w-0 text-xs text-slate-500 sm:block">{currentItem.label}</span>
             </NavLink>
-            <GlobalMarketSelector compact className="shrink-0" />
           </div>
           <NavLink
             to="/me"

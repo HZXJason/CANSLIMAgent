@@ -1,8 +1,8 @@
 // @vitest-environment jsdom
 import '@testing-library/jest-dom/vitest';
-import { cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { useMarketStore } from '../stores/marketStore';
 import AppShell from './AppShell';
 
@@ -19,9 +19,13 @@ function renderShell(path = '/screener') {
 }
 
 describe('AppShell market theme', () => {
+  beforeEach(() => {
+    useMarketStore.setState({ assetMarket: 'US', hasSelectedMarket: true });
+  });
+
   afterEach(() => {
     cleanup();
-    useMarketStore.getState().setAssetMarket('US');
+    useMarketStore.setState({ assetMarket: 'US', hasSelectedMarket: true });
     document.documentElement.removeAttribute('data-market');
     window.localStorage.clear();
   });
@@ -31,8 +35,29 @@ describe('AppShell market theme', () => {
     renderShell();
 
     expect(document.documentElement).toHaveAttribute('data-market', 'CN');
-    fireEvent.change(screen.getAllByRole('combobox', { name: '股票市场' })[0], { target: { value: 'US' } });
+    act(() => useMarketStore.getState().setAssetMarket('US'));
     expect(document.documentElement).toHaveAttribute('data-market', 'US');
+  });
+
+  it('asks first-time users to choose their investor market before showing the workspace', () => {
+    useMarketStore.setState({ assetMarket: 'US', hasSelectedMarket: false });
+    renderShell();
+
+    expect(screen.getByRole('heading', { name: '你主要关注哪个市场？' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /我是 A 股投资者/ })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /我是美股投资者/ })).toBeInTheDocument();
+    expect(screen.queryByText('筛选页面')).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: /我是 A 股投资者/ }));
+
+    expect(useMarketStore.getState()).toMatchObject({ assetMarket: 'CN', hasSelectedMarket: true });
+    expect(screen.getByText('筛选页面')).toBeInTheDocument();
+  });
+
+  it('does not expose market switching in desktop or mobile app chrome', () => {
+    renderShell();
+
+    expect(screen.queryByRole('combobox', { name: '股票市场' })).not.toBeInTheDocument();
   });
 
   it('keeps the active route readable on dark navigation surfaces', () => {
@@ -54,6 +79,15 @@ describe('AppShell market theme', () => {
     expect(screen.getAllByRole('link', { name: '个股分析' }).length).toBeGreaterThan(0);
     expect(screen.getAllByRole('link', { name: '我的' }).length).toBeGreaterThan(0);
     expect(screen.getByRole('navigation', { name: '移动端主导航' }).querySelectorAll('a')).toHaveLength(5);
+  });
+
+  it('keeps settings inside the personal workspace instead of the sidebar', () => {
+    renderShell();
+
+    const personalNavigation = screen.getByRole('navigation', { name: '个人导航' });
+    expect(within(personalNavigation).getAllByRole('link')).toHaveLength(2);
+    expect(within(personalNavigation).getAllByRole('link', { name: '我的' })).toHaveLength(2);
+    expect(within(personalNavigation).queryByRole('link', { name: '设置' })).not.toBeInTheDocument();
   });
 
   it('uses concise navigation without decorative English labels or slogans', () => {

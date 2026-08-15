@@ -1,4 +1,4 @@
-import { KeyRound, Loader2, RefreshCw, Save, SlidersHorizontal, Trash2 } from 'lucide-react';
+import { Building2, KeyRound, Loader2, RefreshCw, Save, SlidersHorizontal, Trash2 } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { PageHeader } from '../../components/PageHeader';
 import { Button } from '../../components/ui/button';
@@ -24,8 +24,13 @@ import {
 } from '../../lib/aiAnalysisConfig';
 import type { AIAnalysisConfigResponse, AnalysisConfig, LLMCredentialStatus } from '../../types/analysis';
 import BrokerConnections from '../../components/settings/BrokerConnections';
+import { ASSET_MARKET_OPTIONS } from '../../lib/markets';
+import { useMarketStore } from '../../stores/marketStore';
+import type { AssetMarket } from '../../types';
 
 export default function SettingsPage() {
+  const assetMarket = useMarketStore((state) => state.assetMarket);
+  const setAssetMarket = useMarketStore((state) => state.setAssetMarket);
   const [options, setOptions] = useState<AIAnalysisConfigResponse>(FALLBACK_AI_ANALYSIS_OPTIONS);
   const [config, setConfig] = useState<AnalysisConfig>(() =>
     normalizeAIAnalysisConfig(readStoredAIAnalysisConfig(), FALLBACK_AI_ANALYSIS_OPTIONS)
@@ -226,8 +231,29 @@ export default function SettingsPage() {
     <section className="page-ledger mx-auto flex w-full max-w-[1100px] flex-col gap-6 px-4 py-6 sm:px-6 sm:py-8 lg:px-8 lg:py-10">
       <PageHeader
         title="设置"
-        meta="模型偏好保存在当前浏览器 · 密钥由服务端托管"
+        meta="市场与模型偏好保存在当前浏览器 · 密钥由服务端托管"
       />
+
+      <Card className="overflow-hidden p-0">
+        <div className="flex items-center gap-3 border-b border-slate-800 px-5 py-4 sm:px-6">
+          <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-sm border border-brand-400/20 bg-brand-400/10 text-brand-300">
+            <Building2 className="h-5 w-5" aria-hidden="true" />
+          </div>
+          <div>
+            <h2 className="font-display text-xl font-bold text-ink">市场偏好</h2>
+            <p className="mt-1 text-xs leading-5 text-slate-500">控制“今日”、发现和个股分析的数据范围。</p>
+          </div>
+        </div>
+        <div className="p-5 sm:p-6">
+          <div className="max-w-md space-y-2">
+            <Label htmlFor="settings-asset-market">主要投资市场</Label>
+            <Select id="settings-asset-market" value={assetMarket} onValueChange={(value) => setAssetMarket(value as AssetMarket)}>
+              {ASSET_MARKET_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+            </Select>
+            <p className="text-xs leading-5 text-slate-500">切换后，全局页面会立即使用对应市场；两个市场的数据不会混合。</p>
+          </div>
+        </div>
+      </Card>
 
       <Card className="overflow-hidden p-0">
         <div className="flex items-center gap-3 border-b border-slate-800 px-5 py-4 sm:px-6">
@@ -269,7 +295,7 @@ export default function SettingsPage() {
             <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
               <div className="flex min-w-0 items-center gap-3">
                 <h3 className="font-bold text-slate-100">API Key</h3>
-                <span className={credentialStatus?.configured ? 'rounded-full bg-emerald-400/10 px-2.5 py-1 text-xs font-semibold text-emerald-300' : 'rounded-full bg-slate-800 px-2.5 py-1 text-xs font-semibold text-slate-400'}>
+                <span className={credentialStatus?.configured ? 'rounded-full bg-emerald-400/10 px-2.5 py-1 text-xs font-semibold text-emerald-100' : 'rounded-full bg-slate-800 px-2.5 py-1 text-xs font-semibold text-slate-400'}>
                   {credentialLoading
                     ? '读取中'
                     : credentialStatus?.configured

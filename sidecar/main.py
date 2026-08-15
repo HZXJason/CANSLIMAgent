@@ -37,6 +37,7 @@ from journal_reflection import build_journal_reflection
 from playbook_suggestion import suggest_playbooks
 from pretrade_review import review_with_llm
 from broker_sync import discover_broker_account, sync_broker
+from calendar_sources import build_week_calendar
 from ai_runtime import (
     is_china_a_symbol,
     patched_tradingagents_graph,
@@ -194,6 +195,20 @@ class ModelDiscoveryRequest(StrictRequestModel):
 class JournalReflectionRequest(StrictRequestModel):
     schema_version: str = "vibe.trade_record.v1"
     records: list[dict[str, Any]] = Field(default_factory=list, max_length=5000)
+
+
+class WeekCalendarRequest(StrictRequestModel):
+    market: str = Field(..., pattern=r"^(US|CN)$")
+    week_start: date
+    week_end: date
+    symbols: list[str] = Field(default_factory=list, max_length=40)
+
+    @field_validator("symbols")
+    @classmethod
+    def validate_symbols(cls, values: list[str]) -> list[str]:
+        if any(not value.strip() or len(value) > 32 for value in values):
+            raise ValueError("symbols must contain 1-32 character tickers")
+        return values
 
 
 class PreTradeReviewRequest(StrictRequestModel):
@@ -1795,6 +1810,19 @@ async def models(request: ModelDiscoveryRequest):
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except RuntimeError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+
+@app.post("/calendar/week")
+async def week_calendar(request: WeekCalendarRequest):
+    if request.week_end < request.week_start or (request.week_end - request.week_start).days > 6:
+        raise HTTPException(status_code=400, detail="calendar week must be a forward range of at most 7 days")
+    return await asyncio.to_thread(
+        build_week_calendar,
+        market=request.market,
+        week_start=request.week_start,
+        week_end=request.week_end,
+        symbols=request.symbols,
+    )
 
 
 @app.post("/analyze")

@@ -4,17 +4,18 @@ import { useMarketStore } from './marketStore';
 
 describe('market store', () => {
   afterEach(() => {
-    useMarketStore.getState().setAssetMarket('US');
+    useMarketStore.setState({ assetMarket: 'US', hasSelectedMarket: false });
     window.localStorage.clear();
   });
 
-  it('switches and persists the global asset market', () => {
+  it('records and persists the first explicit market choice', () => {
     useMarketStore.getState().setAssetMarket('CN');
 
-    expect(useMarketStore.getState().assetMarket).toBe('CN');
+    expect(useMarketStore.getState()).toMatchObject({ assetMarket: 'CN', hasSelectedMarket: true });
     const persisted = JSON.parse(window.localStorage.getItem('alphalens-asset-market') ?? '{}') as {
-      state?: { assetMarket?: string };
+      state?: { assetMarket?: string; hasSelectedMarket?: boolean };
     };
     expect(persisted.state?.assetMarket).toBe('CN');
+    expect(persisted.state?.hasSelectedMarket).toBe(true);
   });
 });
