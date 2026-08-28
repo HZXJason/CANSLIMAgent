@@ -4,7 +4,8 @@ import { Card } from '../../components/ui/card';
 import { fetchTodayBrief } from '../../lib/todayApi';
 import { useMarketStore } from '../../stores/marketStore';
 import { MarketClock } from './MarketClock';
-import { WeeklyCalendar } from './WeeklyCalendar';
+import { MonthlyCalendar } from './MonthlyCalendar';
+import { ResearchAssistant } from './ResearchAssistant';
 
 export default function TodayPage() {
   const market = useMarketStore((state) => state.assetMarket);
@@ -16,7 +17,8 @@ export default function TodayPage() {
       {query.isError ? <Card className="mt-6 border-rose-500/30 p-5 text-sm text-rose-200">今日信息读取失败，请稍后重试。</Card> : null}
       {query.isLoading ? <Card className="mt-6 h-40 animate-pulse bg-slate-900/60" /> : null}
       {brief ? <>
-        <WeeklyCalendar key={`${brief.market}-${brief.week_calendar.week_start}`} calendar={brief.week_calendar} localDate={brief.local_date} />
+        <MonthlyCalendar key={`${brief.market}-${brief.month_calendar.month_start}`} calendar={brief.month_calendar} localDate={brief.local_date} />
+        <ResearchAssistant market={brief.market} />
       </> : null}
     </div>
   );

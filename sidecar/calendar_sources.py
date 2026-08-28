@@ -1,4 +1,4 @@
-"""Structured weekly events from official calendars and AI research sources.
+"""Structured calendar events from official calendars and research sources.
 
 Yahoo Finance supplies company earnings and ex-dividend dates. BLS, the
 Federal Reserve, and BEA supply no-key US macro calendars. FRED is an optional
@@ -73,8 +73,40 @@ _YAHOO_RELEVANT_MACRO = (
 )
 _HTTP_HEADERS = {
     "Accept": "text/html,application/xhtml+xml,text/calendar;q=0.9,*/*;q=0.8",
-    "User-Agent": "AlphaLens/1.0 (weekly research calendar)",
+    "User-Agent": "AlphaLens/1.0 (research calendar)",
 }
+
+
+def _macro_value(raw_title: str, value: Any) -> str:
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    if re.search(r"\b(?:MM|YY)\b|rate", raw_title, re.IGNORECASE) and not text.endswith("%"):
+        return text + "%"
+    return text
+
+
+def _macro_outcome(raw_title: str, row: dict[str, Any]) -> tuple[str | None, str | None, str | None]:
+    actual_text = _macro_value(raw_title, row.get("actual"))
+    prior_text = _macro_value(raw_title, row.get("prior"))
+    if not actual_text:
+        return None, None, None
+    result = f"实际 {actual_text}" + (f" · 前值 {prior_text}" if prior_text else "")
+    actual = _number(row.get("actual"))
+    prior = _number(row.get("prior"))
+    if actual is None or prior is None or actual == prior:
+        return result, "neutral", "实际值与可比前值持平，方向性有限"
+    lowered = raw_title.lower()
+    if any(key in lowered for key in ("cpi", "ppi", "pce")):
+        bullish = actual < prior
+        return result, "bullish" if bullish else "bearish", "通胀降温通常缓解利率压力" if bullish else "通胀升温可能强化利率压力"
+    if "unemployment rate" in lowered or "jobless claims" in lowered:
+        bullish = actual < prior
+        return result, "bullish" if bullish else "bearish", "劳动力市场较前值改善" if bullish else "劳动力市场较前值走弱"
+    if any(key in lowered for key in ("nonfarm", "retail sales", "gdp", "industrial production")):
+        bullish = actual > prior
+        return result, "bullish" if bullish else "bearish", "增长数据较前值改善" if bullish else "增长数据较前值走弱"
+    return result, "neutral", "该指标与股市方向并非简单线性关系"
 
 
 def _date_text(value: Any) -> str | None:
@@ -233,7 +265,11 @@ def parse_yahoo_economic_calendar(payload: dict[str, Any], week_start: date, wee
             seen.add(identity)
             period = str(row.get("period") or "").strip()
             subtitle = "美国 · Yahoo 高影响宏观事件" + (f" · {period}" if period else "")
-            events.append(_economic_event(event_date=instant.date(), title=title, source="Yahoo Economic Calendar", time=event_time, subtitle=subtitle))
+            event = _economic_event(event_date=instant.date(), title=title, source="Yahoo Economic Calendar", time=event_time, subtitle=subtitle)
+            result, market_impact, impact_reason = _macro_outcome(raw_title, row)
+            if result:
+                event.update({"result": result, "market_impact": market_impact, "impact_reason": impact_reason})
+            events.append(event)
     return events
 
 
@@ -292,14 +328,17 @@ def parse_fed_calendar_html(payload: str, year: int, month: int, week_start: dat
         title = title_parts[0]
         if category == "Speeches" and len(title_parts) > 1:
             title += " · " + title_parts[1]
-        events.append(_economic_event(
+        event = _economic_event(
             event_date=event_date,
             title=title,
             source="Federal Reserve",
             time=_clock_text(time_text),
             importance="medium" if category == "Speeches" else "high",
             subtitle=f"美联储 · {category}",
-        ))
+        )
+        if category == "FOMC Meetings":
+            event["live_url"] = "https://www.federalreserve.gov/live-broadcast.htm"
+        events.append(event)
     return events
 
 

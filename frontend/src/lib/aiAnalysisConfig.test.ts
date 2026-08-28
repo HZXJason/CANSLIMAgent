@@ -9,6 +9,7 @@ describe('AI analysis config storage', () => {
       llm_provider: 'openai',
       deep_think_llm: 'gpt-5.4',
       quick_think_llm: 'gpt-5.4-mini',
+      assistant_model: 'gpt-5.4-mini',
       backend_url: '',
       max_debate_rounds: 1,
       max_risk_rounds: 1,

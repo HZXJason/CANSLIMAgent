@@ -25,6 +25,10 @@ func (blockingTodayCalendarProvider) FetchWeekEvents(ctx context.Context, _ stri
 	<-ctx.Done()
 	return services.CalendarFetchResult{}, ctx.Err()
 }
+func (blockingTodayCalendarProvider) FetchMonthEvents(ctx context.Context, _ string, _, _ time.Time, _ []string) (services.CalendarFetchResult, error) {
+	<-ctx.Done()
+	return services.CalendarFetchResult{}, ctx.Err()
+}
 
 type capturingTodayCalendarProvider struct {
 	symbols []string
@@ -33,6 +37,10 @@ type capturingTodayCalendarProvider struct {
 func (*capturingTodayCalendarProvider) Configured() bool { return true }
 
 func (provider *capturingTodayCalendarProvider) FetchWeekEvents(_ context.Context, _ string, _, _ time.Time, symbols []string) (services.CalendarFetchResult, error) {
+	provider.symbols = append([]string(nil), symbols...)
+	return services.CalendarFetchResult{Sources: []services.CalendarSource{{Name: "Yahoo Finance", URL: "https://finance.yahoo.com"}}}, nil
+}
+func (provider *capturingTodayCalendarProvider) FetchMonthEvents(_ context.Context, _ string, _, _ time.Time, symbols []string) (services.CalendarFetchResult, error) {
 	provider.symbols = append([]string(nil), symbols...)
 	return services.CalendarFetchResult{Sources: []services.CalendarSource{{Name: "Yahoo Finance", URL: "https://finance.yahoo.com"}}}, nil
 }
@@ -65,7 +73,7 @@ func TestMarketSessionAndTaskPriority(t *testing.T) {
 	}
 }
 
-func TestTodayResponseIncludesCurrentWorkWeekCalendar(t *testing.T) {
+func TestTodayResponseIncludesCurrentMonthCalendar(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	database, err := gorm.Open(sqlite.Open("file:"+strings.ReplaceAll(t.Name(), "/", "_")+"?mode=memory&cache=shared"), &gorm.Config{Logger: logger.Default.LogMode(logger.Silent)})
 	if err != nil {
@@ -91,6 +99,15 @@ func TestTodayResponseIncludesCurrentWorkWeekCalendar(t *testing.T) {
 
 	var response struct {
 		Data struct {
+			MonthCalendar *struct {
+				MonthStart string `json:"month_start"`
+				MonthEnd   string `json:"month_end"`
+				Status     string `json:"status"`
+				Events     []struct {
+					Kind   string `json:"kind"`
+					Symbol string `json:"symbol"`
+				} `json:"events"`
+			} `json:"month_calendar"`
 			WeekCalendar *struct {
 				WeekStart string `json:"week_start"`
 				WeekEnd   string `json:"week_end"`
@@ -107,6 +124,16 @@ func TestTodayResponseIncludesCurrentWorkWeekCalendar(t *testing.T) {
 	}
 	if response.Data.WeekCalendar == nil {
 		t.Fatalf("expected an explicit week_calendar contract, got %s", recorder.Body.String())
+	}
+	if response.Data.MonthCalendar == nil {
+		t.Fatalf("expected an explicit month_calendar contract, got %s", recorder.Body.String())
+	}
+	month := response.Data.MonthCalendar
+	if month.MonthStart != "2026-08-01" || month.MonthEnd != "2026-08-31" || month.Status != "local_only" {
+		t.Fatalf("unexpected month metadata: %+v", month)
+	}
+	if len(month.Events) != 1 || month.Events[0].Kind != "plan_deadline" || month.Events[0].Symbol != "NVDA" {
+		t.Fatalf("expected the local plan deadline in the month calendar: %+v", month.Events)
 	}
 	calendar := response.Data.WeekCalendar
 	if calendar.WeekStart != "2026-08-03" || calendar.WeekEnd != "2026-08-07" || calendar.Status != "local_only" {

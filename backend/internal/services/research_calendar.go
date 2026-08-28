@@ -20,14 +20,18 @@ type CalendarSource struct {
 }
 
 type MarketCalendarEvent struct {
-	Date       time.Time
-	Time       string
-	Kind       string
-	Title      string
-	Subtitle   string
-	Symbol     string
-	Importance string
-	Source     string
+	Date         time.Time
+	Time         string
+	Kind         string
+	Title        string
+	Subtitle     string
+	Symbol       string
+	Importance   string
+	Source       string
+	Result       string
+	MarketImpact string
+	ImpactReason string
+	LiveURL      string
 }
 
 type CalendarFetchResult struct {
@@ -36,9 +40,9 @@ type CalendarFetchResult struct {
 }
 
 type HTTPResearchCalendarClient struct {
-	endpoint string
-	client   *http.Client
-	secret   string
+	baseURL string
+	client  *http.Client
+	secret  string
 }
 
 func NewHTTPResearchCalendarClient(upstreamURL string, timeout time.Duration, sharedSecret string) *HTTPResearchCalendarClient {
@@ -49,24 +53,31 @@ func NewHTTPResearchCalendarClient(upstreamURL string, timeout time.Duration, sh
 	if base == "" {
 		base = DefaultAIAnalysisUpstreamURL
 	}
-	if !strings.HasSuffix(base, "/calendar/week") {
-		base += "/calendar/week"
-	}
-	return &HTTPResearchCalendarClient{endpoint: base, client: &http.Client{Timeout: timeout}, secret: strings.TrimSpace(sharedSecret)}
+	base = strings.TrimSuffix(base, "/calendar/week")
+	base = strings.TrimSuffix(base, "/calendar/month")
+	return &HTTPResearchCalendarClient{baseURL: base, client: &http.Client{Timeout: timeout}, secret: strings.TrimSpace(sharedSecret)}
 }
 
 func (c *HTTPResearchCalendarClient) Configured() bool {
-	return c != nil && c.endpoint != ""
+	return c != nil && c.baseURL != ""
 }
 
 func (c *HTTPResearchCalendarClient) FetchWeekEvents(ctx context.Context, market string, from, to time.Time, symbols []string) (CalendarFetchResult, error) {
+	return c.fetchEvents(ctx, "/calendar/week", market, "week_start", "week_end", from, to, symbols)
+}
+
+func (c *HTTPResearchCalendarClient) FetchMonthEvents(ctx context.Context, market string, from, to time.Time, symbols []string) (CalendarFetchResult, error) {
+	return c.fetchEvents(ctx, "/calendar/month", market, "month_start", "month_end", from, to, symbols)
+}
+
+func (c *HTTPResearchCalendarClient) fetchEvents(ctx context.Context, path, market, startKey, endKey string, from, to time.Time, symbols []string) (CalendarFetchResult, error) {
 	wire, err := json.Marshal(map[string]any{
-		"market": market, "week_start": from.Format("2006-01-02"), "week_end": to.Format("2006-01-02"), "symbols": symbols,
+		"market": market, startKey: from.Format("2006-01-02"), endKey: to.Format("2006-01-02"), "symbols": symbols,
 	})
 	if err != nil {
 		return CalendarFetchResult{}, err
 	}
-	request, err := http.NewRequestWithContext(ctx, http.MethodPost, c.endpoint, bytes.NewReader(wire))
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+path, bytes.NewReader(wire))
 	if err != nil {
 		return CalendarFetchResult{}, err
 	}
@@ -92,14 +103,18 @@ func (c *HTTPResearchCalendarClient) FetchWeekEvents(ctx context.Context, market
 	}
 	var payload struct {
 		Events []struct {
-			Date       string `json:"date"`
-			Time       string `json:"time"`
-			Kind       string `json:"kind"`
-			Title      string `json:"title"`
-			Subtitle   string `json:"subtitle"`
-			Symbol     string `json:"symbol"`
-			Importance string `json:"importance"`
-			Source     string `json:"source"`
+			Date         string `json:"date"`
+			Time         string `json:"time"`
+			Kind         string `json:"kind"`
+			Title        string `json:"title"`
+			Subtitle     string `json:"subtitle"`
+			Symbol       string `json:"symbol"`
+			Importance   string `json:"importance"`
+			Source       string `json:"source"`
+			Result       string `json:"result"`
+			MarketImpact string `json:"market_impact"`
+			ImpactReason string `json:"impact_reason"`
+			LiveURL      string `json:"live_url"`
 		} `json:"events"`
 		Sources []CalendarSource `json:"sources"`
 		Errors  []string         `json:"errors"`
@@ -113,7 +128,7 @@ func (c *HTTPResearchCalendarClient) FetchWeekEvents(ctx context.Context, market
 		if err != nil || strings.TrimSpace(event.Kind) == "" || strings.TrimSpace(event.Title) == "" {
 			continue
 		}
-		result.Events = append(result.Events, MarketCalendarEvent{Date: date, Time: event.Time, Kind: event.Kind, Title: event.Title, Subtitle: event.Subtitle, Symbol: event.Symbol, Importance: event.Importance, Source: event.Source})
+		result.Events = append(result.Events, MarketCalendarEvent{Date: date, Time: event.Time, Kind: event.Kind, Title: event.Title, Subtitle: event.Subtitle, Symbol: event.Symbol, Importance: event.Importance, Source: event.Source, Result: event.Result, MarketImpact: event.MarketImpact, ImpactReason: event.ImpactReason, LiveURL: event.LiveURL})
 	}
 	if len(payload.Errors) > 0 {
 		return result, errors.New(strings.Join(payload.Errors, "; "))

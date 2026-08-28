@@ -33,3 +33,24 @@ func TestResearchCalendarClientUsesSidecarResearchSources(t *testing.T) {
 		t.Fatalf("unexpected sources: %+v", result.Sources)
 	}
 }
+
+func TestResearchCalendarClientFetchesMonthAndPreservesOutcomeFields(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/calendar/month" {
+			t.Fatalf("unexpected path: %s", r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"events":[{"date":"2026-08-12","time":"08:30","kind":"economic","title":"美国消费者价格指数（CPI）","subtitle":"美国 · Jul","importance":"high","source":"Yahoo Economic Calendar","result":"实际 3.4% · 前值 3.5%","market_impact":"bullish","impact_reason":"通胀降温通常缓解利率压力","live_url":"https://www.federalreserve.gov/live-broadcast.htm"}],"sources":[],"errors":[]}`))
+	}))
+	defer server.Close()
+
+	client := NewHTTPResearchCalendarClient(server.URL, time.Second, "")
+	result, err := client.FetchMonthEvents(context.Background(), "US", time.Date(2026, 8, 1, 0, 0, 0, 0, time.UTC), time.Date(2026, 8, 31, 0, 0, 0, 0, time.UTC), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	event := result.Events[0]
+	if event.Result == "" || event.MarketImpact != "bullish" || event.ImpactReason == "" || event.LiveURL == "" {
+		t.Fatalf("outcome fields were not preserved: %+v", event)
+	}
+}

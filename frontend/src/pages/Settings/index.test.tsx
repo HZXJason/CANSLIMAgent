@@ -31,7 +31,7 @@ const options = {
   providers: [{
     id: 'anthropic',
     name: 'Anthropic',
-    models: { deep: ['claude-opus-4-6'], quick: ['claude-haiku-4-5-20251001'] }
+    models: { deep: ['claude-opus-4-6'], quick: ['claude-haiku-4-5-20251001', 'claude-haiku-test'] }
   }],
   analysts: [{ id: 'fundamental', name: '基本面分析师', description: '基本面' }],
   debate_rounds: [1],
@@ -88,5 +88,14 @@ describe('SettingsPage LLM credentials', () => {
     fireEvent.change(screen.getByLabelText('主要投资市场'), { target: { value: 'CN' } });
 
     expect(useMarketStore.getState()).toMatchObject({ assetMarket: 'CN', hasSelectedMarket: true });
+  });
+
+  it('stores a separate model for the Today AI assistant', async () => {
+    render(<SettingsPage />);
+
+    const assistantModel = await screen.findByLabelText('对话模型');
+    fireEvent.change(assistantModel, { target: { value: 'claude-haiku-test' } });
+
+    await waitFor(() => expect(JSON.parse(window.localStorage.getItem('alphalens.aiAnalysisConfig.v1') ?? '{}')).toMatchObject({ assistant_model: 'claude-haiku-test' }));
   });
 });

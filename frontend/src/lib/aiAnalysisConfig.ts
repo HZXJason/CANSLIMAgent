@@ -63,6 +63,7 @@ export function createDefaultAIAnalysisConfig(options: AIAnalysisConfigResponse)
     llm_provider: provider.id,
     deep_think_llm: provider.models.deep[1] ?? provider.models.deep[0] ?? '',
     quick_think_llm: provider.models.quick[1] ?? provider.models.quick[0] ?? '',
+    assistant_model: provider.models.quick[1] ?? provider.models.quick[0] ?? '',
     backend_url: provider.default_backend_url ?? '',
     max_debate_rounds: 1,
     max_risk_rounds: 1,
@@ -109,6 +110,7 @@ export function normalizeAIAnalysisConfig(
   const selectedAnalysts = (config.analysts ?? fallback.analysts).filter((analyst) => analystIds.has(analyst));
   const storedDeepModel = config.deep_think_llm ?? '';
   const storedQuickModel = config.quick_think_llm ?? '';
+  const storedAssistantModel = config.assistant_model ?? storedQuickModel;
   const restrictedFreeTierModels = new Set(['anthropic/claude-sonnet-4.6', 'openai/gpt-5.5']);
   const deepThinkLLM = customModels && restrictedFreeTierModels.has(storedDeepModel) ? deepModels[0] ?? '' : storedDeepModel;
   const quickThinkLLM = customModels && restrictedFreeTierModels.has(storedQuickModel) ? quickModels[0] ?? '' : storedQuickModel;
@@ -118,6 +120,9 @@ export function normalizeAIAnalysisConfig(
     deep_think_llm: customModels || deepModels.includes(deepThinkLLM) ? deepThinkLLM || deepModels[0] || '' : deepModels[0] ?? '',
     quick_think_llm: customModels || quickModels.includes(quickThinkLLM)
       ? quickThinkLLM || quickModels[0] || ''
+      : quickModels[0] ?? '',
+    assistant_model: customModels || quickModels.includes(storedAssistantModel)
+      ? storedAssistantModel || quickModels[0] || ''
       : quickModels[0] ?? '',
     backend_url: config.backend_url ?? provider.default_backend_url ?? '',
     max_debate_rounds: config.max_debate_rounds === 2 ? 2 : 1,

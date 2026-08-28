@@ -113,6 +113,8 @@ func main() {
 	decisionSpineHandler := handlers.NewDecisionSpineHandler(database)
 	researchCalendarClient := services.NewHTTPResearchCalendarClient(cfg.AIAnalysisUpstreamURL, 10*time.Second, cfg.SidecarSharedSecret)
 	todayHandler := handlers.NewTodayHandlerWithCalendarProvider(database, researchCalendarClient)
+	researchAssistant := services.NewHTTPResearchAssistant(cfg.AIAnalysisUpstreamURL, 45*time.Second, cfg.SidecarSharedSecret)
+	researchAssistantHandler := handlers.NewResearchAssistantHandler(researchAssistant, llmCredentialStore)
 	screenDefinitionHandler := handlers.NewScreenDefinitionHandler(database)
 	brokerVault, brokerVaultErr := services.NewBrokerCredentialVault(cfg.BrokerCredentialsKey)
 	if brokerVaultErr != nil {
@@ -186,6 +188,7 @@ func main() {
 		api.DELETE("/llm/credentials/:provider", llmCredentialHandler.Delete)
 		api.GET("/presets", presetHandler.List)
 		api.GET("/today", todayHandler.Get)
+		api.POST("/assistant/ask", researchAssistantHandler.Ask)
 		api.GET("/screen-definitions", screenDefinitionHandler.List)
 		api.POST("/screen-definitions", screenDefinitionHandler.Create)
 		api.POST("/presets", presetHandler.Create)

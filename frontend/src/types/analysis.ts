@@ -21,6 +21,7 @@ export interface AnalysisConfig {
   llm_provider: string;
   deep_think_llm: string;
   quick_think_llm: string;
+  assistant_model: string;
   backend_url: string;
   max_debate_rounds: number;
   max_risk_rounds: number;

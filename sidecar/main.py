@@ -211,6 +211,35 @@ class WeekCalendarRequest(StrictRequestModel):
         return values
 
 
+class MonthCalendarRequest(StrictRequestModel):
+    market: str = Field(..., pattern=r"^(US|CN)$")
+    month_start: date
+    month_end: date
+    symbols: list[str] = Field(default_factory=list, max_length=40)
+
+    @field_validator("symbols")
+    @classmethod
+    def validate_symbols(cls, values: list[str]) -> list[str]:
+        return WeekCalendarRequest.validate_symbols(values)
+
+
+class ResearchAssistantRequest(StrictRequestModel):
+    question: str = Field(..., min_length=1, max_length=500)
+    market: str = Field(..., pattern=r"^(US|CN)$")
+    llm_provider: str = Field(..., min_length=1, max_length=64)
+    model: str = Field(..., min_length=1, max_length=256)
+    backend_url: str | None = Field(default=None, max_length=2048)
+    api_key: str | None = Field(default=None, min_length=1, max_length=8192, repr=False)
+
+    @field_validator("question")
+    @classmethod
+    def validate_question(cls, value: str) -> str:
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("question must not be blank")
+        return normalized
+
+
 class PreTradeReviewRequest(StrictRequestModel):
     ticker: str = Field(..., min_length=1, max_length=32, pattern=r"^[A-Za-z0-9][A-Za-z0-9.^=_-]{0,31}$")
     llm_provider: str = Field(..., min_length=1, max_length=64)
@@ -1184,6 +1213,36 @@ def create_role_llm(request: AnalysisRequest, callbacks: list[Any] | None = None
     return client.get_llm()
 
 
+def create_research_assistant_llm(request: ResearchAssistantRequest):
+    from tradingagents.llm_clients.factory import create_llm_client
+
+    kwargs: dict[str, Any] = {}
+    if request.api_key:
+        kwargs["api_key"] = request.api_key
+    return create_llm_client(
+        provider=request.llm_provider,
+        model=request.model,
+        base_url=validate_backend_url(request.backend_url),
+        **kwargs,
+    ).get_llm()
+
+
+def answer_research_question(request: ResearchAssistantRequest, llm_factory=create_research_assistant_llm) -> dict[str, str]:
+    llm = llm_factory(request)
+    response = llm.invoke([
+        SystemMessage(content=(
+            "你是 AlphaLens 的证券研究问答助手。用简体中文直接回答，控制在 300 字以内。"
+            "优先解释机制、条件和可能的相反情形；没有实时数据时明确说不知道当前数值。"
+            "不要编造来源、行情或事件结果，不要给出个性化买卖指令。"
+        )),
+        HumanMessage(content=f"市场：{request.market}\n问题：{request.question}"),
+    ])
+    answer = sanitize_display_text(content_to_text(getattr(response, "content", response))).strip()
+    if not answer:
+        raise RuntimeError("research assistant returned empty output")
+    return {"answer": answer[:2000], "model": request.model}
+
+
 def run_canslim_second_layer_analysis(
     request: AnalysisRequest,
     callbacks: list[Any] | None = None,
@@ -1823,6 +1882,30 @@ async def week_calendar(request: WeekCalendarRequest):
         week_end=request.week_end,
         symbols=request.symbols,
     )
+
+
+@app.post("/calendar/month")
+async def month_calendar(request: MonthCalendarRequest):
+    if request.month_end < request.month_start or (request.month_end - request.month_start).days > 30:
+        raise HTTPException(status_code=400, detail="calendar month must be a forward range of at most 31 days")
+    return await asyncio.to_thread(
+        build_week_calendar,
+        market=request.market,
+        week_start=request.month_start,
+        week_end=request.month_end,
+        symbols=request.symbols,
+    )
+
+
+@app.post("/assistant/ask")
+async def research_assistant(request: ResearchAssistantRequest):
+    try:
+        request.backend_url = validate_backend_url(request.backend_url)
+        return await asyncio.to_thread(answer_research_question, request)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
 
 
 @app.post("/analyze")

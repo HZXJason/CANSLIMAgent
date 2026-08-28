@@ -23,6 +23,10 @@ export interface WeekCalendarEvent {
   importance: 'high' | 'medium' | 'low';
   source: string;
   href: string | null;
+  result?: string | null;
+  market_impact?: 'bullish' | 'bearish' | 'neutral' | null;
+  impact_reason?: string | null;
+  live_url?: string | null;
 }
 
 export interface WeekCalendar {
@@ -34,6 +38,28 @@ export interface WeekCalendar {
   events: WeekCalendarEvent[];
 }
 
+export interface MonthCalendar {
+  month_start: string;
+  month_end: string;
+  status: WeekCalendarStatus;
+  sources: Array<{ name: string; url: string }>;
+  fetched_at: string | null;
+  events: WeekCalendarEvent[];
+}
+
+export interface ResearchAssistantInput {
+  question: string;
+  market: 'US' | 'CN';
+  llm_provider: string;
+  model: string;
+  backend_url?: string;
+}
+
+export interface ResearchAssistantAnswer {
+  answer: string;
+  model: string;
+}
+
 export interface TodayBrief {
   market: 'US' | 'CN';
   timezone: string;
@@ -42,5 +68,6 @@ export interface TodayBrief {
   calendar_status: 'weekday_only_unverified';
   data_as_of: string | null;
   week_calendar: WeekCalendar;
+  month_calendar: MonthCalendar;
   items: TodayItem[];
 }

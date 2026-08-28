@@ -105,6 +105,36 @@ END:VCALENDAR
         self.assertEqual(events[0]["time"], "08:30")
         self.assertEqual(events[0]["source"], "Yahoo Economic Calendar")
 
+    def test_completed_yahoo_event_exposes_result_and_initial_stock_impact(self):
+        payload = {"finance": {"result": {"economicEvents": [{
+            "records": [{
+                "event": "CPI YY, NSA", "countryCode": "US", "eventTime": 1786537800000,
+                "period": "Jul", "actual": "3.4", "prior": "3.5",
+            }],
+        }]}, "error": None}}
+
+        events = parse_yahoo_economic_calendar(payload, date(2026, 8, 1), date(2026, 8, 31))
+
+        self.assertEqual(events[0]["result"], "实际 3.4% · 前值 3.5%")
+        self.assertEqual(events[0]["market_impact"], "bullish")
+        self.assertIn("通胀", events[0]["impact_reason"])
+
+    def test_fomc_event_exposes_official_live_page(self):
+        payload = """
+        <div id="article" class="cal-nojs">
+          <div class="row cal-nojs__rowTitle"><h4>FOMC Meetings</h4></div>
+          <div class="row"><div class="panel"><div class="panel-body"><div class="row">
+            <div class="col-xs-2"><p>2:00 p.m.</p></div>
+            <div class="col-xs-7"><p>FOMC Press Conference</p></div>
+            <div class="col-xs-3"><p>12</p></div>
+          </div></div></div></div>
+        </div>
+        """
+
+        events = parse_fed_calendar_html(payload, 2026, 8, date(2026, 8, 1), date(2026, 8, 31))
+
+        self.assertEqual(events[0]["live_url"], "https://www.federalreserve.gov/live-broadcast.htm")
+
     def test_uses_no_key_official_sources_and_keeps_fred_optional(self):
         def source_event(name):
             return [{

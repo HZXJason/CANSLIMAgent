@@ -146,7 +146,10 @@ export default function SettingsPage() {
               : result.models[0] ?? current.deep_think_llm,
             quick_think_llm: result.models.includes(current.quick_think_llm)
               ? current.quick_think_llm
-              : result.models[0] ?? current.quick_think_llm
+              : result.models[0] ?? current.quick_think_llm,
+            assistant_model: result.models.includes(current.assistant_model)
+              ? current.assistant_model
+              : result.models[0] ?? current.assistant_model
           }));
         })
         .catch((error) => {
@@ -172,6 +175,7 @@ export default function SettingsPage() {
       llm_provider: nextProvider.id,
       deep_think_llm: nextProvider.models.deep[0] ?? '',
       quick_think_llm: nextProvider.models.quick[0] ?? '',
+      assistant_model: nextProvider.models.quick[0] ?? '',
       backend_url: nextProvider.default_backend_url ?? ''
     }));
     setDiscoveredModels([]);
@@ -186,6 +190,10 @@ export default function SettingsPage() {
 
   const availableDeepModels = discoveredModels.length > 0 ? discoveredModels : provider.models.deep;
   const availableQuickModels = discoveredModels.length > 0 ? discoveredModels : provider.models.quick;
+  let credentialBadgeClassName = 'rounded-full bg-slate-800 px-2.5 py-1 text-xs font-semibold text-slate-300';
+  if (credentialStatus?.configured) {
+    credentialBadgeClassName = 'rounded-full bg-emerald-400/10 px-2.5 py-1 text-xs font-semibold text-emerald-100';
+  }
 
   const saveAPIKey = async () => {
     if (!apiKey.trim()) {
@@ -290,7 +298,7 @@ export default function SettingsPage() {
             <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
               <div className="flex min-w-0 items-center gap-3">
                 <h3 className="font-bold text-slate-100">API Key</h3>
-                <span className={credentialStatus?.configured ? 'rounded-full bg-emerald-400/10 px-2.5 py-1 text-xs font-semibold text-emerald-100' : 'rounded-full bg-slate-800 px-2.5 py-1 text-xs font-semibold text-slate-400'}>
+                <span className={credentialBadgeClassName}>
                   {credentialLoading
                     ? '读取中'
                     : credentialStatus?.configured
@@ -352,7 +360,7 @@ export default function SettingsPage() {
                 刷新模型
               </Button>
             </div>
-            <div className="grid gap-4 sm:grid-cols-2">
+            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
               <div className="space-y-2">
                 <Label htmlFor="settings-ai-deep-model">深度思考模型</Label>
                 {customProvider && discoveredModels.length === 0 ? (
@@ -379,6 +387,21 @@ export default function SettingsPage() {
                   />
                 ) : (
                   <Select id="settings-ai-quick-model" value={config.quick_think_llm} onValueChange={(value) => setConfig((current) => ({ ...current, quick_think_llm: value }))}>
+                    {availableQuickModels.map((model) => <option key={model} value={model}>{model}</option>)}
+                  </Select>
+                )}
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="settings-ai-assistant-model">对话模型</Label>
+                {customProvider && discoveredModels.length === 0 ? (
+                  <Input
+                    id="settings-ai-assistant-model"
+                    value={config.assistant_model}
+                    placeholder="输入模型名称"
+                    onChange={(event) => setConfig((current) => ({ ...current, assistant_model: event.target.value }))}
+                  />
+                ) : (
+                  <Select id="settings-ai-assistant-model" value={config.assistant_model} onValueChange={(value) => setConfig((current) => ({ ...current, assistant_model: value }))}>
                     {availableQuickModels.map((model) => <option key={model} value={model}>{model}</option>)}
                   </Select>
                 )}
