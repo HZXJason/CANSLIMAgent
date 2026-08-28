@@ -46,6 +46,8 @@ describe('AppShell market theme', () => {
     expect(screen.getByRole('heading', { name: '你主要关注哪个市场？' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /我是 A 股投资者/ })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /我是美股投资者/ })).toBeInTheDocument();
+    expect(screen.queryByText('沪深北市场 · 人民币口径')).not.toBeInTheDocument();
+    expect(screen.queryByText('美国市场 · 美元口径')).not.toBeInTheDocument();
     expect(screen.queryByText('筛选页面')).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByRole('button', { name: /我是 A 股投资者/ }));

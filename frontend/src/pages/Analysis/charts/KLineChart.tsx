@@ -48,6 +48,19 @@ interface CandleShapeProps {
   assetMarket?: AssetMarket;
 }
 
+export function getCandleVisualMetrics(slotWidth: number) {
+  const safeWidth = Math.max(0, slotWidth);
+  return {
+    bodyWidth: Math.min(safeWidth * 0.72, 12),
+    wickWidth: Math.min(safeWidth * 0.55, 1.4)
+  };
+}
+
+export function getKLineBarLayout(period: KLinePeriod) {
+  const barSize = period === 'daily' ? 1 : period === 'weekly' ? 4 : 8;
+  return { barSize, barGap: -barSize };
+}
+
 function CandleStickShape({ x = 0, y = 0, width = 0, height = 0, payload, assetMarket = 'US' }: CandleShapeProps) {
   if (!payload) return null;
   const colors = KLINE_MARKET_COLORS[assetMarket];
@@ -59,11 +72,11 @@ function CandleStickShape({ x = 0, y = 0, width = 0, height = 0, payload, assetM
   const bodyY = Math.min(openY, closeY);
   const bodyHeight = Math.max(2, Math.abs(closeY - openY));
   const centerX = x + width / 2;
-  const bodyWidth = Math.max(4, Math.min(width * 0.58, 12));
+  const { bodyWidth, wickWidth } = getCandleVisualMetrics(width);
 
   return (
     <g>
-      <line x1={centerX} x2={centerX} y1={y} y2={y + height} stroke={color} strokeWidth={1.4} />
+      <line x1={centerX} x2={centerX} y1={y} y2={y + height} stroke={color} strokeWidth={wickWidth} />
       <rect x={centerX - bodyWidth / 2} y={bodyY} width={bodyWidth} height={bodyHeight} rx={1.5} fill={color} />
     </g>
   );
@@ -93,6 +106,7 @@ export default function KLineChart({ data, status, period, assetMarket, onPeriod
   const finalStatus = statusFromLength(status, items.length);
   const maxVolume = Math.max(...items.map((item) => item.volume), 1);
   const colors = KLINE_MARKET_COLORS[assetMarket];
+  const barLayout = getKLineBarLayout(period);
 
   return (
     <ChartFrame
@@ -126,7 +140,7 @@ export default function KLineChart({ data, status, period, assetMarket, onPeriod
       }
     >
       <ResponsiveContainer width="100%" height="100%">
-        <ComposedChart data={items} margin={{ top: 8, right: 12, bottom: 0, left: 0 }}>
+        <ComposedChart data={items} barGap={barLayout.barGap} margin={{ top: 8, right: 12, bottom: 0, left: 0 }}>
           <CartesianGrid stroke={chartGridColor} vertical={false} />
           <XAxis
             dataKey="date"
@@ -138,12 +152,12 @@ export default function KLineChart({ data, status, period, assetMarket, onPeriod
           <YAxis yAxisId="price" domain={['dataMin', 'dataMax']} tick={{ fill: chartTextColor, fontSize: 11 }} stroke={chartGridColor} width={48} />
           <YAxis yAxisId="volume" orientation="right" hide domain={[0, maxVolume * 4]} />
           <RechartsTooltip content={<TooltipContent />} />
-          <Bar yAxisId="volume" dataKey="volume" barSize={6} isAnimationActive={false}>
+          <Bar yAxisId="volume" dataKey="volume" barSize={barLayout.barSize} isAnimationActive={false}>
             {items.map((item) => (
               <Cell key={item.date + '-volume'} fill={item.up ? colors.volumeUp : colors.volumeDown} />
             ))}
           </Bar>
-          <Bar yAxisId="price" dataKey="priceRange" shape={<CandleStickShape assetMarket={assetMarket} />} isAnimationActive={false} />
+          <Bar yAxisId="price" dataKey="priceRange" barSize={barLayout.barSize} shape={<CandleStickShape assetMarket={assetMarket} />} isAnimationActive={false} />
         </ComposedChart>
       </ResponsiveContainer>
     </ChartFrame>

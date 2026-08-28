@@ -49,4 +49,25 @@ describe('StockHeader', () => {
     expect(screen.getByRole('heading', { name: '600519' })).toBeInTheDocument();
     expect(screen.getByText('A股市场')).toBeInTheDocument();
   });
+
+  it('shows the AI badge only when a completed result is available in the current session', () => {
+    const analyzedSummary = { ...insufficientSummary, ai_analyzed: true };
+    const { rerender } = render(
+      <MemoryRouter>
+        <StockHeader symbol="MU" tabName="Micron" summary={analyzedSummary} assetMarket="US" hasCurrentAIAnalysis={false} />
+      </MemoryRouter>
+    );
+
+    expect(screen.queryByText('AI 曾分析')).not.toBeInTheDocument();
+    expect(screen.queryByText('AI 已分析')).not.toBeInTheDocument();
+
+    rerender(
+      <MemoryRouter>
+        <StockHeader symbol="MU" tabName="Micron" summary={analyzedSummary} assetMarket="US" hasCurrentAIAnalysis />
+      </MemoryRouter>
+    );
+
+    expect(screen.getByText('AI 已分析')).toBeInTheDocument();
+    expect(screen.queryByText('AI 曾分析')).not.toBeInTheDocument();
+  });
 });

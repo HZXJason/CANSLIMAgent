@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { fetchCompanyProfile, fetchEPSQuarterly, fetchGrossMarginQuarterly, fetchKLine, fetchRevenueAnnual, fetchRS, fetchSecondLayerData, fetchStockSummary } from '../../lib/api';
 import { assetMarketForSymbol } from '../../lib/markets';
-import { createInitialAnalysisState, useAnalysisStore } from '../../stores/analysisStore';
+import { createInitialAnalysisState, hasGeneratedAIAnalysis, useAnalysisStore } from '../../stores/analysisStore';
 import type { ChartStatus } from '../../types/analysis';
 import AISection from './ai/AISection';
 import CompanyProfileCard from './CompanyProfileCard';
@@ -192,7 +192,13 @@ export default function AnalysisPage({ symbol, tabName }: AnalysisPageProps) {
 
   return (
     <div className="min-w-0 space-y-5">
-      <StockHeader symbol={normalized} tabName={tabName} summary={state.stockSummary} assetMarket={assetMarket} />
+      <StockHeader
+        symbol={normalized}
+        tabName={tabName}
+        summary={state.stockSummary}
+        assetMarket={assetMarket}
+        hasCurrentAIAnalysis={state.aiStatus === 'done' && hasGeneratedAIAnalysis(state)}
+      />
       <section className="dossier-section grid min-w-0 items-start gap-3 sm:gap-4 xl:grid-cols-[minmax(0,1.72fr)_minmax(320px,0.82fr)]" aria-label="价格与公司概览">
         <KLineChart data={state.klineData} status={state.chartStatus.kline} period={state.klinePeriod} assetMarket={assetMarket} onPeriodChange={(period) => setKLinePeriod(normalized, period)} />
         <div className="grid min-w-0 gap-3 sm:gap-4 md:grid-cols-2 xl:grid-cols-1">

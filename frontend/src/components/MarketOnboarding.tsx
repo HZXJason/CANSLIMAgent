@@ -5,11 +5,10 @@ import type { AssetMarket } from '../types';
 const choices: Array<{
   market: AssetMarket;
   title: string;
-  description: string;
   icon: typeof Building2;
 }> = [
-  { market: 'CN', title: '我是 A 股投资者', description: '沪深北市场 · 人民币口径', icon: Building2 },
-  { market: 'US', title: '我是美股投资者', description: '美国市场 · 美元口径', icon: Globe2 }
+  { market: 'CN', title: '我是 A 股投资者', icon: Building2 },
+  { market: 'US', title: '我是美股投资者', icon: Globe2 }
 ];
 
 export function MarketOnboarding() {
@@ -30,7 +29,7 @@ export function MarketOnboarding() {
         </div>
 
         <div className="grid border-b border-rule-strong sm:grid-cols-2">
-          {choices.map(({ market, title, description, icon: Icon }, index) => (
+          {choices.map(({ market, title, icon: Icon }, index) => (
             <button
               key={market}
               type="button"
@@ -41,10 +40,7 @@ export function MarketOnboarding() {
                 <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-sm border border-slate-700 bg-slate-950/70 text-brand-200 transition-colors group-hover:border-brand-300/50 group-hover:text-brand-100">
                   <Icon className="h-5 w-5" strokeWidth={1.7} aria-hidden="true" />
                 </span>
-                <span>
-                  <span className="block font-display text-xl font-bold text-white sm:text-2xl">{title}</span>
-                  <span className="mt-2 block text-sm text-slate-500">{description}</span>
-                </span>
+                <span className="font-display text-xl font-bold text-white sm:text-2xl">{title}</span>
               </span>
               <ArrowRight className="h-5 w-5 shrink-0 text-slate-600 transition-[color,transform] duration-150 group-hover:translate-x-1 group-hover:text-brand-200" aria-hidden="true" />
             </button>

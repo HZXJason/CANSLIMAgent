@@ -17,9 +17,10 @@ interface StockHeaderProps {
   tabName: string;
   summary: StockSummary | null;
   assetMarket: AssetMarket;
+  hasCurrentAIAnalysis?: boolean;
 }
 
-export default function StockHeader({ symbol, tabName, summary, assetMarket }: StockHeaderProps) {
+export default function StockHeader({ symbol, tabName, summary, assetMarket, hasCurrentAIAnalysis = false }: StockHeaderProps) {
   const navigate = useNavigate();
   const visibleSymbol = displaySymbol(symbol);
   const thresholds = useScreenerStore((state) => state.thresholds);
@@ -40,7 +41,8 @@ export default function StockHeader({ symbol, tabName, summary, assetMarket }: S
   const marketLabel = summaryMarket && assetMarketForScreenerMarket(summaryMarket) === assetMarket
     ? screenerMarketLabel(summaryMarket)
     : assetMarket === 'CN' ? 'A股市场' : '美股市场';
-  const hasMetadata = Boolean(marketLabel || summary?.data_as_of || summary?.metrics.n || summary?.ai_analyzed);
+  const showAIAnalysisBadge = hasCurrentAIAnalysis;
+  const hasMetadata = Boolean(marketLabel || summary?.data_as_of || summary?.metrics.n || showAIAnalysisBadge);
 
   return (
     <section
@@ -78,7 +80,7 @@ export default function StockHeader({ symbol, tabName, summary, assetMarket }: S
                     N
                   </span>
                 ) : null}
-                {summary?.ai_analyzed ? (
+                {showAIAnalysisBadge ? (
                   <span className="inline-flex shrink-0 items-center gap-1 rounded-full border border-violet-300/25 bg-violet-400/10 px-2 py-0.5 font-bold text-violet-200">
                     <Sparkles className="h-3.5 w-3.5" />
                     AI 已分析
