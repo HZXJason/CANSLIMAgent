@@ -3,7 +3,7 @@ name: ci
 on:
   pull_request:
   push:
-    branches: [main, dev]
+    branches: [dev, feat/alphalens-v2]
 
 permissions:
   contents: read
