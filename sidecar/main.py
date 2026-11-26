@@ -33,6 +33,7 @@ from analysis_runs import (
     validate_run_id,
 )
 from data_auditor import audit_data, render_data_audit
+from evidence_cards import compile_deterministic_cards, enrich_counter_thesis_with_llm
 from journal_reflection import build_journal_reflection
 from playbook_suggestion import suggest_playbooks
 from pretrade_review import review_with_llm
@@ -254,7 +255,8 @@ class PreTradeReviewRequest(StrictRequestModel):
     trading_principles: list[dict[str, Any]] = Field(default_factory=list, max_length=100)
     trading_playbooks: list[dict[str, Any]] = Field(default_factory=list, max_length=100)
     trading_policies: list[dict[str, Any]] = Field(default_factory=list, max_length=100)
-    profile_tags: list[dict[str, Any]] = Field(default_factory=list, max_length=100)
+    market_regime: dict[str, Any] = Field(default_factory=dict)
+    position_sizing: dict[str, Any] = Field(default_factory=dict)
     context_version: str | None = Field(default=None, max_length=128)
 
     @field_validator("plan_snapshot", "research_evidence", "current_evidence")
@@ -263,6 +265,16 @@ class PreTradeReviewRequest(StrictRequestModel):
         if len(json.dumps(value, ensure_ascii=False, default=str).encode("utf-8")) > 1024 * 1024:
             raise ValueError("review context exceeds 1 MiB")
         return value
+
+
+class EvidenceCardsRequest(StrictRequestModel):
+    ticker: str = Field(..., min_length=1, max_length=32, pattern=r"^[A-Za-z0-9][A-Za-z0-9.^=_-]{0,31}$")
+    include_ai: bool = False
+    llm_provider: str = Field(default="openai", min_length=1, max_length=64)
+    model: str = Field(default="gpt-4o-mini", min_length=1, max_length=256)
+    backend_url: str | None = Field(default=None, max_length=2048)
+    api_key: str | None = Field(default=None, min_length=1, max_length=8192, repr=False)
+    context: dict[str, Any] = Field(default_factory=dict)
 
 
 class PlaybookSuggestionRequest(StrictRequestModel):
@@ -1965,6 +1977,31 @@ async def reflect_journal(request: JournalReflectionRequest):
     if request.schema_version != "vibe.trade_record.v1":
         raise HTTPException(status_code=400, detail="schema_version must be vibe.trade_record.v1")
     return await asyncio.to_thread(build_journal_reflection, request.records)
+
+
+@app.post("/evidence-cards")
+async def compile_evidence_cards(request: EvidenceCardsRequest):
+    pack = compile_deterministic_cards(request.ticker, request.context)
+    if not request.include_ai:
+        return pack
+    try:
+        request.backend_url = validate_backend_url(request.backend_url)
+        analysis_request = AnalysisRequest(
+            ticker=request.ticker,
+            llm_provider=request.llm_provider,
+            deep_think_llm=request.model,
+            quick_think_llm=request.model,
+            backend_url=request.backend_url,
+            online_tools=False,
+            analysts=["technical"],
+            api_key=request.api_key,
+        )
+        llm = create_role_llm(analysis_request)
+        return await asyncio.to_thread(enrich_counter_thesis_with_llm, pack, llm)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
 
 
 @app.post("/trade-plans/review")

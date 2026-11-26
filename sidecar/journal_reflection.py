@@ -18,15 +18,11 @@ from __future__ import annotations
 
 import json
 import math
-import os
 import statistics
-# A fixed argv subprocess is required for the isolated Vibe runtime.
-import subprocess  # nosec B404
 from collections import defaultdict, deque
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from pathlib import Path
 from typing import Any
 
 
@@ -190,29 +186,12 @@ def analyze_trade_records(records: Sequence[Mapping[str, Any]] | None) -> dict[s
         "reflection_text": reflection_text,
     }
 
-    vibe_result, vibe_trace = _run_vibe_journal(sorted_trades)
-    result["engine"] = vibe_result.get("engine", "vibe-trading") if vibe_result else "canslim-compatible-fallback"
-    result["source_trace"] = vibe_trace
-    if vibe_result:
-        result["vibe_analysis"] = vibe_result
-        # Keep the corrected application profile as the public summary.  The
-        # upstream Vibe FIFO currently over-allocates original buy fees after a
-        # partial sell; its untouched canonical output remains auditable under
-        # ``vibe_analysis`` while the user-facing totals use remaining-fee lots.
-        result["compatibility_corrections"] = [
-            "partial-fill buy fees are allocated from the remaining fee pool"
-        ]
-        vibe_behavior = vibe_result.get("behavior")
-        if isinstance(vibe_behavior, dict):
-            merged_behavior: dict[str, Any] = {}
-            for key in set(behavior) | set(vibe_behavior):
-                local_item = behavior.get(key)
-                vibe_item = vibe_behavior.get(key)
-                if isinstance(local_item, dict) and isinstance(vibe_item, dict):
-                    merged_behavior[key] = {**local_item, **vibe_item}
-                else:
-                    merged_behavior[key] = vibe_item if vibe_item is not None else local_item
-            result["behavior"] = merged_behavior
+    result["engine"] = "alphalens-deterministic-fifo-v2"
+    result["source_trace"] = {
+        "provider": "alphalens-local",
+        "transport": "in-process",
+        "status": "ok",
+    }
 
     # This assertion is deliberately part of the boundary.  It prevents a
     # future metric from leaking NaN/Infinity or datetime objects to FastAPI.
@@ -224,99 +203,6 @@ def build_journal_reflection(records: Sequence[Mapping[str, Any]] | None) -> dic
     """Semantic alias used by callers that treat the output as prompt context."""
 
     return analyze_trade_records(records)
-
-
-def _vibe_root() -> Path:
-    configured = os.getenv("VIBE_TRADING_ROOT")
-    if configured:
-        return Path(configured).expanduser().resolve()
-    bundled = Path(__file__).resolve().parent / "vendor" / "Vibe-Trading"
-    if bundled.exists():
-        return bundled
-    return Path(__file__).resolve().parents[2] / "TradingAgent2.0" / "Vibe-Trading"
-
-
-def _trade_to_vibe_record(trade: _Trade) -> dict[str, Any]:
-    return {
-        "datetime": _iso(trade.dt),
-        "symbol": trade.symbol,
-        "name": trade.name,
-        "side": trade.side,
-        "quantity": trade.quantity,
-        "price": trade.price,
-        "amount": trade.amount,
-        "fee": trade.fee,
-        "market": trade.market,
-    }
-
-
-def _run_vibe_journal(trades: list[_Trade]) -> tuple[dict[str, Any] | None, dict[str, Any]]:
-    """Invoke Vibe's real journal functions in the Vibe virtual environment."""
-    root = _vibe_root()
-    interpreter = root / ".venv" / "bin" / "python"
-    runner = Path(__file__).resolve().with_name("vibe_journal_runner.py")
-    trace: dict[str, Any] = {
-        "provider": "vibe-trading",
-        "transport": "isolated-subprocess",
-        "interpreter": str(interpreter),
-        "runner": str(runner),
-        "status": "error",
-        "error": None,
-    }
-    if not trades:
-        trace.update({"status": "skipped", "error": "no valid trade records"})
-        return None, trace
-    if not interpreter.exists():
-        trace["error"] = f"Vibe-Trading interpreter not found: {interpreter}"
-        return None, trace
-
-    timeout_raw = os.getenv("VIBE_JOURNAL_TIMEOUT_SECONDS", "30")
-    try:
-        timeout = max(1.0, float(timeout_raw))
-    except ValueError:
-        timeout = 30.0
-    env = os.environ.copy()
-    env["VIBE_TRADING_ROOT"] = str(root)
-    payload = json.dumps(
-        {"schema_version": INPUT_SCHEMA_VERSION, "records": [_trade_to_vibe_record(trade) for trade in trades]},
-        ensure_ascii=False,
-        allow_nan=False,
-    )
-    try:
-        # The interpreter and runner are server-owned filesystem paths; shell is never used.
-        completed = subprocess.run(  # nosec B603
-            [str(interpreter), str(runner)],
-            input=payload,
-            text=True,
-            capture_output=True,
-            cwd=str(root / "agent"),
-            env=env,
-            timeout=timeout,
-            check=False,
-        )
-    except (OSError, subprocess.TimeoutExpired) as exc:
-        trace["error"] = str(exc)
-        return None, trace
-    if completed.returncode != 0:
-        trace["error"] = (completed.stderr or completed.stdout or f"exit {completed.returncode}").strip()[:2000]
-        return None, trace
-    try:
-        result = json.loads(completed.stdout)
-    except json.JSONDecodeError as exc:
-        trace["error"] = f"invalid Vibe JSON output: {exc}"
-        return None, trace
-    if not isinstance(result, dict) or result.get("engine") != "vibe-trading":
-        trace["error"] = "Vibe runner returned an unexpected payload"
-        return None, trace
-    trace.update(
-        {
-            "status": "ok",
-            "error": None,
-            "implementation": result.get("implementation"),
-            "record_count": result.get("record_count"),
-        }
-    )
-    return result, trace
 
 
 def _normalize_trade(raw: Any, index: int, warnings: list[dict[str, Any]]) -> _Trade | None:

@@ -111,6 +111,7 @@ func main() {
 	preTradeReviewHandler := handlers.NewPreTradeReviewHandler(database, preTradeAIReviewer, llmCredentialStore).WithMarketContext(marketRegimeService, analysisService)
 	tradeHandler := handlers.NewTradeHandler(database, marketRegimeService)
 	deskHandler := handlers.NewDeskHandler(database, marketRegimeService)
+	evidenceCardsHandler := handlers.NewEvidenceCardsHandler(analysisService, llmCredentialStore, cfg.AIAnalysisUpstreamURL, cfg.SidecarSharedSecret)
 	playbookSuggester := services.NewHTTPPlaybookSuggester(cfg.AIAnalysisUpstreamURL, 2*time.Minute, cfg.SidecarSharedSecret)
 	profileHandler := handlers.NewProfileHandler(database, playbookSuggester).WithCredentialStore(llmCredentialStore)
 	decisionSpineHandler := handlers.NewDecisionSpineHandler(database)
@@ -170,6 +171,7 @@ func main() {
 		api.GET("/stocks/:symbol/revenue/annual", chartsHandler.RevenueAnnual)
 		api.GET("/stocks/:symbol/margin/gross/quarterly", chartsHandler.GrossMarginQuarterly)
 		api.GET("/stocks/:symbol/second-layer-data", chartsHandler.SecondLayerData)
+		api.POST("/stocks/:symbol/evidence-cards", evidenceCardsHandler.Compile)
 		api.PATCH("/stocks/:symbol/n-label", screenerHandler.UpdateNLabel)
 		api.PATCH("/stocks/:symbol/ai-analysis", screenerHandler.MarkAIAnalysisCompleted)
 		api.GET("/analysis/:symbol/*action", func(c *gin.Context) {
