@@ -56,7 +56,7 @@ type Trade struct {
 	EntrySlippageR     *float64   `json:"entry_slippage_r" gorm:"type:numeric(12,4)"`
 	HoldingDays        *float64   `json:"holding_days" gorm:"type:numeric(10,2)"`
 	Quadrant           string     `json:"quadrant" gorm:"type:text;not null;default:'open'"`
-	AutoViolations     []string   `json:"auto_violations" gorm:"serializer:json;type:jsonb;not null"`
+	AutoViolations     []string   `json:"auto_violations" gorm:"serializer:json;type:jsonb;not null;default:'[]'"`
 }
 
 func (trade *Trade) BeforeCreate(_ *gorm.DB) error {
