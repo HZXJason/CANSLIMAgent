@@ -58,6 +58,10 @@ final class APIClient {
         try await request(path, method: method, query: query, body: Optional<EmptyBody>.none)
     }
 
+    func fetchDesk(market: String) async throws -> DeskPayload {
+        try await request("/desk", query: [URLQueryItem(name: "market", value: market)])
+    }
+
     func raw(_ path: String, query: [URLQueryItem] = []) async throws -> (Data, URLResponse) {
         let request = try makeRequest(path: path, method: "GET", query: query)
         let (data, response) = try await session.data(for: request)

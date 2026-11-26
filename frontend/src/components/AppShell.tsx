@@ -1,23 +1,52 @@
 import { Suspense, useLayoutEffect } from 'react';
-import { BarChart3, BookOpenCheck, CalendarDays, ClipboardList, Filter, UserRound } from 'lucide-react';
+import { BarChart3, ClipboardList, ShieldCheck, SlidersHorizontal } from 'lucide-react';
 import { NavLink, Outlet } from 'react-router-dom';
 import { cn } from '../lib/utils';
 import { useMarketStore } from '../stores/marketStore';
 import { MarketOnboarding } from './MarketOnboarding';
 
-const topItems = [
-  { to: '/today', label: '今日', icon: CalendarDays },
-  { to: '/screener', label: '发现', icon: Filter },
-  { to: '/analysis', label: '个股分析', icon: BarChart3 },
-  { to: '/trade-plans', label: '交易计划', icon: ClipboardList },
-  { to: '/journal', label: '交易日志', icon: BookOpenCheck }
+const navItems = [
+  { to: '/desk', label: '作战室', icon: ShieldCheck },
+  { to: '/research', label: '研究台', icon: BarChart3 },
+  { to: '/positions', label: '头寸簿', icon: ClipboardList },
+  { to: '/system', label: '交易系统', icon: SlidersHorizontal }
 ];
 
-const bottomItems = [
-  { to: '/me', label: '我的', icon: UserRound }
-];
+function MarketSwitchPill({ compact = false }: { compact?: boolean }) {
+  const assetMarket = useMarketStore((state) => state.assetMarket);
+  const setAssetMarket = useMarketStore((state) => state.setAssetMarket);
 
-function DesktopNavItem({ to, label, icon: Icon }: { to: string; label: string; icon: typeof Filter }) {
+  return (
+    <div
+      role="group"
+      aria-label="切换研究市场"
+      className={cn(
+        'grid grid-cols-2 rounded-sm border border-white/[0.1] bg-slate-950/70 p-0.5',
+        compact ? 'w-[104px]' : 'w-full'
+      )}
+    >
+      {(['US', 'CN'] as const).map((market) => {
+        const active = assetMarket === market;
+        return (
+          <button
+            key={market}
+            type="button"
+            onClick={() => setAssetMarket(market)}
+            aria-pressed={active}
+            className={cn(
+              'min-h-8 rounded-sm px-2 text-xs font-bold transition-colors',
+              active ? 'bg-accent text-paper-ink' : 'text-slate-400 hover:text-slate-100'
+            )}
+          >
+            {market === 'US' ? (compact ? 'US' : '美股 US') : compact ? 'CN' : 'A股 CN'}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+function DesktopNavItem({ to, label, icon: Icon }: { to: string; label: string; icon: typeof ShieldCheck }) {
   return (
     <NavLink
       to={to}
@@ -36,7 +65,7 @@ function DesktopNavItem({ to, label, icon: Icon }: { to: string; label: string; 
   );
 }
 
-function RailNavItem({ to, label, icon: Icon }: { to: string; label: string; icon: typeof Filter }) {
+function RailNavItem({ to, label, icon: Icon }: { to: string; label: string; icon: typeof ShieldCheck }) {
   return (
     <NavLink
       to={to}
@@ -56,7 +85,7 @@ function RailNavItem({ to, label, icon: Icon }: { to: string; label: string; ico
   );
 }
 
-function MobileNavItem({ to, label, icon: Icon }: { to: string; label: string; icon: typeof Filter }) {
+function MobileNavItem({ to, label, icon: Icon }: { to: string; label: string; icon: typeof ShieldCheck }) {
   return (
     <NavLink
       to={to}
@@ -98,7 +127,7 @@ export default function AppShell() {
         <div className="border-b border-white/[0.08] pb-3">
           <div className="flex min-h-12 items-center justify-center gap-3 xl:justify-start xl:px-0.5">
             <NavLink
-              to="/today"
+              to="/desk"
               aria-label="AlphaLens 首页"
               className="interactive-press flex flex-col gap-1 rounded-sm xl:items-start xl:gap-1.5"
             >
@@ -108,45 +137,39 @@ export default function AppShell() {
               <span className="font-display text-lg leading-none text-white xl:hidden">AL</span>
             </NavLink>
           </div>
+          <div className="mt-3 hidden xl:block">
+            <MarketSwitchPill />
+          </div>
         </div>
 
         <nav aria-label="主导航" className="mt-5 space-y-2 xl:mt-6">
-          {topItems.map((item) => (
+          {navItems.map((item) => (
             <div key={item.to} className="hidden xl:block">
               <DesktopNavItem to={item.to} label={item.label} icon={item.icon} />
             </div>
           ))}
           <div data-testid="rail-navigation" className="hidden flex-col items-center gap-2 md:flex xl:hidden">
-            {topItems.map((item) => (
+            {navItems.map((item) => (
               <RailNavItem key={item.to} to={item.to} label={item.label} icon={item.icon} />
             ))}
           </div>
         </nav>
 
-        <div className="mt-auto">
-          <nav aria-label="个人导航" className="space-y-1">
-            {bottomItems.map(item => <div key={item.to} className="hidden xl:block"><DesktopNavItem to={item.to} label={item.label} icon={item.icon} /></div>)}
-            <div className="hidden justify-center gap-1 md:flex xl:hidden">
-              {bottomItems.map(item => <RailNavItem key={item.to} to={item.to} label={item.label} icon={item.icon} />)}
-            </div>
-          </nav>
+        <div className="mt-auto border-t border-white/[0.06] pt-3 text-center xl:text-left">
+          <p className="hidden text-[11px] leading-relaxed text-slate-500 xl:block">
+            1R 风控 · 证据先于结论
+          </p>
         </div>
       </aside>
 
       <div className="min-w-0 flex-1">
         <header className="glass-chrome sticky top-0 z-40 flex min-h-14 items-center justify-between border-b border-white/[0.07] px-4 md:hidden">
           <div className="flex min-w-0 items-center gap-2.5">
-            <NavLink to="/today" className="interactive-press flex min-w-0 items-center gap-2.5 rounded-sm" aria-label="AlphaLens 首页">
+            <NavLink to="/desk" className="interactive-press flex min-w-0 items-center gap-2.5 rounded-sm" aria-label="AlphaLens 首页">
               <span className="font-display text-lg leading-none text-white">AlphaLens</span>
             </NavLink>
           </div>
-          <NavLink
-            to="/me"
-            aria-label="我的"
-            className={({ isActive }) => cn('interactive-press flex h-11 w-11 shrink-0 items-center justify-center rounded-sm border', isActive ? 'border-accent/50 bg-accent/10 text-ink' : 'border-slate-800 bg-slate-900/70 text-slate-400')}
-          >
-            <UserRound className="h-[18px] w-[18px]" strokeWidth={1.8} aria-hidden="true" />
-          </NavLink>
+          <MarketSwitchPill compact />
         </header>
 
         <main
@@ -168,9 +191,9 @@ export default function AppShell() {
 
       <nav
         aria-label="移动端主导航"
-        className="glass-chrome fixed inset-x-0 bottom-0 z-40 grid grid-cols-5 border-t border-white/[0.08] px-[max(0.5rem,env(safe-area-inset-left))] pb-[env(safe-area-inset-bottom)] pr-[max(0.5rem,env(safe-area-inset-right))] md:hidden"
+        className="glass-chrome fixed inset-x-0 bottom-0 z-40 grid grid-cols-4 border-t border-white/[0.08] px-1 pb-[env(safe-area-inset-bottom)] md:hidden"
       >
-        {topItems.map((item) => (
+        {navItems.map((item) => (
           <MobileNavItem key={item.to} to={item.to} label={item.label} icon={item.icon} />
         ))}
       </nav>

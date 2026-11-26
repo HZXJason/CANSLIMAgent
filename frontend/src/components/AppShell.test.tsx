@@ -6,19 +6,22 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { useMarketStore } from '../stores/marketStore';
 import AppShell from './AppShell';
 
-function renderShell(path = '/screener') {
+function renderShell(path = '/desk') {
   return render(
     <MemoryRouter initialEntries={[path]}>
       <Routes>
         <Route element={<AppShell />}>
-          <Route path="/screener" element={<div>筛选页面</div>} />
+          <Route path="/desk" element={<div>作战室页面</div>} />
+          <Route path="/research" element={<div>研究台页面</div>} />
+          <Route path="/positions" element={<div>头寸簿页面</div>} />
+          <Route path="/system" element={<div>交易系统页面</div>} />
         </Route>
       </Routes>
     </MemoryRouter>
   );
 }
 
-describe('AppShell market theme', () => {
+describe('AppShell 4-workspace layout', () => {
   beforeEach(() => {
     useMarketStore.setState({ assetMarket: 'US', hasSelectedMarket: true });
   });
@@ -44,63 +47,42 @@ describe('AppShell market theme', () => {
     renderShell();
 
     expect(screen.getByRole('heading', { name: '你主要关注哪个市场？' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /我是 A 股投资者/ })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /我是美股投资者/ })).toBeInTheDocument();
-    expect(screen.queryByText('沪深北市场 · 人民币口径')).not.toBeInTheDocument();
-    expect(screen.queryByText('美国市场 · 美元口径')).not.toBeInTheDocument();
-    expect(screen.queryByText('筛选页面')).not.toBeInTheDocument();
-
     fireEvent.click(screen.getByRole('button', { name: /我是 A 股投资者/ }));
 
     expect(useMarketStore.getState()).toMatchObject({ assetMarket: 'CN', hasSelectedMarket: true });
-    expect(screen.getByText('筛选页面')).toBeInTheDocument();
+    expect(screen.getByText('作战室页面')).toBeInTheDocument();
   });
 
-  it('does not expose market switching in desktop or mobile app chrome', () => {
-    renderShell();
+  it('provides 1-click US/CN market switching and 4 temporal workspaces', () => {
+    renderShell('/research');
 
-    expect(screen.queryByRole('combobox', { name: '股票市场' })).not.toBeInTheDocument();
+    const mobileNav = screen.getByRole('navigation', { name: '移动端主导航' });
+    expect(mobileNav.querySelectorAll('a')).toHaveLength(4);
+    expect(screen.getAllByRole('link', { name: '作战室' }).length).toBeGreaterThan(0);
+    expect(screen.getAllByRole('link', { name: '研究台' }).length).toBeGreaterThan(0);
+    expect(screen.getAllByRole('link', { name: '头寸簿' }).length).toBeGreaterThan(0);
+    expect(screen.getAllByRole('link', { name: '交易系统' }).length).toBeGreaterThan(0);
+
+    fireEvent.click(screen.getByRole('button', { name: 'A股 CN' }));
+    expect(useMarketStore.getState().assetMarket).toBe('CN');
   });
 
   it('keeps the active route readable on dark navigation surfaces', () => {
-    renderShell();
-
-    for (const link of screen.getAllByRole('link', { name: '发现' })) {
+    renderShell('/research');
+    for (const link of screen.getAllByRole('link', { name: '研究台' })) {
       expect(link.className).not.toContain('text-paper-ink');
     }
   });
 
   it('uses a vertical navigation rail between tablet and desktop breakpoints', () => {
     const { container } = renderShell();
-
     expect(container.querySelector('[data-testid="rail-navigation"]')).toHaveClass('flex-col');
   });
 
-  it('keeps stock analysis and exposes the personal workspace without adding a sixth mobile tab', () => {
+  it('keeps mobile header clean with brand and market switch only', () => {
     renderShell();
-    expect(screen.getAllByRole('link', { name: '个股分析' }).length).toBeGreaterThan(0);
-    expect(screen.getAllByRole('link', { name: '我的' }).length).toBeGreaterThan(0);
-    expect(screen.getByRole('navigation', { name: '移动端主导航' }).querySelectorAll('a')).toHaveLength(5);
-  });
-
-  it('keeps settings inside the personal workspace instead of the sidebar', () => {
-    renderShell();
-
-    const personalNavigation = screen.getByRole('navigation', { name: '个人导航' });
-    expect(within(personalNavigation).getAllByRole('link')).toHaveLength(2);
-    expect(within(personalNavigation).getAllByRole('link', { name: '我的' })).toHaveLength(2);
-    expect(within(personalNavigation).queryByRole('link', { name: '设置' })).not.toBeInTheDocument();
-  });
-
-  it('uses concise navigation without decorative English labels or slogans', () => {
-    renderShell();
-
     const mobileHeader = screen.getByRole('banner');
     expect(within(mobileHeader).getByText('AlphaLens')).toBeInTheDocument();
-    expect(within(mobileHeader).queryByText('发现')).not.toBeInTheDocument();
-    expect(screen.queryByText('DISCOVERY')).not.toBeInTheDocument();
-    expect(screen.queryByText('研究先于决策')).not.toBeInTheDocument();
-    expect(screen.queryByText('风险始终可见')).not.toBeInTheDocument();
-    expect(screen.queryByText('让 AI 展示证据')).not.toBeInTheDocument();
+    expect(within(mobileHeader).queryByText('作战室')).not.toBeInTheDocument();
   });
 });

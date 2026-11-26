@@ -29,6 +29,7 @@ interface StockListProps {
   hasRawData: boolean;
   filtered: boolean;
   unknownRuleLabels?: string[];
+  onSelectStock?: (symbol: string, name: string) => void;
 }
 
 function formatLabelTooltip(label: LabelResult) {
@@ -154,7 +155,7 @@ const StockRow = memo(function StockRow({ stock, hasAIAnalysis, onOpen, unknownR
   );
 });
 
-export default function StockList({ stocks, hasRawData, filtered, unknownRuleLabels = [] }: StockListProps) {
+export default function StockList({ stocks, hasRawData, filtered, unknownRuleLabels = [], onSelectStock }: StockListProps) {
   const navigate = useNavigate();
   const openTab = useTabStore((state) => state.openTab);
   const analysisStates = useAnalysisStore((state) => state.analysisStates);
@@ -180,9 +181,13 @@ export default function StockList({ stocks, hasRawData, filtered, unknownRuleLab
       const canonicalSymbol = canonicalStockSymbol(stock);
       if (!canonicalSymbol) return;
       openTab(canonicalSymbol, stock.name);
-      navigate('/analysis/' + encodeURIComponent(canonicalSymbol), { state: { name: stock.name } });
+      if (onSelectStock) {
+        onSelectStock(canonicalSymbol, stock.name);
+        return;
+      }
+      navigate('/research/' + encodeURIComponent(canonicalSymbol), { state: { name: stock.name } });
     },
-    [navigate, openTab]
+    [navigate, onSelectStock, openTab]
   );
 
   if (!hasRawData || stocks.length === 0) {

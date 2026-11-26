@@ -495,3 +495,51 @@ struct BrokerSyncResult: Codable { let positions: [BrokerPosition]; let executio
 struct BrokerSyncInput: Codable { let startAt: String?; let endAt: String? }
 struct BrokerImportInput: Codable { let executions: [BrokerExecution] }
 struct BrokerImportResponse: Codable { let created: Int; let skipped: Int; let warnings: [String] }
+
+struct MarketRegimeReport: Codable, Equatable {
+    let market: String
+    let status: String
+    let regime: String
+    let regimeLabel: String
+    let maxExposurePercent: Int
+    let distributionDays: Int
+    let guidance: String
+    let dataAsOf: String
+}
+
+struct TradesSummary: Codable, Equatable {
+    let totalTrades: Int
+    let openTrades: Int
+    let closedTrades: Int
+    let modelWins: Int
+    let goodLosses: Int
+    let unforcedErrors: Int
+    let toxicWins: Int
+    let expectancyR: Double
+    let disciplinedRLoopRate: Double
+    let openPortfolioRisk: Double
+    let openPortfolioRiskPercent: Double
+    let oneRAmount: Double
+    let maxPortfolioHeatPercent: Double
+}
+
+struct CompanionTrade: Codable, Identifiable, Equatable {
+    let id: String
+    let symbol: String
+    let currency: String
+    let openQuantity: Double
+    let avgEntryPrice: Double
+    let currentStopLoss: Double?
+    let openRiskAmount: Double
+}
+
+struct DeskPayload: Codable, Equatable {
+    let market: String
+    let timezone: String
+    let localDate: String
+    let session: String
+    let marketRegime: MarketRegimeReport
+    let summary: TradesSummary
+    let openTrades: [CompanionTrade]
+    let waitingPlans: [TradePlan]
+}

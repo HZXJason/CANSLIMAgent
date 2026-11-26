@@ -1,11 +1,16 @@
 import { request } from './api';
-import type { AIMemoryPreference, PlaybookInput, PlaybookSuggestion, PrincipleInput, ProfileDashboard, ProfileRange, TradingPlaybook, TradingPrinciple, TradingProfile, TradingProfileInput } from '../types/profile';
+import type { AIMemoryPreference, PlaybookInput, PlaybookSuggestion, PrincipleInput, ProfileDashboard, ProfileRange, TradingPlaybook, TradingPolicy, TradingPolicyKind, TradingPolicyOrigin, TradingPolicyStatus, TradingPrinciple, TradingProfile, TradingProfileInput } from '../types/profile';
 
 export const fetchTradingProfile = () => request<TradingProfile>('/profile');
 export const saveTradingProfile = (input: TradingProfileInput) => request<TradingProfile>('/profile', { method: 'PUT', body: JSON.stringify(input) });
 export const fetchPrinciples = () => request<TradingPrinciple[]>('/profile/principles');
 export const createPrinciple = (input: PrincipleInput) => request<TradingPrinciple>('/profile/principles', { method: 'POST', body: JSON.stringify(input) });
 export const patchPrinciple = (id: string, input: Partial<PrincipleInput>) => request<TradingPrinciple>('/profile/principles/' + encodeURIComponent(id), { method: 'PATCH', body: JSON.stringify(input) });
+export const fetchPolicies = () => request<TradingPolicy[]>('/profile/policies');
+export const createPolicy = (input: { kind: TradingPolicyKind; category: string; title: string; statement: string; strength?: 'hard' | 'soft' | 'reminder'; origin?: TradingPolicyOrigin; status?: TradingPolicyStatus; prompt_enabled?: boolean }) =>
+  request<TradingPolicy>('/profile/policies', { method: 'POST', body: JSON.stringify(input) });
+export const patchPolicy = (id: string, input: Partial<Pick<TradingPolicy, 'title' | 'statement' | 'status' | 'prompt_enabled' | 'strength'>>) =>
+  request<TradingPolicy>('/profile/policies/' + encodeURIComponent(id), { method: 'PATCH', body: JSON.stringify(input) });
 export const fetchPlaybooks = (includeArchived = true) => request<TradingPlaybook[]>('/profile/playbooks?include_archived=' + String(includeArchived));
 export const createPlaybook = (input: PlaybookInput) => request<TradingPlaybook>('/profile/playbooks', { method: 'POST', body: JSON.stringify(input) });
 export const patchPlaybook = (id: string, input: Partial<PlaybookInput>) => request<TradingPlaybook>('/profile/playbooks/' + encodeURIComponent(id), { method: 'PATCH', body: JSON.stringify(input) });
