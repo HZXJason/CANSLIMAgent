@@ -45,7 +45,7 @@ func (s *LLMCredentialStore) Status(ctx context.Context, provider, backendURL st
 		return status, nil
 	}
 	var credential models.LLMCredential
-	err = s.db.WithContext(ctx).Where("provider = ? AND backend_host = ?", provider, host).First(&credential).Error
+	err = s.db.WithContext(ctx).Where("user_id = ? AND provider = ? AND backend_host = ?", models.DefaultUserID, provider, host).First(&credential).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return status, nil
 	}
@@ -74,11 +74,11 @@ func (s *LLMCredentialStore) Save(ctx context.Context, provider, backendURL, api
 		return LLMCredentialStatus{}, err
 	}
 	credential := models.LLMCredential{
-		Provider: provider, BackendHost: host,
+		UserID: models.DefaultUserID, Provider: provider, BackendHost: host,
 		CredentialCiphertext: ciphertext, CredentialNonce: nonce,
 	}
 	err = s.db.WithContext(ctx).Clauses(clause.OnConflict{
-		Columns:   []clause.Column{{Name: "provider"}, {Name: "backend_host"}},
+		Columns:   []clause.Column{{Name: "user_id"}, {Name: "provider"}, {Name: "backend_host"}},
 		DoUpdates: clause.AssignmentColumns([]string{"credential_ciphertext", "credential_nonce", "updated_at"}),
 	}).Create(&credential).Error
 	if err != nil {
@@ -95,7 +95,7 @@ func (s *LLMCredentialStore) Delete(ctx context.Context, provider, backendURL st
 	if err != nil {
 		return err
 	}
-	return s.db.WithContext(ctx).Where("provider = ? AND backend_host = ?", provider, host).Delete(&models.LLMCredential{}).Error
+	return s.db.WithContext(ctx).Where("user_id = ? AND provider = ? AND backend_host = ?", models.DefaultUserID, provider, host).Delete(&models.LLMCredential{}).Error
 }
 
 func (s *LLMCredentialStore) Resolve(ctx context.Context, provider, backendURL string) (string, error) {
@@ -107,7 +107,7 @@ func (s *LLMCredentialStore) Resolve(ctx context.Context, provider, backendURL s
 		return "", err
 	}
 	var credential models.LLMCredential
-	err = s.db.WithContext(ctx).Where("provider = ? AND backend_host = ?", provider, host).First(&credential).Error
+	err = s.db.WithContext(ctx).Where("user_id = ? AND provider = ? AND backend_host = ?", models.DefaultUserID, provider, host).First(&credential).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return "", nil
 	}

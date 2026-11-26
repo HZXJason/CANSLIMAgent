@@ -22,7 +22,7 @@ func setupTradeReviewTest(t *testing.T) (*gorm.DB, *TradeReviewHandler, *gin.Eng
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := database.AutoMigrate(&models.TradePlan{}, &models.TradeJournalEntry{}, &models.TradeReview{}, &models.BehaviorObservation{}); err != nil {
+	if err := database.AutoMigrate(&models.TradePlan{}, &models.Trade{}, &models.TradeJournalEntry{}, &models.TradeReview{}, &models.BehaviorObservation{}); err != nil {
 		t.Fatal(err)
 	}
 	handler := NewTradeReviewHandler(database)
@@ -105,6 +105,17 @@ func TestTradeReviewExplicitPlanLinkRejectsMismatchAndAppendsVersion(t *testing.
 	}
 	if stored.TradePlanID == nil || *stored.TradePlanID != goodPlan.ID {
 		t.Fatalf("expected explicit plan link, got %+v", stored.TradePlanID)
+	}
+	if stored.TradeID == nil {
+		t.Fatalf("expected linked journal entry to join a trade aggregate: %+v", stored)
+	}
+	var aggregate models.Trade
+	if err := database.First(&aggregate, "id = ?", *stored.TradeID).Error; err != nil || aggregate.TradePlanID == nil || *aggregate.TradePlanID != goodPlan.ID {
+		t.Fatalf("expected trade aggregate for linked plan: trade=%+v err=%v", aggregate, err)
+	}
+	var latestReview models.TradeReview
+	if err := database.Where("journal_entry_id = ?", entry.ID).Order("version desc").First(&latestReview).Error; err != nil || latestReview.TradeID == nil || *latestReview.TradeID != aggregate.ID {
+		t.Fatalf("expected review to reference complete trade: review=%+v err=%v", latestReview, err)
 	}
 }
 

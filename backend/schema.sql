@@ -53,9 +53,26 @@ ON CONFLICT (name) DO UPDATE SET is_default = TRUE;
 
 CREATE EXTENSION IF NOT EXISTS pgcrypto;
 
+-- Runtime migrations in internal/db/postgres.go are canonical. This file is a
+-- readable baseline for the user-owned trading context introduced in v2.
+CREATE TABLE IF NOT EXISTS users (
+  id            UUID PRIMARY KEY,
+  created_at    TIMESTAMPTZ DEFAULT NOW(),
+  updated_at    TIMESTAMPTZ DEFAULT NOW(),
+  display_name  TEXT NOT NULL,
+  timezone      TEXT NOT NULL,
+  base_currency TEXT NOT NULL,
+  status        TEXT NOT NULL
+);
+
+INSERT INTO users (id, display_name, timezone, base_currency, status)
+VALUES ('00000000-0000-4000-8000-000000000001', 'AlphaLens User', 'Asia/Shanghai', 'USD', 'active')
+ON CONFLICT (id) DO NOTHING;
+
 -- 交易日志：逐笔成交，字段与 Vibe-Trading TradeRecord 对齐
 CREATE TABLE IF NOT EXISTS trade_journal_entries (
   id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id     UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   executed_at TIMESTAMPTZ NOT NULL,
@@ -133,6 +150,7 @@ CREATE INDEX IF NOT EXISTS idx_broker_authorization_sessions_consumed_at ON brok
 -- Vibe-Trading 交易画像与行为反思运行记录
 CREATE TABLE IF NOT EXISTS trade_journal_reflections (
   id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id      UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   scope        TEXT NOT NULL DEFAULT 'all',
   record_count INTEGER NOT NULL,
@@ -146,6 +164,7 @@ CREATE INDEX IF NOT EXISTS idx_trade_journal_reflections_scope ON trade_journal_
 -- 交易计划：发生在交易日志之前的预案，可执行后关联到日志
 CREATE TABLE IF NOT EXISTS trade_plans (
   id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id             UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   ticker              TEXT NOT NULL,
@@ -158,6 +177,11 @@ CREATE TABLE IF NOT EXISTS trade_plans (
   stop_loss           NUMERIC(12, 4),
   take_profit         NUMERIC(12, 4),
   position_size       NUMERIC(6, 2),
+  planned_quantity    NUMERIC(20, 4),
+  risk_multiple       NUMERIC(6, 2),
+  initial_risk_per_share NUMERIC(12, 4),
+  one_r_amount        NUMERIC(20, 4),
+  playbook_id         UUID,
   rationale           TEXT,
   ai_summary          TEXT,
   notes               TEXT,
@@ -167,3 +191,97 @@ CREATE TABLE IF NOT EXISTS trade_plans (
 
 CREATE INDEX IF NOT EXISTS idx_trade_plans_created_at ON trade_plans (created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_trade_plans_ticker_status ON trade_plans (ticker, status);
+
+CREATE TABLE IF NOT EXISTS trading_profiles (
+  id                                  BIGSERIAL PRIMARY KEY,
+  user_id                             UUID NOT NULL UNIQUE REFERENCES users(id) ON DELETE CASCADE,
+  created_at                          TIMESTAMPTZ DEFAULT NOW(),
+  updated_at                          TIMESTAMPTZ DEFAULT NOW(),
+  configured                         BOOLEAN NOT NULL DEFAULT FALSE,
+  primary_markets                    JSONB NOT NULL DEFAULT '[]'::jsonb,
+  asset_classes                      JSONB NOT NULL DEFAULT '[]'::jsonb,
+  trading_horizons                   JSONB NOT NULL DEFAULT '[]'::jsonb,
+  strategy_preferences               JSONB NOT NULL DEFAULT '[]'::jsonb,
+  investment_objectives              JSONB NOT NULL DEFAULT '[]'::jsonb,
+  risk_tolerance                     TEXT,
+  max_risk_per_trade_percent         NUMERIC(8,4),
+  max_daily_loss_percent             NUMERIC(8,4),
+  max_open_positions                 BIGINT,
+  max_portfolio_concentration_percent NUMERIC(8,4),
+  leverage_allowed                   BOOLEAN,
+  account_equity                     NUMERIC(20,4),
+  account_currency                   TEXT NOT NULL DEFAULT 'USD',
+  standard_risk_percent              NUMERIC(8,4),
+  max_portfolio_heat_percent         NUMERIC(8,4)
+);
+
+CREATE TABLE IF NOT EXISTS trading_policies (
+  id             UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id        UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  created_at     TIMESTAMPTZ DEFAULT NOW(),
+  updated_at     TIMESTAMPTZ DEFAULT NOW(),
+  kind           TEXT NOT NULL CHECK (kind IN ('rule', 'discipline')),
+  category       TEXT NOT NULL,
+  title          TEXT NOT NULL,
+  statement      TEXT NOT NULL,
+  condition      JSONB NOT NULL DEFAULT '{}'::jsonb,
+  action         JSONB NOT NULL DEFAULT '{}'::jsonb,
+  scope          JSONB NOT NULL DEFAULT '{}'::jsonb,
+  strength       TEXT NOT NULL CHECK (strength IN ('hard', 'soft', 'reminder')),
+  origin         TEXT NOT NULL CHECK (origin IN ('manual', 'ai_suggested', 'system')),
+  status         TEXT NOT NULL CHECK (status IN ('draft', 'active', 'archived')),
+  prompt_enabled BOOLEAN NOT NULL DEFAULT FALSE,
+  version        INTEGER NOT NULL DEFAULT 1,
+  effective_from TIMESTAMPTZ,
+  effective_to   TIMESTAMPTZ
+);
+
+CREATE INDEX IF NOT EXISTS idx_trading_policies_user_status ON trading_policies (user_id, status);
+
+CREATE TABLE IF NOT EXISTS trades (
+  id                       UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id                  UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  created_at               TIMESTAMPTZ DEFAULT NOW(),
+  updated_at               TIMESTAMPTZ DEFAULT NOW(),
+  trade_plan_id            UUID REFERENCES trade_plans(id) ON DELETE SET NULL,
+  playbook_id              UUID,
+  symbol                   TEXT NOT NULL,
+  name                     TEXT NOT NULL DEFAULT '',
+  market                   TEXT NOT NULL,
+  currency                 TEXT NOT NULL DEFAULT 'USD',
+  direction                TEXT NOT NULL CHECK (direction IN ('long', 'short')),
+  status                   TEXT NOT NULL CHECK (status IN ('open', 'closed', 'cancelled')),
+  opened_at                TIMESTAMPTZ NOT NULL,
+  closed_at                TIMESTAMPTZ,
+  open_quantity            NUMERIC(20,8) NOT NULL DEFAULT 0,
+  total_buy_quantity       NUMERIC(20,8) NOT NULL DEFAULT 0,
+  total_sell_quantity      NUMERIC(20,8) NOT NULL DEFAULT 0,
+  avg_entry_price          NUMERIC(20,8) NOT NULL DEFAULT 0,
+  avg_exit_price           NUMERIC(20,8),
+  current_stop_loss        NUMERIC(20,8),
+  total_fees               NUMERIC(20,8) NOT NULL DEFAULT 0,
+  planned_entry_price      NUMERIC(20,8),
+  planned_stop_loss        NUMERIC(20,8),
+  initial_risk_amount      NUMERIC(24,8),
+  open_risk_amount         NUMERIC(24,8) NOT NULL DEFAULT 0,
+  realized_pn_l            NUMERIC(24,8),
+  realized_pn_l_percent    NUMERIC(12,6),
+  realized_r               NUMERIC(12,4),
+  entry_slippage_r         NUMERIC(12,4),
+  holding_days             NUMERIC(10,2),
+  quadrant                 TEXT NOT NULL DEFAULT 'open',
+  auto_violations          JSONB NOT NULL DEFAULT '[]'::jsonb
+);
+
+ALTER TABLE trade_journal_entries ADD COLUMN IF NOT EXISTS trade_id UUID REFERENCES trades(id) ON DELETE SET NULL;
+
+CREATE TABLE IF NOT EXISTS prompt_context_snapshots (
+  id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id         UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  created_at      TIMESTAMPTZ DEFAULT NOW(),
+  purpose         TEXT NOT NULL,
+  context_version TEXT NOT NULL,
+  trade_plan_id   UUID REFERENCES trade_plans(id) ON DELETE SET NULL,
+  context_hash    TEXT NOT NULL,
+  payload         JSONB NOT NULL
+);

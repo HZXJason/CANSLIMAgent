@@ -253,6 +253,9 @@ class PreTradeReviewRequest(StrictRequestModel):
     trading_profile: dict[str, Any] = Field(default_factory=dict)
     trading_principles: list[dict[str, Any]] = Field(default_factory=list, max_length=100)
     trading_playbooks: list[dict[str, Any]] = Field(default_factory=list, max_length=100)
+    trading_policies: list[dict[str, Any]] = Field(default_factory=list, max_length=100)
+    profile_tags: list[dict[str, Any]] = Field(default_factory=list, max_length=100)
+    context_version: str | None = Field(default=None, max_length=128)
 
     @field_validator("plan_snapshot", "research_evidence", "current_evidence")
     @classmethod

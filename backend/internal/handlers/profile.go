@@ -45,9 +45,13 @@ func NewProfileHandler(database *gorm.DB, suggester PlaybookSuggester) *ProfileH
 func RegisterProfileRoutes(router gin.IRoutes, handler *ProfileHandler) {
 	router.GET("/profile", handler.Get)
 	router.PUT("/profile", handler.Put)
+	router.GET("/profile/context", handler.Context)
 	router.GET("/profile/principles", handler.ListPrinciples)
 	router.POST("/profile/principles", handler.CreatePrinciple)
 	router.PATCH("/profile/principles/:id", handler.PatchPrinciple)
+	router.GET("/profile/policies", handler.ListPolicies)
+	router.POST("/profile/policies", handler.CreatePolicy)
+	router.PATCH("/profile/policies/:id", handler.PatchPolicy)
 	router.GET("/profile/playbooks", handler.ListPlaybooks)
 	router.POST("/profile/playbooks", handler.CreatePlaybook)
 	router.PATCH("/profile/playbooks/:id", handler.PatchPlaybook)
@@ -60,16 +64,20 @@ func RegisterProfileRoutes(router gin.IRoutes, handler *ProfileHandler) {
 }
 
 func defaultProfile() models.TradingProfile {
-	return models.TradingProfile{ID: 1, Configured: false, PrimaryMarkets: []string{}, TradingHorizons: []string{}}
+	return models.TradingProfile{
+		UserID: models.DefaultUserID, Configured: false, PrimaryMarkets: []string{}, AssetClasses: []string{},
+		TradingHorizons: []string{}, StrategyPreferences: []string{}, InvestmentObjectives: []string{},
+		AccountCurrency: "USD",
+	}
 }
 
 func defaultMemoryPreference() models.AIMemoryPreference {
-	return models.AIMemoryPreference{ID: 1, PrinciplesEnabled: true, ObservationsEnabled: true, PlaybooksEnabled: true}
+	return models.AIMemoryPreference{UserID: models.DefaultUserID, PrinciplesEnabled: true, ObservationsEnabled: true, PlaybooksEnabled: true}
 }
 
 func (h *ProfileHandler) loadProfile(context *gin.Context) (models.TradingProfile, error) {
 	var profile models.TradingProfile
-	err := h.db.WithContext(context.Request.Context()).First(&profile, 1).Error
+	err := h.db.WithContext(context.Request.Context()).Where("user_id = ?", models.DefaultUserID).First(&profile).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return defaultProfile(), nil
 	}
@@ -78,7 +86,7 @@ func (h *ProfileHandler) loadProfile(context *gin.Context) (models.TradingProfil
 
 func (h *ProfileHandler) loadMemory(context *gin.Context) (models.AIMemoryPreference, error) {
 	var preference models.AIMemoryPreference
-	err := h.db.WithContext(context.Request.Context()).First(&preference, 1).Error
+	err := h.db.WithContext(context.Request.Context()).Where("user_id = ?", models.DefaultUserID).First(&preference).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return defaultMemoryPreference(), nil
 	}
@@ -94,12 +102,31 @@ func (h *ProfileHandler) Get(c *gin.Context) {
 	OK(c, profile)
 }
 
+func (h *ProfileHandler) Context(c *gin.Context) {
+	value, err := services.BuildUserTradingContext(c.Request.Context(), h.db, models.DefaultUserID, "behavior_coaching", h.now().UTC())
+	if err != nil {
+		Fail(c, http.StatusInternalServerError, "用户交易上下文读取失败")
+		return
+	}
+	OK(c, value)
+}
+
 type profileRequest struct {
-	PrimaryMarkets         []string `json:"primary_markets"`
-	TradingHorizons        []string `json:"trading_horizons"`
-	MaxRiskPerTradePercent *float64 `json:"max_risk_per_trade_percent"`
-	MaxDailyLossPercent    *float64 `json:"max_daily_loss_percent"`
-	MaxOpenPositions       *int     `json:"max_open_positions"`
+	PrimaryMarkets                   []string `json:"primary_markets"`
+	AssetClasses                     []string `json:"asset_classes"`
+	TradingHorizons                  []string `json:"trading_horizons"`
+	StrategyPreferences              []string `json:"strategy_preferences"`
+	InvestmentObjectives             []string `json:"investment_objectives"`
+	RiskTolerance                    *string  `json:"risk_tolerance"`
+	MaxRiskPerTradePercent           *float64 `json:"max_risk_per_trade_percent"`
+	MaxDailyLossPercent              *float64 `json:"max_daily_loss_percent"`
+	MaxOpenPositions                 *int     `json:"max_open_positions"`
+	MaxPortfolioConcentrationPercent *float64 `json:"max_portfolio_concentration_percent"`
+	LeverageAllowed                  *bool    `json:"leverage_allowed"`
+	AccountEquity                    *float64 `json:"account_equity"`
+	AccountCurrency                  *string  `json:"account_currency"`
+	StandardRiskPercent              *float64 `json:"standard_risk_percent"`
+	MaxPortfolioHeatPercent          *float64 `json:"max_portfolio_heat_percent"`
 }
 
 func (h *ProfileHandler) Put(c *gin.Context) {
@@ -109,7 +136,18 @@ func (h *ProfileHandler) Put(c *gin.Context) {
 		return
 	}
 	request.PrimaryMarkets = cleanUpperList(request.PrimaryMarkets)
+	request.AssetClasses = cleanLowerList(request.AssetClasses)
 	request.TradingHorizons = cleanLowerList(request.TradingHorizons)
+	request.StrategyPreferences = cleanLowerList(request.StrategyPreferences)
+	request.InvestmentObjectives = cleanLowerList(request.InvestmentObjectives)
+	if request.RiskTolerance != nil {
+		value := strings.ToLower(strings.TrimSpace(*request.RiskTolerance))
+		if value != "low" && value != "medium" && value != "high" {
+			Fail(c, http.StatusBadRequest, "风险承受能力只能是 low、medium 或 high")
+			return
+		}
+		request.RiskTolerance = &value
+	}
 	for _, market := range request.PrimaryMarkets {
 		if market != "US" && market != "CN" {
 			Fail(c, http.StatusBadRequest, "主要市场只能是 US 或 CN")
@@ -122,15 +160,54 @@ func (h *ProfileHandler) Put(c *gin.Context) {
 			return
 		}
 	}
-	if invalidPercent(request.MaxRiskPerTradePercent) || invalidPercent(request.MaxDailyLossPercent) {
+	if invalidPercent(request.MaxRiskPerTradePercent) || invalidPercent(request.MaxDailyLossPercent) || invalidPercent(request.MaxPortfolioConcentrationPercent) || invalidPercent(request.StandardRiskPercent) || invalidPercent(request.MaxPortfolioHeatPercent) {
 		Fail(c, http.StatusBadRequest, "风险比例必须大于 0 且不超过 100")
+		return
+	}
+	if request.AccountEquity != nil && *request.AccountEquity <= 0 {
+		Fail(c, http.StatusBadRequest, "账户净值必须大于 0")
 		return
 	}
 	if request.MaxOpenPositions != nil && (*request.MaxOpenPositions < 1 || *request.MaxOpenPositions > 100) {
 		Fail(c, http.StatusBadRequest, "最大持仓数必须在 1 到 100 之间")
 		return
 	}
-	profile := models.TradingProfile{ID: 1, Configured: true, PrimaryMarkets: request.PrimaryMarkets, TradingHorizons: request.TradingHorizons, MaxRiskPerTradePercent: request.MaxRiskPerTradePercent, MaxDailyLossPercent: request.MaxDailyLossPercent, MaxOpenPositions: request.MaxOpenPositions}
+	profile, err := h.loadProfile(c)
+	if err != nil {
+		Fail(c, http.StatusInternalServerError, "个人交易系统读取失败")
+		return
+	}
+	profile.UserID = models.DefaultUserID
+	profile.Configured = true
+	profile.PrimaryMarkets = request.PrimaryMarkets
+	profile.AssetClasses = request.AssetClasses
+	profile.TradingHorizons = request.TradingHorizons
+	profile.StrategyPreferences = request.StrategyPreferences
+	profile.InvestmentObjectives = request.InvestmentObjectives
+	profile.RiskTolerance = request.RiskTolerance
+	profile.MaxRiskPerTradePercent = request.MaxRiskPerTradePercent
+	profile.MaxDailyLossPercent = request.MaxDailyLossPercent
+	profile.MaxOpenPositions = request.MaxOpenPositions
+	profile.MaxPortfolioConcentrationPercent = request.MaxPortfolioConcentrationPercent
+	profile.LeverageAllowed = request.LeverageAllowed
+	if request.AccountEquity != nil {
+		profile.AccountEquity = request.AccountEquity
+	}
+	if request.AccountCurrency != nil {
+		currency := strings.ToUpper(strings.TrimSpace(*request.AccountCurrency))
+		if currency == "" {
+			currency = "USD"
+		}
+		profile.AccountCurrency = currency
+	} else if profile.AccountCurrency == "" {
+		profile.AccountCurrency = "USD"
+	}
+	if request.StandardRiskPercent != nil {
+		profile.StandardRiskPercent = request.StandardRiskPercent
+	}
+	if request.MaxPortfolioHeatPercent != nil {
+		profile.MaxPortfolioHeatPercent = request.MaxPortfolioHeatPercent
+	}
 	if err := h.db.WithContext(c.Request.Context()).Save(&profile).Error; err != nil {
 		Fail(c, http.StatusInternalServerError, "个人交易系统保存失败")
 		return
@@ -148,7 +225,7 @@ type principleRequest struct {
 
 func (h *ProfileHandler) ListPrinciples(c *gin.Context) {
 	var principles []models.TradingPrinciple
-	if err := h.db.WithContext(c.Request.Context()).Order("category asc, sort_order asc, created_at asc").Find(&principles).Error; err != nil {
+	if err := h.db.WithContext(c.Request.Context()).Where("user_id = ?", models.DefaultUserID).Order("category asc, sort_order asc, created_at asc").Find(&principles).Error; err != nil {
 		Fail(c, 500, "交易纪律读取失败")
 		return
 	}
@@ -166,7 +243,7 @@ func (h *ProfileHandler) CreatePrinciple(c *gin.Context) {
 		Fail(c, 400, "交易纪律内容或类别不正确")
 		return
 	}
-	principle := models.TradingPrinciple{Category: category, Content: content, Enabled: true, AIEnabled: true}
+	principle := models.TradingPrinciple{UserID: models.DefaultUserID, Category: category, Content: content, Enabled: true, AIEnabled: true}
 	if request.Enabled != nil {
 		principle.Enabled = *request.Enabled
 	}
@@ -189,7 +266,7 @@ func (h *ProfileHandler) PatchPrinciple(c *gin.Context) {
 		return
 	}
 	var principle models.TradingPrinciple
-	if !loadByID(c, h.db, &principle, id, "交易纪律") {
+	if !loadOwnedByID(c, h.db, &principle, id, "交易纪律") {
 		return
 	}
 	var request principleRequest
@@ -224,31 +301,34 @@ func (h *ProfileHandler) PatchPrinciple(c *gin.Context) {
 		updates["sort_order"] = *request.SortOrder
 	}
 	h.db.WithContext(c.Request.Context()).Model(&principle).Updates(updates)
-	h.db.First(&principle, "id = ?", id)
+	h.db.Where("id = ? AND user_id = ?", id, models.DefaultUserID).First(&principle)
 	OK(c, principle)
 }
 
 type playbookRequest struct {
-	Name              *string   `json:"name"`
-	Markets           *[]string `json:"markets"`
-	Horizons          *[]string `json:"horizons"`
-	MarketContext     *string   `json:"market_context"`
-	EntryRules        *string   `json:"entry_rules"`
-	InvalidationRules *string   `json:"invalidation_rules"`
-	StopRules         *string   `json:"stop_rules"`
-	TargetRules       *string   `json:"target_rules"`
-	PositionRules     *string   `json:"position_rules"`
-	NoTradeRules      *string   `json:"no_trade_rules"`
-	Notes             *string   `json:"notes"`
-	Status            *string   `json:"status"`
-	AIEnabled         *bool     `json:"ai_enabled"`
-	Source            *string   `json:"source"`
-	EvidenceReviewIDs *[]string `json:"evidence_review_ids"`
+	Name                   *string   `json:"name"`
+	SetupType              *string   `json:"setup_type"`
+	Markets                *[]string `json:"markets"`
+	Horizons               *[]string `json:"horizons"`
+	MarketContext          *string   `json:"market_context"`
+	EntryRules             *string   `json:"entry_rules"`
+	InvalidationRules      *string   `json:"invalidation_rules"`
+	StopRules              *string   `json:"stop_rules"`
+	TargetRules            *string   `json:"target_rules"`
+	PositionRules          *string   `json:"position_rules"`
+	NoTradeRules           *string   `json:"no_trade_rules"`
+	Notes                  *string   `json:"notes"`
+	DefaultRiskMultiple    *float64  `json:"default_risk_multiple"`
+	DefaultStopATRMultiple *float64  `json:"default_stop_atr_multiple"`
+	Status                 *string   `json:"status"`
+	AIEnabled              *bool     `json:"ai_enabled"`
+	Source                 *string   `json:"source"`
+	EvidenceReviewIDs      *[]string `json:"evidence_review_ids"`
 }
 
 func (h *ProfileHandler) ListPlaybooks(c *gin.Context) {
 	var playbooks []models.TradingPlaybook
-	query := h.db.WithContext(c.Request.Context()).Order("case status when 'active' then 0 when 'draft' then 1 else 2 end, updated_at desc")
+	query := h.db.WithContext(c.Request.Context()).Where("user_id = ?", models.DefaultUserID).Order("case status when 'active' then 0 when 'draft' then 1 else 2 end, updated_at desc")
 	if c.Query("include_archived") != "true" {
 		query = query.Where("status <> ?", models.PlaybookStatusArchived)
 	}
@@ -270,7 +350,7 @@ func (h *ProfileHandler) CreatePlaybook(c *gin.Context) {
 		Fail(c, 400, "剧本名称不能为空")
 		return
 	}
-	playbook := models.TradingPlaybook{Name: name, Markets: []string{}, Horizons: []string{}, Status: models.PlaybookStatusDraft, Source: "user", EvidenceReviewIDs: []string{}, AIEnabled: true}
+	playbook := models.TradingPlaybook{UserID: models.DefaultUserID, Name: name, Markets: []string{}, Horizons: []string{}, Status: models.PlaybookStatusDraft, Source: "user", EvidenceReviewIDs: []string{}, AIEnabled: true}
 	applyPlaybookRequest(&playbook, request)
 	if !models.ValidPlaybookStatus(playbook.Status) {
 		Fail(c, 400, "策略剧本状态不正确")
@@ -289,7 +369,7 @@ func (h *ProfileHandler) PatchPlaybook(c *gin.Context) {
 		return
 	}
 	var playbook models.TradingPlaybook
-	if !loadByID(c, h.db, &playbook, id, "策略剧本") {
+	if !loadOwnedByID(c, h.db, &playbook, id, "策略剧本") {
 		return
 	}
 	var request playbookRequest
@@ -313,6 +393,12 @@ func applyPlaybookRequest(playbook *models.TradingPlaybook, request playbookRequ
 	if request.Name != nil {
 		playbook.Name = strings.TrimSpace(*request.Name)
 	}
+	if request.SetupType != nil {
+		value := strings.ToLower(strings.TrimSpace(*request.SetupType))
+		if value != "" {
+			playbook.SetupType = value
+		}
+	}
 	if request.Markets != nil {
 		playbook.Markets = cleanUpperList(*request.Markets)
 	}
@@ -323,6 +409,12 @@ func applyPlaybookRequest(playbook *models.TradingPlaybook, request playbookRequ
 		if value != nil {
 			*target = cleanOptionalString(value)
 		}
+	}
+	if request.DefaultRiskMultiple != nil && *request.DefaultRiskMultiple > 0 {
+		playbook.DefaultRiskMultiple = request.DefaultRiskMultiple
+	}
+	if request.DefaultStopATRMultiple != nil && *request.DefaultStopATRMultiple > 0 {
+		playbook.DefaultStopATRMultiple = request.DefaultStopATRMultiple
 	}
 	if request.Status != nil {
 		playbook.Status = strings.ToLower(strings.TrimSpace(*request.Status))
@@ -385,7 +477,7 @@ func (h *ProfileHandler) PatchObservation(c *gin.Context) {
 		return
 	}
 	var observation models.BehaviorObservation
-	if !loadByID(c, h.db, &observation, id, "行为观察") {
+	if !loadOwnedByID(c, h.db, &observation, id, "行为观察") {
 		return
 	}
 	var request struct {
@@ -407,7 +499,7 @@ func (h *ProfileHandler) PatchObservation(c *gin.Context) {
 		Fail(c, 500, "行为观察更新失败")
 		return
 	}
-	h.db.First(&observation, "id = ?", id)
+	h.db.Where("id = ? AND user_id = ?", id, models.DefaultUserID).First(&observation)
 	OK(c, observation)
 }
 
@@ -451,7 +543,7 @@ func (h *ProfileHandler) Dashboard(c *gin.Context) {
 		Fail(c, 400, "range must be 7d, 30d, 90d, or all")
 		return
 	}
-	query := h.db.WithContext(c.Request.Context()).Order("executed_at asc")
+	query := h.db.WithContext(c.Request.Context()).Where("user_id = ?", models.DefaultUserID).Order("executed_at asc")
 	if start != nil {
 		query = query.Where("executed_at >= ?", *start)
 	}
@@ -486,7 +578,7 @@ func (h *ProfileHandler) processMetrics(entries []models.TradeJournalEntry) prof
 	}
 	if len(linkedIDs) > 0 {
 		var reviews []models.PreTradeRiskReview
-		h.db.Where("trade_plan_id IN ?", linkedIDs).Order("created_at asc").Find(&reviews)
+		h.db.Where("user_id = ? AND trade_plan_id IN ?", models.DefaultUserID, linkedIDs).Order("created_at asc").Find(&reviews)
 		firstReviewAt := map[uuid.UUID]time.Time{}
 		for _, review := range reviews {
 			if _, exists := firstReviewAt[review.TradePlanID]; !exists {
@@ -503,7 +595,7 @@ func (h *ProfileHandler) processMetrics(entries []models.TradeJournalEntry) prof
 	}
 	if len(entryIDs) > 0 {
 		var reviews []models.TradeReview
-		h.db.Where("journal_entry_id IN ? AND completed_at IS NOT NULL", entryIDs).Order("journal_entry_id asc, version desc").Find(&reviews)
+		h.db.Where("user_id = ? AND journal_entry_id IN ? AND completed_at IS NOT NULL", models.DefaultUserID, entryIDs).Order("journal_entry_id asc, version desc").Find(&reviews)
 		seen := map[uuid.UUID]bool{}
 		for _, review := range reviews {
 			if seen[review.JournalEntryID] {
@@ -618,7 +710,7 @@ func (h *ProfileHandler) SuggestPlaybooks(c *gin.Context) {
 		return
 	}
 	var reviews []models.TradeReview
-	h.db.Where("completed_at IS NOT NULL").Order("created_at desc").Limit(100).Find(&reviews)
+	h.db.Where("user_id = ? AND completed_at IS NOT NULL", models.DefaultUserID).Order("created_at desc").Limit(100).Find(&reviews)
 	observations, _ := syncBehaviorObservations(h.db)
 	apiKey := ""
 	var err error
@@ -640,13 +732,35 @@ func (h *ProfileHandler) SuggestPlaybooks(c *gin.Context) {
 func (h *ProfileHandler) Export(c *gin.Context) {
 	profile, _ := h.loadProfile(c)
 	memory, _ := h.loadMemory(c)
+	var user models.User
 	var principles []models.TradingPrinciple
 	var playbooks []models.TradingPlaybook
+	var policies []models.TradingPolicy
 	var observations []models.BehaviorObservation
-	h.db.Order("sort_order asc").Find(&principles)
-	h.db.Order("updated_at desc").Find(&playbooks)
-	h.db.Order("key asc").Find(&observations)
-	OK(c, gin.H{"schema_version": "alphalens.personal-trading-system.v1", "exported_at": h.now().UTC(), "profile": profile, "principles": principles, "playbooks": playbooks, "behavior_observations": observations, "ai_memory": memory})
+	var plans []models.TradePlan
+	var trades []models.Trade
+	var executions []models.TradeJournalEntry
+	var reviews []models.TradeReview
+	var pretradeReviews []models.PreTradeRiskReview
+	var promptSnapshots []models.PromptContextSnapshot
+	h.db.First(&user, "id = ?", models.DefaultUserID)
+	h.db.Where("user_id = ?", models.DefaultUserID).Order("sort_order asc").Find(&principles)
+	h.db.Where("user_id = ?", models.DefaultUserID).Order("updated_at desc").Find(&playbooks)
+	h.db.Where("user_id = ?", models.DefaultUserID).Order("created_at asc").Find(&policies)
+	h.db.Where("user_id = ?", models.DefaultUserID).Order("key asc").Find(&observations)
+	h.db.Where("user_id = ?", models.DefaultUserID).Order("created_at desc").Find(&plans)
+	h.db.Where("user_id = ?", models.DefaultUserID).Order("opened_at desc").Find(&trades)
+	h.db.Where("user_id = ?", models.DefaultUserID).Order("executed_at desc").Find(&executions)
+	h.db.Where("user_id = ?", models.DefaultUserID).Order("created_at desc").Find(&reviews)
+	h.db.Where("user_id = ?", models.DefaultUserID).Order("created_at desc").Find(&pretradeReviews)
+	h.db.Where("user_id = ?", models.DefaultUserID).Order("created_at desc").Find(&promptSnapshots)
+	OK(c, gin.H{
+		"schema_version": "alphalens.personal-trading-system.v2", "exported_at": h.now().UTC(), "user": user,
+		"profile": profile, "policies": policies, "principles": principles, "playbooks": playbooks,
+		"behavior_observations": observations,
+		"trade_plans":           plans, "trades": trades, "execution_fills": executions, "trade_reviews": reviews,
+		"pretrade_reviews": pretradeReviews, "prompt_context_snapshots": promptSnapshots, "ai_memory": memory,
+	})
 }
 
 func profileRange(value string, now time.Time) (string, *time.Time, bool) {
@@ -702,8 +816,8 @@ func parseUUIDParam(c *gin.Context, name, label string) (uuid.UUID, bool) {
 	}
 	return id, true
 }
-func loadByID(c *gin.Context, db *gorm.DB, target any, id uuid.UUID, label string) bool {
-	err := db.WithContext(c.Request.Context()).First(target, "id = ?", id).Error
+func loadOwnedByID(c *gin.Context, db *gorm.DB, target any, id uuid.UUID, label string) bool {
+	err := db.WithContext(c.Request.Context()).Where("id = ? AND user_id = ?", id, models.DefaultUserID).First(target).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		Fail(c, 404, label+"不存在")
 		return false

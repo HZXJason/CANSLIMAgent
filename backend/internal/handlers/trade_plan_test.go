@@ -5,6 +5,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/alphalens/canslimagent/backend/internal/models"
 	"github.com/gin-gonic/gin"
@@ -145,6 +146,54 @@ func TestExecuteTradePlanUsesPlanDefaults(t *testing.T) {
 	}
 	if entry.TradePlanID == nil || *entry.TradePlanID != planID {
 		t.Fatalf("expected journal entry to link plan %s, got %+v", planID, entry.TradePlanID)
+	}
+}
+
+func TestExecuteTradePlanDefaultDatetimePreservesSubsecondOrdering(t *testing.T) {
+	entryPrice := 89.22
+	quantity := 10.0
+	entry, validationErr := executeTradePlanRequest{Quantity: &quantity}.toJournalEntry(models.TradePlan{
+		ID: uuid.New(), Ticker: "LB", Direction: models.TradePlanDirectionBuy, EntryPrice: &entryPrice,
+	})
+	if validationErr != "" {
+		t.Fatalf("unexpected validation error: %s", validationErr)
+	}
+	if entry.ExecutedAt.Nanosecond() == 0 {
+		t.Fatalf("default execution time lost subsecond precision: %s", entry.ExecutedAt.Format(time.RFC3339Nano))
+	}
+}
+
+func TestExecuteTradePlanCreatesTradeAggregateAndLinksFirstFill(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	database, err := gorm.Open(sqlite.Open("file:"+strings.ReplaceAll(t.Name(), "/", "_")+"?mode=memory&cache=shared"), &gorm.Config{Logger: logger.Default.LogMode(logger.Silent)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := database.AutoMigrate(&models.TradePlan{}, &models.Trade{}, &models.TradeJournalEntry{}, &models.PreTradeRiskReview{}, &models.RiskAcknowledgement{}); err != nil {
+		t.Fatal(err)
+	}
+	entryPrice := 125.5
+	plan := models.TradePlan{Ticker: "NVDA", Direction: models.TradePlanDirectionBuy, Status: models.TradePlanStatusWaiting, PlanDate: time.Now().UTC(), EntryPrice: &entryPrice}
+	if err := database.Create(&plan).Error; err != nil {
+		t.Fatal(err)
+	}
+	router := gin.New()
+	router.POST("/api/v1/trade-plans/:id/execute", NewTradePlanHandler(database).Execute)
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/api/v1/trade-plans/"+plan.ID.String()+"/execute", strings.NewReader(`{"datetime":"2026-08-28T10:00:00Z","quantity":2,"price":126,"market":"us","currency":"USD"}`)))
+	if response.Code != http.StatusCreated {
+		t.Fatalf("execute = %d %s", response.Code, response.Body.String())
+	}
+	var trade models.Trade
+	if err := database.Where("trade_plan_id = ?", plan.ID).First(&trade).Error; err != nil {
+		t.Fatal(err)
+	}
+	var fill models.TradeJournalEntry
+	if err := database.Where("trade_plan_id = ?", plan.ID).First(&fill).Error; err != nil {
+		t.Fatal(err)
+	}
+	if fill.TradeID == nil || *fill.TradeID != trade.ID || trade.Status != models.TradeStatusOpen || trade.UserID != models.DefaultUserID {
+		t.Fatalf("trade aggregate not linked: trade=%+v fill=%+v", trade, fill)
 	}
 }
 

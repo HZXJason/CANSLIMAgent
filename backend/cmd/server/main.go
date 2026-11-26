@@ -90,6 +90,7 @@ func main() {
 		cfg.ScanDelay,
 	)
 	analysisService := services.NewAnalysisService(database, alphaVantageClient, translationClient, ashareClient, secClient, stooqClient, fmpClient, polygonClient, yahooClient, yfinanceClient)
+	marketRegimeService := services.NewMarketRegimeService(analysisService)
 	screenerHandler := handlers.NewScreenerHandler(scanner)
 	presetHandler := handlers.NewPresetHandler(database)
 	chartsHandler := handlers.NewChartsHandler(analysisService, scanner)
@@ -107,7 +108,9 @@ func main() {
 	tradeReviewHandler := handlers.NewTradeReviewHandler(database)
 	tradePlanHandler := handlers.NewTradePlanHandler(database)
 	preTradeAIReviewer := services.NewHTTPPreTradeAIReviewer(cfg.AIAnalysisUpstreamURL, 2*time.Minute, cfg.SidecarSharedSecret)
-	preTradeReviewHandler := handlers.NewPreTradeReviewHandler(database, preTradeAIReviewer, llmCredentialStore)
+	preTradeReviewHandler := handlers.NewPreTradeReviewHandler(database, preTradeAIReviewer, llmCredentialStore).WithMarketContext(marketRegimeService, analysisService)
+	tradeHandler := handlers.NewTradeHandler(database, marketRegimeService)
+	deskHandler := handlers.NewDeskHandler(database, marketRegimeService)
 	playbookSuggester := services.NewHTTPPlaybookSuggester(cfg.AIAnalysisUpstreamURL, 2*time.Minute, cfg.SidecarSharedSecret)
 	profileHandler := handlers.NewProfileHandler(database, playbookSuggester).WithCredentialStore(llmCredentialStore)
 	decisionSpineHandler := handlers.NewDecisionSpineHandler(database)
@@ -217,6 +220,8 @@ func main() {
 		handlers.RegisterTradeReviewRoutes(api, tradeReviewHandler)
 		handlers.RegisterProfileRoutes(api, profileHandler)
 		handlers.RegisterDecisionSpineRoutes(api, decisionSpineHandler)
+		handlers.RegisterTradeRoutes(api, tradeHandler)
+		handlers.RegisterDeskRoutes(api, deskHandler)
 	}
 
 	log.Printf("AlphaLens 后端已启动：http://%s", net.JoinHostPort(cfg.Host, cfg.Port))

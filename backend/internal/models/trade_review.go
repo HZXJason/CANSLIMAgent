@@ -19,9 +19,11 @@ type TradeExecutionDiff struct {
 
 type TradeReview struct {
 	ID                uuid.UUID          `json:"id" gorm:"type:uuid;primaryKey"`
+	UserID            uuid.UUID          `json:"user_id" gorm:"type:uuid;not null;index"`
 	CreatedAt         time.Time          `json:"created_at"`
 	UpdatedAt         time.Time          `json:"updated_at"`
 	JournalEntryID    uuid.UUID          `json:"journal_entry_id" gorm:"type:uuid;not null;index:idx_trade_reviews_entry_version,unique"`
+	TradeID           *uuid.UUID         `json:"trade_id" gorm:"type:uuid;index"`
 	Version           int                `json:"version" gorm:"not null;index:idx_trade_reviews_entry_version,unique"`
 	TradePlanID       *uuid.UUID         `json:"trade_plan_id" gorm:"type:uuid;index"`
 	PlanSnapshot      map[string]any     `json:"plan_snapshot" gorm:"serializer:json;type:jsonb;not null"`
@@ -37,6 +39,7 @@ type TradeReview struct {
 }
 
 func (review *TradeReview) BeforeCreate(_ *gorm.DB) error {
+	ensureDefaultUserID(&review.UserID)
 	if review.ID == uuid.Nil {
 		review.ID = uuid.New()
 	}
@@ -45,9 +48,10 @@ func (review *TradeReview) BeforeCreate(_ *gorm.DB) error {
 
 type BehaviorObservation struct {
 	ID                uuid.UUID  `json:"id" gorm:"type:uuid;primaryKey"`
+	UserID            uuid.UUID  `json:"user_id" gorm:"type:uuid;not null;index:idx_behavior_observations_user_key,unique"`
 	CreatedAt         time.Time  `json:"created_at"`
 	UpdatedAt         time.Time  `json:"updated_at"`
-	Key               string     `json:"key" gorm:"type:text;not null;uniqueIndex"`
+	Key               string     `json:"key" gorm:"type:text;not null;index:idx_behavior_observations_user_key,unique"`
 	Scenario          string     `json:"scenario" gorm:"type:text;not null"`
 	Status            string     `json:"status" gorm:"type:text;not null"`
 	SampleCount       int        `json:"sample_count" gorm:"not null"`
@@ -61,6 +65,7 @@ type BehaviorObservation struct {
 }
 
 func (observation *BehaviorObservation) BeforeCreate(_ *gorm.DB) error {
+	ensureDefaultUserID(&observation.UserID)
 	if observation.ID == uuid.Nil {
 		observation.ID = uuid.New()
 	}

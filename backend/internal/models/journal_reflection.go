@@ -10,6 +10,7 @@ import (
 // TradeJournalReflection stores one reproducible Vibe-powered behavior review.
 type TradeJournalReflection struct {
 	ID          uuid.UUID      `gorm:"type:uuid;primaryKey"`
+	UserID      uuid.UUID      `gorm:"type:uuid;not null;index"`
 	CreatedAt   time.Time      `gorm:"index:idx_trade_journal_reflections_created_at,sort:desc"`
 	Scope       string         `gorm:"type:text;not null;default:'all';index:idx_trade_journal_reflections_scope"`
 	RecordCount int            `gorm:"not null"`
@@ -18,6 +19,7 @@ type TradeJournalReflection struct {
 }
 
 func (reflection *TradeJournalReflection) BeforeCreate(_ *gorm.DB) error {
+	ensureDefaultUserID(&reflection.UserID)
 	if reflection.ID == uuid.Nil {
 		reflection.ID = uuid.New()
 	}

@@ -148,7 +148,11 @@ func TestPreTradeReviewSendsOnlyEligibleBehaviorEvidenceToAI(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := database.AutoMigrate(&models.TradePlan{}, &models.PreTradeRiskReview{}, &models.RiskAcknowledgement{}, &models.TradeReview{}, &models.BehaviorObservation{}, &models.TradingProfile{}, &models.TradingPrinciple{}, &models.TradingPlaybook{}, &models.AIMemoryPreference{}); err != nil {
+	if err := database.AutoMigrate(&models.User{}, &models.TradePlan{}, &models.Trade{}, &models.TradeJournalEntry{}, &models.PreTradeRiskReview{}, &models.RiskAcknowledgement{}, &models.TradeReview{}, &models.BehaviorObservation{}, &models.TradingProfile{}, &models.TradingPrinciple{}, &models.TradingPlaybook{}, &models.TradingPolicy{}, &models.AIMemoryPreference{}, &models.PromptContextSnapshot{}); err != nil {
+		t.Fatal(err)
+	}
+	user := models.DefaultUser()
+	if err := database.Create(&user).Error; err != nil {
 		t.Fatal(err)
 	}
 	for index := 0; index < 10; index++ {
@@ -190,7 +194,11 @@ func TestPreTradeReviewExcludesDisabledMemoryAndIncludesActivePrinciplesAndPlayb
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := database.AutoMigrate(&models.TradePlan{}, &models.PreTradeRiskReview{}, &models.RiskAcknowledgement{}, &models.TradeReview{}, &models.BehaviorObservation{}, &models.TradingProfile{}, &models.TradingPrinciple{}, &models.TradingPlaybook{}, &models.AIMemoryPreference{}); err != nil {
+	if err := database.AutoMigrate(&models.User{}, &models.TradePlan{}, &models.Trade{}, &models.TradeJournalEntry{}, &models.PreTradeRiskReview{}, &models.RiskAcknowledgement{}, &models.TradeReview{}, &models.BehaviorObservation{}, &models.TradingProfile{}, &models.TradingPrinciple{}, &models.TradingPlaybook{}, &models.TradingPolicy{}, &models.AIMemoryPreference{}, &models.PromptContextSnapshot{}); err != nil {
+		t.Fatal(err)
+	}
+	user := models.DefaultUser()
+	if err := database.Create(&user).Error; err != nil {
 		t.Fatal(err)
 	}
 	plan := models.TradePlan{Ticker: "NVDA", Direction: models.TradePlanDirectionBuy, Status: models.TradePlanStatusDraft, PlanDate: time.Now().UTC()}
@@ -225,5 +233,58 @@ func TestPreTradeReviewExcludesDisabledMemoryAndIncludesActivePrinciplesAndPlayb
 	}
 	if len(reviewer.input.BehaviorObservations) != 0 {
 		t.Fatalf("observations should be disabled: %+v", reviewer.input.BehaviorObservations)
+	}
+}
+
+func TestPreTradeReviewSendsStructuredPoliciesAndSnapshotsContext(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	database, err := gorm.Open(sqlite.Open("file:"+strings.ReplaceAll(t.Name(), "/", "_")+"?mode=memory&cache=shared&_foreign_keys=on"), &gorm.Config{Logger: logger.Default.LogMode(logger.Silent)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := database.AutoMigrate(
+		&models.User{}, &models.TradePlan{}, &models.Trade{}, &models.TradeJournalEntry{}, &models.PreTradeRiskReview{}, &models.RiskAcknowledgement{},
+		&models.TradeReview{}, &models.BehaviorObservation{}, &models.TradingProfile{}, &models.TradingPrinciple{}, &models.TradingPlaybook{},
+		&models.TradingPolicy{}, &models.AIMemoryPreference{}, &models.PromptContextSnapshot{},
+	); err != nil {
+		t.Fatal(err)
+	}
+	user := models.DefaultUser()
+	if err := database.Create(&user).Error; err != nil {
+		t.Fatal(err)
+	}
+	policy := models.TradingPolicy{Kind: models.PolicyKindRule, Category: "risk", Title: "单笔风险", Statement: "不超过预算", Strength: models.PolicyStrengthHard, Origin: models.PolicyOriginManual, Status: models.PolicyStatusActive, PromptEnabled: true}
+	if err := database.Create(&policy).Error; err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	plan := models.TradePlan{Ticker: "NVDA", Direction: models.TradePlanDirectionBuy, Status: models.TradePlanStatusDraft, PlanDate: now}
+	if err := database.Create(&plan).Error; err != nil {
+		t.Fatal(err)
+	}
+	reviewer := &recordingPreTradeReviewer{}
+	router := gin.New()
+	router.POST("/api/v1/trade-plans/:id/risk-reviews", NewPreTradeReviewHandler(database, reviewer, nil).Create)
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/api/v1/trade-plans/"+plan.ID.String()+"/risk-reviews", strings.NewReader(`{"run_ai":true,"llm_provider":"openai","model":"gpt-test"}`)))
+	if response.Code != http.StatusCreated {
+		t.Fatalf("expected 201, got %d: %s", response.Code, response.Body.String())
+	}
+	if reviewer.input.ContextVersion != services.UserTradingContextV2 || len(reviewer.input.TradingPolicies) != 1 {
+		t.Fatalf("missing structured user context: %+v", reviewer.input)
+	}
+	var snapshots []models.PromptContextSnapshot
+	if err := database.Where("trade_plan_id = ?", plan.ID).Find(&snapshots).Error; err != nil {
+		t.Fatal(err)
+	}
+	if len(snapshots) != 1 || snapshots[0].ContextHash == "" {
+		t.Fatalf("expected one auditable context snapshot, got %+v", snapshots)
+	}
+	var review models.PreTradeRiskReview
+	if err := database.Where("trade_plan_id = ?", plan.ID).First(&review).Error; err != nil {
+		t.Fatal(err)
+	}
+	if review.PromptContextSnapshotID == nil || *review.PromptContextSnapshotID != snapshots[0].ID {
+		t.Fatalf("review is not linked to context snapshot: %+v", review)
 	}
 }

@@ -28,9 +28,10 @@ const (
 // contain AES-GCM encrypted data and must never be included in an API response.
 type BrokerConnection struct {
 	ID                   uuid.UUID `gorm:"type:uuid;primaryKey"`
+	UserID               uuid.UUID `gorm:"type:uuid;not null;uniqueIndex:idx_broker_connections_user_broker"`
 	CreatedAt            time.Time
 	UpdatedAt            time.Time
-	Broker               string                 `gorm:"type:text;not null;uniqueIndex"`
+	Broker               string                 `gorm:"type:text;not null;uniqueIndex:idx_broker_connections_user_broker"`
 	Label                string                 `gorm:"type:text;not null;default:''"`
 	CredentialCiphertext []byte                 `gorm:"type:bytea;not null"`
 	CredentialNonce      []byte                 `gorm:"type:bytea;not null"`
@@ -48,6 +49,7 @@ type BrokerConnection struct {
 // StateHash is SHA-256(state), so the raw browser value is never persisted.
 type BrokerAuthorizationSession struct {
 	ID                     uuid.UUID `gorm:"type:uuid;primaryKey"`
+	UserID                 uuid.UUID `gorm:"type:uuid;not null;index"`
 	CreatedAt              time.Time
 	UpdatedAt              time.Time
 	Broker                 string     `gorm:"type:text;not null;index"`
@@ -59,6 +61,7 @@ type BrokerAuthorizationSession struct {
 }
 
 func (connection *BrokerConnection) BeforeCreate(_ *gorm.DB) error {
+	ensureDefaultUserID(&connection.UserID)
 	if connection.ID == uuid.Nil {
 		connection.ID = uuid.New()
 	}
@@ -66,6 +69,7 @@ func (connection *BrokerConnection) BeforeCreate(_ *gorm.DB) error {
 }
 
 func (session *BrokerAuthorizationSession) BeforeCreate(_ *gorm.DB) error {
+	ensureDefaultUserID(&session.UserID)
 	if session.ID == uuid.Nil {
 		session.ID = uuid.New()
 	}

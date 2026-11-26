@@ -9,29 +9,35 @@ import (
 	"time"
 
 	"github.com/alphalens/canslimagent/backend/internal/models"
+	"github.com/alphalens/canslimagent/backend/internal/services"
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"gorm.io/gorm"
 )
 
 var lockedTradePlanFields = map[string]struct{}{
-	"ticker":              {},
-	"direction":           {},
-	"plan_date":           {},
-	"valid_until":         {},
-	"user_thesis_id":      {},
-	"entry_trigger":       {},
-	"entry_price":         {},
-	"stop_loss":           {},
-	"take_profit":         {},
-	"position_size":       {},
-	"invalidation":        {},
-	"max_risk_amount":     {},
-	"max_risk_percent":    {},
-	"rationale":           {},
-	"ai_summary":          {},
-	"executed_at":         {},
-	"executed_journal_id": {},
+	"ticker":                 {},
+	"direction":              {},
+	"plan_date":              {},
+	"valid_until":            {},
+	"user_thesis_id":         {},
+	"entry_trigger":          {},
+	"entry_price":            {},
+	"stop_loss":              {},
+	"take_profit":            {},
+	"position_size":          {},
+	"planned_quantity":       {},
+	"risk_multiple":          {},
+	"initial_risk_per_share": {},
+	"one_r_amount":           {},
+	"playbook_id":            {},
+	"invalidation":           {},
+	"max_risk_amount":        {},
+	"max_risk_percent":       {},
+	"rationale":              {},
+	"ai_summary":             {},
+	"executed_at":            {},
+	"executed_journal_id":    {},
 }
 
 var errTradePlanAlreadyClosed = errors.New("trade plan was already closed")
@@ -41,23 +47,28 @@ type TradePlanHandler struct {
 }
 
 type createTradePlanRequest struct {
-	Ticker         string   `json:"ticker"`
-	Direction      string   `json:"direction"`
-	Status         *string  `json:"status"`
-	PlanDate       string   `json:"plan_date"`
-	ValidUntil     *string  `json:"valid_until"`
-	UserThesisID   *string  `json:"user_thesis_id"`
-	EntryTrigger   *string  `json:"entry_trigger"`
-	EntryPrice     *float64 `json:"entry_price"`
-	StopLoss       *float64 `json:"stop_loss"`
-	TakeProfit     *float64 `json:"take_profit"`
-	PositionSize   *float64 `json:"position_size"`
-	Invalidation   *string  `json:"invalidation"`
-	MaxRiskAmount  *float64 `json:"max_risk_amount"`
-	MaxRiskPercent *float64 `json:"max_risk_percent"`
-	Rationale      *string  `json:"rationale"`
-	AISummary      *string  `json:"ai_summary"`
-	Notes          *string  `json:"notes"`
+	Ticker              string   `json:"ticker"`
+	Direction           string   `json:"direction"`
+	Status              *string  `json:"status"`
+	PlanDate            string   `json:"plan_date"`
+	ValidUntil          *string  `json:"valid_until"`
+	UserThesisID        *string  `json:"user_thesis_id"`
+	PlaybookID          *string  `json:"playbook_id"`
+	EntryTrigger        *string  `json:"entry_trigger"`
+	EntryPrice          *float64 `json:"entry_price"`
+	StopLoss            *float64 `json:"stop_loss"`
+	TakeProfit          *float64 `json:"take_profit"`
+	PositionSize        *float64 `json:"position_size"`
+	PlannedQuantity     *float64 `json:"planned_quantity"`
+	RiskMultiple        *float64 `json:"risk_multiple"`
+	InitialRiskPerShare *float64 `json:"initial_risk_per_share"`
+	OneRAmount          *float64 `json:"one_r_amount"`
+	Invalidation        *string  `json:"invalidation"`
+	MaxRiskAmount       *float64 `json:"max_risk_amount"`
+	MaxRiskPercent      *float64 `json:"max_risk_percent"`
+	Rationale           *string  `json:"rationale"`
+	AISummary           *string  `json:"ai_summary"`
+	Notes               *string  `json:"notes"`
 }
 
 type executeTradePlanRequest struct {
@@ -73,28 +84,33 @@ type executeTradePlanRequest struct {
 }
 
 type tradePlanResponse struct {
-	ID                string     `json:"id"`
-	Ticker            string     `json:"ticker"`
-	Direction         string     `json:"direction"`
-	Status            string     `json:"status"`
-	PlanDate          string     `json:"plan_date"`
-	ValidUntil        *string    `json:"valid_until"`
-	UserThesisID      *string    `json:"user_thesis_id"`
-	EntryTrigger      *string    `json:"entry_trigger"`
-	EntryPrice        *float64   `json:"entry_price"`
-	StopLoss          *float64   `json:"stop_loss"`
-	TakeProfit        *float64   `json:"take_profit"`
-	PositionSize      *float64   `json:"position_size"`
-	Invalidation      *string    `json:"invalidation"`
-	MaxRiskAmount     *float64   `json:"max_risk_amount"`
-	MaxRiskPercent    *float64   `json:"max_risk_percent"`
-	Rationale         *string    `json:"rationale"`
-	AISummary         *string    `json:"ai_summary"`
-	Notes             *string    `json:"notes"`
-	ExecutedJournalID *string    `json:"executed_journal_id"`
-	ExecutedAt        *time.Time `json:"executed_at"`
-	CreatedAt         time.Time  `json:"created_at"`
-	UpdatedAt         time.Time  `json:"updated_at"`
+	ID                  string     `json:"id"`
+	Ticker              string     `json:"ticker"`
+	Direction           string     `json:"direction"`
+	Status              string     `json:"status"`
+	PlanDate            string     `json:"plan_date"`
+	ValidUntil          *string    `json:"valid_until"`
+	UserThesisID        *string    `json:"user_thesis_id"`
+	PlaybookID          *string    `json:"playbook_id"`
+	EntryTrigger        *string    `json:"entry_trigger"`
+	EntryPrice          *float64   `json:"entry_price"`
+	StopLoss            *float64   `json:"stop_loss"`
+	TakeProfit          *float64   `json:"take_profit"`
+	PositionSize        *float64   `json:"position_size"`
+	PlannedQuantity     *float64   `json:"planned_quantity"`
+	RiskMultiple        *float64   `json:"risk_multiple"`
+	InitialRiskPerShare *float64   `json:"initial_risk_per_share"`
+	OneRAmount          *float64   `json:"one_r_amount"`
+	Invalidation        *string    `json:"invalidation"`
+	MaxRiskAmount       *float64   `json:"max_risk_amount"`
+	MaxRiskPercent      *float64   `json:"max_risk_percent"`
+	Rationale           *string    `json:"rationale"`
+	AISummary           *string    `json:"ai_summary"`
+	Notes               *string    `json:"notes"`
+	ExecutedJournalID   *string    `json:"executed_journal_id"`
+	ExecutedAt          *time.Time `json:"executed_at"`
+	CreatedAt           time.Time  `json:"created_at"`
+	UpdatedAt           time.Time  `json:"updated_at"`
 }
 
 type executeTradePlanResponse struct {
@@ -107,7 +123,7 @@ func NewTradePlanHandler(database *gorm.DB) *TradePlanHandler {
 }
 
 func (h *TradePlanHandler) List(c *gin.Context) {
-	query := h.db.WithContext(c.Request.Context()).Order("updated_at DESC")
+	query := h.db.WithContext(c.Request.Context()).Where("user_id = ?", models.DefaultUserID).Order("updated_at DESC")
 	if ticker := strings.ToUpper(strings.TrimSpace(c.Query("ticker"))); ticker != "" {
 		query = query.Where("ticker = ?", ticker)
 	}
@@ -146,7 +162,7 @@ func (h *TradePlanHandler) Create(c *gin.Context) {
 	}
 	if plan.UserThesisID != nil {
 		var thesis models.UserThesis
-		if err := h.db.WithContext(c.Request.Context()).First(&thesis, "id = ?", *plan.UserThesisID).Error; err != nil {
+		if err := h.db.WithContext(c.Request.Context()).Where("id = ? AND user_id = ?", *plan.UserThesisID, models.DefaultUserID).First(&thesis).Error; err != nil {
 			if errors.Is(err, gorm.ErrRecordNotFound) {
 				Fail(c, http.StatusBadRequest, "user thesis not found")
 				return
@@ -229,7 +245,7 @@ func (h *TradePlanHandler) Patch(c *gin.Context) {
 		updates["valid_until"] = value
 	}
 
-	for _, field := range []string{"entry_price", "stop_loss", "take_profit", "position_size", "max_risk_amount", "max_risk_percent"} {
+	for _, field := range []string{"entry_price", "stop_loss", "take_profit", "position_size", "planned_quantity", "risk_multiple", "initial_risk_per_share", "one_r_amount", "max_risk_amount", "max_risk_percent"} {
 		value, present, err := decodeOptionalFloat(raw, field)
 		if err != nil {
 			Fail(c, http.StatusBadRequest, err.Error())
@@ -260,6 +276,10 @@ func (h *TradePlanHandler) Patch(c *gin.Context) {
 
 	if err := h.db.WithContext(c.Request.Context()).Model(&plan).Updates(updates).Error; err != nil {
 		Fail(c, http.StatusInternalServerError, "trade plan could not be updated")
+		return
+	}
+	if _, err := services.RebuildUserTrades(c.Request.Context(), h.db, models.DefaultUserID); err != nil {
+		Fail(c, http.StatusInternalServerError, "trades could not be rebuilt")
 		return
 	}
 	if err := h.db.WithContext(c.Request.Context()).First(&plan, "id = ?", plan.ID).Error; err != nil {
@@ -311,7 +331,7 @@ func (h *TradePlanHandler) Execute(c *gin.Context) {
 	entry.ID = uuid.New()
 	err = h.db.WithContext(c.Request.Context()).Transaction(func(tx *gorm.DB) error {
 		claim := tx.Model(&models.TradePlan{}).
-			Where("id = ? AND status IN ?", plan.ID, []string{models.TradePlanStatusDraft, models.TradePlanStatusWaiting}).
+			Where("id = ? AND user_id = ? AND status IN ?", plan.ID, models.DefaultUserID, []string{models.TradePlanStatusDraft, models.TradePlanStatusWaiting}).
 			Updates(map[string]interface{}{
 				"status":              models.TradePlanStatusExecuted,
 				"executed_journal_id": entry.ID,
@@ -324,6 +344,19 @@ func (h *TradePlanHandler) Execute(c *gin.Context) {
 		if claim.RowsAffected != 1 {
 			return errTradePlanAlreadyClosed
 		}
+		direction := models.TradeDirectionLong
+		if plan.Direction == models.TradePlanDirectionSell {
+			direction = models.TradeDirectionShort
+		}
+		trade := models.Trade{
+			UserID: plan.UserID, TradePlanID: &plan.ID, Symbol: plan.Ticker, Market: entry.Market,
+			Direction: direction, Status: models.TradeStatusOpen, OpenedAt: entry.ExecutedAt,
+		}
+		if err := tx.Create(&trade).Error; err != nil {
+			return err
+		}
+		entry.UserID = plan.UserID
+		entry.TradeID = &trade.ID
 		return tx.Create(&entry).Error
 	})
 	if err != nil {
@@ -332,6 +365,10 @@ func (h *TradePlanHandler) Execute(c *gin.Context) {
 			return
 		}
 		Fail(c, http.StatusInternalServerError, "trade plan could not be executed")
+		return
+	}
+	if _, err := services.RebuildUserTrades(c.Request.Context(), h.db, models.DefaultUserID); err != nil {
+		Fail(c, http.StatusInternalServerError, "trades could not be rebuilt")
 		return
 	}
 	if err := h.db.WithContext(c.Request.Context()).First(&plan, "id = ?", plan.ID).Error; err != nil {
@@ -382,7 +419,7 @@ func findUnacknowledgedHighRiskCodes(database *gorm.DB, planID uuid.UUID) ([]str
 
 func (h *TradePlanHandler) findPlan(c *gin.Context) (models.TradePlan, bool) {
 	var plan models.TradePlan
-	err := h.db.WithContext(c.Request.Context()).First(&plan, "id = ?", c.Param("id")).Error
+	err := h.db.WithContext(c.Request.Context()).Where("id = ? AND user_id = ?", c.Param("id"), models.DefaultUserID).First(&plan).Error
 	if err == nil {
 		return plan, true
 	}
@@ -432,14 +469,26 @@ func (req createTradePlanRequest) toModel() (models.TradePlan, string) {
 		}
 		userThesisID = &parsed
 	}
+	var playbookID *uuid.UUID
+	if req.PlaybookID != nil && strings.TrimSpace(*req.PlaybookID) != "" {
+		parsed, err := uuid.Parse(strings.TrimSpace(*req.PlaybookID))
+		if err != nil {
+			return models.TradePlan{}, "playbook_id must be a valid UUID"
+		}
+		playbookID = &parsed
+	}
 
 	for field, value := range map[string]*float64{
-		"entry_price":      req.EntryPrice,
-		"stop_loss":        req.StopLoss,
-		"take_profit":      req.TakeProfit,
-		"position_size":    req.PositionSize,
-		"max_risk_amount":  req.MaxRiskAmount,
-		"max_risk_percent": req.MaxRiskPercent,
+		"entry_price":            req.EntryPrice,
+		"stop_loss":              req.StopLoss,
+		"take_profit":            req.TakeProfit,
+		"position_size":          req.PositionSize,
+		"planned_quantity":       req.PlannedQuantity,
+		"risk_multiple":          req.RiskMultiple,
+		"initial_risk_per_share": req.InitialRiskPerShare,
+		"one_r_amount":           req.OneRAmount,
+		"max_risk_amount":        req.MaxRiskAmount,
+		"max_risk_percent":       req.MaxRiskPercent,
 	} {
 		if value != nil {
 			if validationErr := validatePlanNumber(field, *value); validationErr != "" {
@@ -449,30 +498,35 @@ func (req createTradePlanRequest) toModel() (models.TradePlan, string) {
 	}
 
 	return models.TradePlan{
-		Ticker:         ticker,
-		Direction:      direction,
-		Status:         status,
-		PlanDate:       planDate,
-		ValidUntil:     validUntil,
-		UserThesisID:   userThesisID,
-		EntryTrigger:   cleanOptionalString(req.EntryTrigger),
-		EntryPrice:     req.EntryPrice,
-		StopLoss:       req.StopLoss,
-		TakeProfit:     req.TakeProfit,
-		PositionSize:   req.PositionSize,
-		Invalidation:   cleanOptionalString(req.Invalidation),
-		MaxRiskAmount:  req.MaxRiskAmount,
-		MaxRiskPercent: req.MaxRiskPercent,
-		Rationale:      cleanOptionalString(req.Rationale),
-		AISummary:      cleanOptionalString(req.AISummary),
-		Notes:          cleanOptionalString(req.Notes),
+		Ticker:              ticker,
+		Direction:           direction,
+		Status:              status,
+		PlanDate:            planDate,
+		ValidUntil:          validUntil,
+		UserThesisID:        userThesisID,
+		PlaybookID:          playbookID,
+		EntryTrigger:        cleanOptionalString(req.EntryTrigger),
+		EntryPrice:          req.EntryPrice,
+		StopLoss:            req.StopLoss,
+		TakeProfit:          req.TakeProfit,
+		PositionSize:        req.PositionSize,
+		PlannedQuantity:     req.PlannedQuantity,
+		RiskMultiple:        req.RiskMultiple,
+		InitialRiskPerShare: req.InitialRiskPerShare,
+		OneRAmount:          req.OneRAmount,
+		Invalidation:        cleanOptionalString(req.Invalidation),
+		MaxRiskAmount:       req.MaxRiskAmount,
+		MaxRiskPercent:      req.MaxRiskPercent,
+		Rationale:           cleanOptionalString(req.Rationale),
+		AISummary:           cleanOptionalString(req.AISummary),
+		Notes:               cleanOptionalString(req.Notes),
 	}, ""
 }
 
 func (req executeTradePlanRequest) toJournalEntry(plan models.TradePlan) (models.TradeJournalEntry, string) {
 	datetimeText := strings.TrimSpace(req.Datetime)
 	if datetimeText == "" {
-		datetimeText = time.Now().UTC().Format(time.RFC3339)
+		datetimeText = time.Now().UTC().Format(time.RFC3339Nano)
 	}
 	executedAt, err := parseJournalDatetime(datetimeText)
 	if err != nil {
@@ -542,28 +596,33 @@ func (req executeTradePlanRequest) toJournalEntry(plan models.TradePlan) (models
 
 func newTradePlanResponse(plan models.TradePlan) tradePlanResponse {
 	return tradePlanResponse{
-		ID:                plan.ID.String(),
-		Ticker:            plan.Ticker,
-		Direction:         plan.Direction,
-		Status:            plan.Status,
-		PlanDate:          plan.PlanDate.Format(journalDateLayout),
-		ValidUntil:        formatDatePointer(plan.ValidUntil),
-		UserThesisID:      formatUUIDPointer(plan.UserThesisID),
-		EntryTrigger:      plan.EntryTrigger,
-		EntryPrice:        plan.EntryPrice,
-		StopLoss:          plan.StopLoss,
-		TakeProfit:        plan.TakeProfit,
-		PositionSize:      plan.PositionSize,
-		Invalidation:      plan.Invalidation,
-		MaxRiskAmount:     plan.MaxRiskAmount,
-		MaxRiskPercent:    plan.MaxRiskPercent,
-		Rationale:         plan.Rationale,
-		AISummary:         plan.AISummary,
-		Notes:             plan.Notes,
-		ExecutedJournalID: formatUUIDPointer(plan.ExecutedJournalID),
-		ExecutedAt:        plan.ExecutedAt,
-		CreatedAt:         plan.CreatedAt,
-		UpdatedAt:         plan.UpdatedAt,
+		ID:                  plan.ID.String(),
+		Ticker:              plan.Ticker,
+		Direction:           plan.Direction,
+		Status:              plan.Status,
+		PlanDate:            plan.PlanDate.Format(journalDateLayout),
+		ValidUntil:          formatDatePointer(plan.ValidUntil),
+		UserThesisID:        formatUUIDPointer(plan.UserThesisID),
+		PlaybookID:          formatUUIDPointer(plan.PlaybookID),
+		EntryTrigger:        plan.EntryTrigger,
+		EntryPrice:          plan.EntryPrice,
+		StopLoss:            plan.StopLoss,
+		TakeProfit:          plan.TakeProfit,
+		PositionSize:        plan.PositionSize,
+		PlannedQuantity:     plan.PlannedQuantity,
+		RiskMultiple:        plan.RiskMultiple,
+		InitialRiskPerShare: plan.InitialRiskPerShare,
+		OneRAmount:          plan.OneRAmount,
+		Invalidation:        plan.Invalidation,
+		MaxRiskAmount:       plan.MaxRiskAmount,
+		MaxRiskPercent:      plan.MaxRiskPercent,
+		Rationale:           plan.Rationale,
+		AISummary:           plan.AISummary,
+		Notes:               plan.Notes,
+		ExecutedJournalID:   formatUUIDPointer(plan.ExecutedJournalID),
+		ExecutedAt:          plan.ExecutedAt,
+		CreatedAt:           plan.CreatedAt,
+		UpdatedAt:           plan.UpdatedAt,
 	}
 }
 

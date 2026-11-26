@@ -11,6 +11,7 @@ import (
 // AES-GCM encrypted by the backend and is never included in an API response.
 type LLMCredential struct {
 	ID                   uuid.UUID `gorm:"type:uuid;primaryKey"`
+	UserID               uuid.UUID `gorm:"type:uuid;not null;uniqueIndex:idx_llm_credential_scope"`
 	CreatedAt            time.Time
 	UpdatedAt            time.Time
 	Provider             string `gorm:"type:text;not null;uniqueIndex:idx_llm_credential_scope"`
@@ -20,6 +21,7 @@ type LLMCredential struct {
 }
 
 func (credential *LLMCredential) BeforeCreate(_ *gorm.DB) error {
+	ensureDefaultUserID(&credential.UserID)
 	if credential.ID == uuid.Nil {
 		credential.ID = uuid.New()
 	}

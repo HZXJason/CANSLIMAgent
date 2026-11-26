@@ -64,7 +64,7 @@ $$\text{Disciplined R-Loop Rate} = \frac{\text{关联有效计划} \land \text{�
 ## 五、里程碑目标追踪（Milestone Tracker）
 
 - [x] **M0 — 分支清理、遗留包袱清除与方案归档**：GitHub/本地仅保留 `dev` 与 `feat/alphalens-v2`；删除 `frontend/design2` 与 `ios/` 散落截图；更新 CI 分支；落盘本蓝图。
-- [ ] **M1 — Go 后端金融核心底座**：裁剪过度复杂的 `ProfileTag` 分类学；扩展 `1R`/Heat 配置与预设 Playbooks；上线 `MarketRegimeService`（`M`）、`PositionSizer`（`1R`）、`TradeLifecycle`（FIFO 聚合 + `Realized R` + 四象限）、`/api/v1/desk` 与 `/api/v1/trades`；升级确定性风控审查。
+- [x] **M1 — Go 后端金融核心底座**：裁剪过度复杂的 `ProfileTag` 分类学；扩展 `1R`/Heat 配置与预设 Playbooks；上线 `MarketRegimeService`（`M`）、`PositionSizer`（`1R`）、`TradeLifecycle`（FIFO 聚合 + `Realized R` + 四象限）、`/api/v1/desk` 与 `/api/v1/trades`；升级确定性风控审查。
 - [ ] **M2 — Sidecar AI 手术与 `Vibe` 解耦**：移除 `vibe_journal_runner.py` 子进程依赖；新增 `evidence_cards.py` 与 `/api/v1/stocks/:symbol/evidence-cards`；升级 `Pre-Trade Red Team` 提示词与上下文契约。
 - [ ] **M3 — 前端 4 大工作区重构 & iOS Companion**：重构导航为 `/desk`、`/research`、`/positions`、`/system`；实现 45 秒研究开单舱、四象限行为账单、清理废弃页面；iOS 端增补 `作战室` Companion 视图并验证 Xcode 编译。
 - [ ] **M4 — 文档同步、全量 CI 验收与远端推送**：同步更新 `README.md`、`PRODUCT.md`、`DESIGN.md`、`CHANGELOG.md`；跑通 Go / Python / Frontend / iOS 全量测试构建；清理推送至 `origin/feat/alphalens-v2`。

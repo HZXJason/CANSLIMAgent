@@ -76,7 +76,7 @@ func (h *TradeReviewHandler) UpdateBehaviorObservationFeedback(c *gin.Context) {
 		return
 	}
 	var observation models.BehaviorObservation
-	err = h.db.WithContext(c.Request.Context()).First(&observation, "id = ?", id).Error
+	err = h.db.WithContext(c.Request.Context()).Where("id = ? AND user_id = ?", id, models.DefaultUserID).First(&observation).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		Fail(c, http.StatusNotFound, "behavior observation not found")
 		return
@@ -90,7 +90,7 @@ func (h *TradeReviewHandler) UpdateBehaviorObservationFeedback(c *gin.Context) {
 		Fail(c, http.StatusInternalServerError, "behavior observation feedback could not be saved")
 		return
 	}
-	if err := h.db.WithContext(c.Request.Context()).First(&observation, "id = ?", id).Error; err != nil {
+	if err := h.db.WithContext(c.Request.Context()).Where("id = ? AND user_id = ?", id, models.DefaultUserID).First(&observation).Error; err != nil {
 		Fail(c, http.StatusInternalServerError, "behavior observation could not be reloaded")
 		return
 	}
@@ -99,7 +99,7 @@ func (h *TradeReviewHandler) UpdateBehaviorObservationFeedback(c *gin.Context) {
 
 func syncBehaviorObservations(database *gorm.DB) ([]models.BehaviorObservation, error) {
 	var all []models.TradeReview
-	if err := database.Where("completed_at IS NOT NULL").Order("journal_entry_id ASC, version DESC").Find(&all).Error; err != nil {
+	if err := database.Where("user_id = ? AND completed_at IS NOT NULL", models.DefaultUserID).Order("journal_entry_id ASC, version DESC").Find(&all).Error; err != nil {
 		return nil, err
 	}
 	latest := make([]models.TradeReview, 0, len(all))
@@ -112,18 +112,25 @@ func syncBehaviorObservations(database *gorm.DB) ([]models.BehaviorObservation, 
 		latest = append(latest, review)
 	}
 	built := services.BuildBehaviorObservations(latest)
+	if database.Migrator().HasTable(&models.Trade{}) {
+		var trades []models.Trade
+		if err := database.Where("user_id = ? AND status = ?", models.DefaultUserID, models.TradeStatusClosed).Find(&trades).Error; err == nil {
+			built = append(built, services.BuildTradeBehaviorObservations(trades)...)
+		}
+	}
 	keys := make([]string, 0, len(built))
 	for index := range built {
+		built[index].UserID = models.DefaultUserID
 		keys = append(keys, built[index].Key)
 		if err := database.Clauses(clause.OnConflict{
-			Columns:   []clause.Column{{Name: "key"}},
+			Columns:   []clause.Column{{Name: "user_id"}, {Name: "key"}},
 			DoUpdates: clause.AssignmentColumns([]string{"scenario", "status", "sample_count", "confidence", "message", "evidence_review_ids", "updated_at"}),
 		}).Create(&built[index]).Error; err != nil {
 			return nil, err
 		}
 	}
 	var stored []models.BehaviorObservation
-	if err := database.Where("key IN ?", keys).Order("key ASC").Find(&stored).Error; err != nil {
+	if err := database.Where("user_id = ? AND key IN ?", models.DefaultUserID, keys).Order("key ASC").Find(&stored).Error; err != nil {
 		return nil, err
 	}
 	return stored, nil
@@ -140,7 +147,7 @@ func (h *TradeReviewHandler) Patch(c *gin.Context) {
 		return
 	}
 	var review models.TradeReview
-	err := h.db.WithContext(c.Request.Context()).Where("journal_entry_id = ?", entryID).Order("version DESC").First(&review).Error
+	err := h.db.WithContext(c.Request.Context()).Where("user_id = ? AND journal_entry_id = ?", models.DefaultUserID, entryID).Order("version DESC").First(&review).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		Fail(c, http.StatusNotFound, "trade review not found")
 		return
@@ -182,10 +189,11 @@ func (h *TradeReviewHandler) Patch(c *gin.Context) {
 		Fail(c, http.StatusInternalServerError, "trade review could not be updated")
 		return
 	}
-	if err := h.db.WithContext(c.Request.Context()).First(&review, "id = ?", review.ID).Error; err != nil {
+	if err := h.db.WithContext(c.Request.Context()).Where("id = ? AND user_id = ?", review.ID, models.DefaultUserID).First(&review).Error; err != nil {
 		Fail(c, http.StatusInternalServerError, "trade review could not be reloaded")
 		return
 	}
+	_, _ = services.RebuildUserTrades(c.Request.Context(), h.db, models.DefaultUserID)
 	OK(c, review)
 }
 
@@ -213,7 +221,7 @@ func (h *TradeReviewHandler) Get(c *gin.Context) {
 		return
 	}
 	var review models.TradeReview
-	err := h.db.WithContext(c.Request.Context()).Where("journal_entry_id = ?", entryID).Order("version DESC").First(&review).Error
+	err := h.db.WithContext(c.Request.Context()).Where("user_id = ? AND journal_entry_id = ?", models.DefaultUserID, entryID).Order("version DESC").First(&review).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		Fail(c, http.StatusNotFound, "trade review not found")
 		return
@@ -236,7 +244,7 @@ func (h *TradeReviewHandler) PlanCandidates(c *gin.Context) {
 	}
 	var plans []models.TradePlan
 	if err := h.db.WithContext(c.Request.Context()).
-		Where("ticker = ? AND direction = ? AND status IN ?", entry.Symbol, direction, []string{models.TradePlanStatusDraft, models.TradePlanStatusWaiting}).
+		Where("user_id = ? AND ticker = ? AND direction = ? AND status IN ?", models.DefaultUserID, entry.Symbol, direction, []string{models.TradePlanStatusDraft, models.TradePlanStatusWaiting}).
 		Order("plan_date DESC").Limit(20).Find(&plans).Error; err != nil {
 		Fail(c, http.StatusInternalServerError, "trade plan candidates could not be loaded")
 		return
@@ -268,7 +276,7 @@ func (h *TradeReviewHandler) LinkPlan(c *gin.Context) {
 		return
 	}
 	var plan models.TradePlan
-	err = h.db.WithContext(c.Request.Context()).First(&plan, "id = ?", planID).Error
+	err = h.db.WithContext(c.Request.Context()).Where("id = ? AND user_id = ?", planID, models.DefaultUserID).First(&plan).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		Fail(c, http.StatusNotFound, "trade plan not found")
 		return
@@ -288,11 +296,32 @@ func (h *TradeReviewHandler) LinkPlan(c *gin.Context) {
 
 	var review models.TradeReview
 	err = h.db.WithContext(c.Request.Context()).Transaction(func(tx *gorm.DB) error {
-		if err := tx.Model(&models.TradeJournalEntry{}).Where("id = ? AND trade_plan_id IS NULL", entry.ID).Update("trade_plan_id", plan.ID).Error; err != nil {
+		var trade models.Trade
+		tradeErr := tx.Where("user_id = ? AND trade_plan_id = ?", entry.UserID, plan.ID).First(&trade).Error
+		if errors.Is(tradeErr, gorm.ErrRecordNotFound) {
+			direction := models.TradeDirectionLong
+			if plan.Direction == models.TradePlanDirectionSell {
+				direction = models.TradeDirectionShort
+			}
+			trade = models.Trade{UserID: entry.UserID, TradePlanID: &plan.ID, Symbol: entry.Symbol, Market: entry.Market, Direction: direction, Status: models.TradeStatusOpen, OpenedAt: entry.ExecutedAt}
+			if err := tx.Create(&trade).Error; err != nil {
+				return err
+			}
+		} else if tradeErr != nil {
+			return tradeErr
+		}
+		updates := map[string]any{"trade_id": trade.ID}
+		query := tx.Model(&models.TradeJournalEntry{}).Where("id = ?", entry.ID)
+		if entry.TradePlanID == nil {
+			query = query.Where("trade_plan_id IS NULL")
+			updates["trade_plan_id"] = plan.ID
+		}
+		if err := query.Updates(updates).Error; err != nil {
 			return err
 		}
 		entry.TradePlanID = &plan.ID
-		if err := tx.Model(&models.TradePlan{}).Where("id = ?", plan.ID).Updates(map[string]any{
+		entry.TradeID = &trade.ID
+		if err := tx.Model(&models.TradePlan{}).Where("id = ? AND user_id = ?", plan.ID, models.DefaultUserID).Updates(map[string]any{
 			"status": models.TradePlanStatusExecuted, "executed_journal_id": entry.ID, "executed_at": entry.ExecutedAt, "updated_at": time.Now().UTC(),
 		}).Error; err != nil {
 			return err
@@ -305,6 +334,7 @@ func (h *TradeReviewHandler) LinkPlan(c *gin.Context) {
 		Fail(c, http.StatusInternalServerError, "journal entry could not be linked to trade plan")
 		return
 	}
+	_, _ = services.RebuildUserTrades(c.Request.Context(), h.db, models.DefaultUserID)
 	c.JSON(http.StatusCreated, APIResponse{Success: true, Data: review, Error: nil})
 }
 
@@ -312,13 +342,13 @@ func appendTradeReviewVersion(tx *gorm.DB, entry models.TradeJournalEntry) (mode
 	var plan *models.TradePlan
 	if entry.TradePlanID != nil {
 		var loaded models.TradePlan
-		if err := tx.First(&loaded, "id = ?", *entry.TradePlanID).Error; err != nil {
+		if err := tx.Where("id = ? AND user_id = ?", *entry.TradePlanID, entry.UserID).First(&loaded).Error; err != nil {
 			return models.TradeReview{}, err
 		}
 		plan = &loaded
 	}
 	var latestVersion int
-	if err := tx.Model(&models.TradeReview{}).Where("journal_entry_id = ?", entry.ID).Select("COALESCE(MAX(version), 0)").Scan(&latestVersion).Error; err != nil {
+	if err := tx.Model(&models.TradeReview{}).Where("user_id = ? AND journal_entry_id = ?", entry.UserID, entry.ID).Select("COALESCE(MAX(version), 0)").Scan(&latestVersion).Error; err != nil {
 		return models.TradeReview{}, err
 	}
 	planSnapshot := map[string]any{}
@@ -329,7 +359,7 @@ func appendTradeReviewVersion(tx *gorm.DB, entry models.TradeJournalEntry) (mode
 		planID = &id
 	}
 	review := models.TradeReview{
-		JournalEntryID: entry.ID, Version: latestVersion + 1, TradePlanID: planID,
+		UserID: entry.UserID, JournalEntryID: entry.ID, TradeID: entry.TradeID, Version: latestVersion + 1, TradePlanID: planID,
 		PlanSnapshot: planSnapshot, ExecutionSnapshot: tradeExecutionSnapshot(entry),
 		Diff: services.BuildTradeExecutionDiff(plan, entry), ProcessQuality: "unreviewed",
 	}
@@ -358,7 +388,7 @@ func (h *TradeReviewHandler) loadEntry(c *gin.Context) (models.TradeJournalEntry
 		return models.TradeJournalEntry{}, false
 	}
 	var entry models.TradeJournalEntry
-	err := h.db.WithContext(c.Request.Context()).First(&entry, "id = ?", entryID).Error
+	err := h.db.WithContext(c.Request.Context()).Where("id = ? AND user_id = ?", entryID, models.DefaultUserID).First(&entry).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		Fail(c, http.StatusNotFound, "journal entry not found")
 		return entry, false

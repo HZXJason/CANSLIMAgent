@@ -3,8 +3,10 @@ package handlers
 import (
 	"errors"
 	"io"
+	"math"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/alphalens/canslimagent/backend/internal/models"
 	"github.com/alphalens/canslimagent/backend/internal/services"
@@ -17,6 +19,14 @@ type PreTradeReviewHandler struct {
 	db          *gorm.DB
 	reviewer    services.PreTradeAIReviewer
 	credentials *services.LLMCredentialStore
+	regimes     *services.MarketRegimeService
+	analysis    *services.AnalysisService
+}
+
+func (h *PreTradeReviewHandler) WithMarketContext(regimes *services.MarketRegimeService, analysis *services.AnalysisService) *PreTradeReviewHandler {
+	h.regimes = regimes
+	h.analysis = analysis
+	return h
 }
 
 type createPreTradeReviewRequest struct {
@@ -67,7 +77,8 @@ func (h *PreTradeReviewHandler) Create(c *gin.Context) {
 	}
 
 	profile, _ := NewProfileHandler(h.db, nil).loadProfile(c)
-	deterministic := services.BuildPersonalizedPreTradeReview(plan, profile)
+	env, regimePayload, sizingPayload := h.buildPreTradeEnvironment(c, plan, profile)
+	deterministic := services.BuildEnvironmentPreTradeReview(plan, profile, env)
 	review := models.PreTradeRiskReview{
 		TradePlanID: plan.ID, PlanSnapshot: preTradePlanSnapshot(plan),
 		HardConflicts: deterministic.HardConflicts, RiskWarnings: deterministic.RiskWarnings,
@@ -89,6 +100,17 @@ func (h *PreTradeReviewHandler) Create(c *gin.Context) {
 					return
 				}
 			}
+			personalContext, contextErr := services.BuildUserTradingContext(c.Request.Context(), h.db, models.DefaultUserID, "pretrade_review", time.Now().UTC())
+			if contextErr != nil {
+				Fail(c, http.StatusInternalServerError, "personal trading context could not be loaded")
+				return
+			}
+			contextSnapshot, contextErr := services.SavePromptContextSnapshot(c.Request.Context(), h.db, personalContext, &plan.ID)
+			if contextErr != nil {
+				Fail(c, http.StatusInternalServerError, "personal trading context could not be snapshotted")
+				return
+			}
+			review.PromptContextSnapshotID = &contextSnapshot.ID
 			behaviorEvidence, principles, playbooks, profileContext, behaviorErr := h.loadEligiblePersonalMemory(c, plan)
 			if behaviorErr != nil {
 				review.UnresolvedQuestions = append(review.UnresolvedQuestions, models.PreTradeFinding{
@@ -99,6 +121,7 @@ func (h *PreTradeReviewHandler) Create(c *gin.Context) {
 				Ticker: plan.Ticker, Provider: request.LLMProvider, Model: request.Model, BackendURL: request.BackendURL, APIKey: apiKey,
 				PlanSnapshot: review.PlanSnapshot, ResearchEvidence: h.loadResearchEvidence(c, plan), CurrentEvidence: request.CurrentEvidence, BehaviorObservations: behaviorEvidence,
 				TradingProfile: profileContext, TradingPrinciples: principles, TradingPlaybooks: playbooks,
+				TradingPolicies: policyPromptValues(personalContext.Policies), MarketRegime: regimePayload, PositionSizing: sizingPayload, ContextVersion: personalContext.Version,
 			})
 			if reviewErr != nil {
 				review.AIStatus = models.PreTradeAIStatusUnavailable
@@ -127,6 +150,82 @@ func (h *PreTradeReviewHandler) Create(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusCreated, APIResponse{Success: true, Data: review, Error: nil})
+}
+
+func (h *PreTradeReviewHandler) buildPreTradeEnvironment(c *gin.Context, plan models.TradePlan, profile models.TradingProfile) (services.PreTradeEnvironment, map[string]any, map[string]any) {
+	var env services.PreTradeEnvironment
+	var regimeMap map[string]any
+	var sizingMap map[string]any
+
+	assetMkt := "US"
+	if inferTradeMarket(plan.Ticker) == models.TradeMarketChinaA {
+		assetMkt = "CN"
+	}
+	if h.regimes != nil {
+		report := h.regimes.Get(c.Request.Context(), assetMkt)
+		env.MarketRegime = report.Regime
+		regimeMap = map[string]any{
+			"market":               report.Market,
+			"status":               report.Status,
+			"regime":               report.Regime,
+			"regime_label":         report.RegimeLabel,
+			"max_exposure_percent": report.MaxExposurePct,
+			"distribution_days":    report.DistributionDays,
+		}
+	}
+	if h.analysis != nil {
+		if kline, err := h.analysis.KLine(c.Request.Context(), plan.Ticker, services.PeriodDaily); err == nil {
+			if atr := services.ComputeATR14(kline.Candles); atr > 0 {
+				env.ATR14 = &atr
+			}
+		}
+	}
+	if profile.AccountEquity != nil && *profile.AccountEquity > 0 {
+		maxHeat := 5.0
+		if profile.MaxPortfolioHeatPercent != nil && *profile.MaxPortfolioHeatPercent > 0 {
+			maxHeat = *profile.MaxPortfolioHeatPercent
+		}
+		env.MaxHeatPercent = &maxHeat
+		var openRisk float64
+		if h.db != nil && h.db.Migrator().HasTable(&models.Trade{}) {
+			var openTrades []models.Trade
+			_ = h.db.WithContext(c.Request.Context()).Where("user_id = ? AND status = ?", models.DefaultUserID, models.TradeStatusOpen).Find(&openTrades).Error
+			for _, tr := range openTrades {
+				openRisk += tr.OpenRiskAmount
+			}
+		}
+		openPct := openRisk / *profile.AccountEquity * 100.0
+		env.OpenHeatPercent = &openPct
+		planRisk := 0.0
+		if plan.MaxRiskAmount != nil && *plan.MaxRiskAmount > 0 {
+			planRisk = *plan.MaxRiskAmount
+		} else if plan.EntryPrice != nil && plan.StopLoss != nil && plan.PlannedQuantity != nil && *plan.PlannedQuantity > 0 {
+			planRisk = math.Abs(*plan.EntryPrice-*plan.StopLoss) * *plan.PlannedQuantity
+		}
+		projected := (openRisk + planRisk) / *profile.AccountEquity * 100.0
+		env.ProjectedHeatPercent = &projected
+		sizingMap = map[string]any{
+			"planned_quantity":       plan.PlannedQuantity,
+			"risk_multiple":          plan.RiskMultiple,
+			"open_heat_percent":      openPct,
+			"projected_heat_percent": projected,
+			"max_heat_percent":       maxHeat,
+			"atr_14":                 env.ATR14,
+		}
+	}
+	return env, regimeMap, sizingMap
+}
+
+func policyPromptValues(policies []models.TradingPolicy) []map[string]any {
+	result := make([]map[string]any, 0, len(policies))
+	for _, policy := range policies {
+		result = append(result, map[string]any{
+			"id": policy.ID.String(), "kind": policy.Kind, "category": policy.Category, "title": policy.Title,
+			"statement": policy.Statement, "condition": policy.Condition, "action": policy.Action, "scope": policy.Scope,
+			"strength": policy.Strength, "origin": policy.Origin, "version": policy.Version, "source_type": "trading_policy",
+		})
+	}
+	return result
 }
 
 func (h *PreTradeReviewHandler) loadEligiblePersonalMemory(c *gin.Context, plan models.TradePlan) ([]map[string]any, []map[string]any, []map[string]any, map[string]any, error) {

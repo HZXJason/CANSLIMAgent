@@ -21,6 +21,50 @@ type PreTradeAIReviewInput struct {
 	TradingProfile       map[string]any
 	TradingPrinciples    []map[string]any
 	TradingPlaybooks     []map[string]any
+	TradingPolicies      []map[string]any
+	MarketRegime         map[string]any
+	PositionSizing       map[string]any
+	ContextVersion       string
+}
+
+type PreTradeEnvironment struct {
+	MarketRegime         string
+	ATR14                *float64
+	OpenHeatPercent      *float64
+	ProjectedHeatPercent *float64
+	MaxHeatPercent       *float64
+}
+
+func BuildEnvironmentPreTradeReview(plan models.TradePlan, profile models.TradingProfile, env PreTradeEnvironment) DeterministicPreTradeReview {
+	result := BuildPersonalizedPreTradeReview(plan, profile)
+	if env.MarketRegime == "correction" && plan.Direction == models.TradePlanDirectionBuy {
+		result.HardConflicts = append(result.HardConflicts, newPlanFinding(
+			"market_regime_correction", "high", "大盘（M）处于下跌回调期，建议总仓位上限 0%，逆势做多风险极高。", "direction",
+			map[string]any{"market_regime": env.MarketRegime, "source_type": "market_regime"},
+		))
+	} else if (env.MarketRegime == "uptrend_under_pressure" || env.MarketRegime == "rally_attempt") && plan.Direction == models.TradePlanDirectionBuy {
+		result.RiskWarnings = append(result.RiskWarnings, newPlanFinding(
+			"market_regime_caution", "medium", "大盘（M）处于上升受压或尝试反弹期，建议压缩单笔风险或分批试错。", "direction",
+			map[string]any{"market_regime": env.MarketRegime, "source_type": "market_regime"},
+		))
+	}
+	if env.ATR14 != nil && *env.ATR14 > 0 && plan.EntryPrice != nil && plan.StopLoss != nil {
+		stopDist := math.Abs(*plan.EntryPrice - *plan.StopLoss)
+		atrMult := stopDist / *env.ATR14
+		if atrMult < 0.5 {
+			result.RiskWarnings = append(result.RiskWarnings, newPlanFinding(
+				"stop_too_tight_atr", "high", "止损距离小于 0.5 倍 ATR(14)，极易被日内正常波动扫出。", "stop_loss",
+				map[string]any{"atr_14": *env.ATR14, "stop_atr_multiple": math.Round(atrMult*100) / 100},
+			))
+		}
+	}
+	if env.MaxHeatPercent != nil && *env.MaxHeatPercent > 0 && env.ProjectedHeatPercent != nil && *env.ProjectedHeatPercent > *env.MaxHeatPercent {
+		result.HardConflicts = append(result.HardConflicts, newPlanFinding(
+			"portfolio_heat_exceeded", "high", "叠加本单后组合在途总风险（Portfolio Heat）超出设定上限。", "position_size",
+			map[string]any{"projected_heat_percent": *env.ProjectedHeatPercent, "max_heat_percent": *env.MaxHeatPercent},
+		))
+	}
+	return result
 }
 
 func BuildPersonalizedPreTradeReview(plan models.TradePlan, profile models.TradingProfile) DeterministicPreTradeReview {

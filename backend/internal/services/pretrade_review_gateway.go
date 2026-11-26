@@ -50,10 +50,15 @@ func (reviewer *HTTPPreTradeAIReviewer) Review(ctx context.Context, input PreTra
 		TradingProfile       map[string]any   `json:"trading_profile"`
 		TradingPrinciples    []map[string]any `json:"trading_principles"`
 		TradingPlaybooks     []map[string]any `json:"trading_playbooks"`
+		TradingPolicies      []map[string]any `json:"trading_policies"`
+		MarketRegime         map[string]any   `json:"market_regime,omitempty"`
+		PositionSizing       map[string]any   `json:"position_sizing,omitempty"`
+		ContextVersion       string           `json:"context_version"`
 	}{
 		Ticker: input.Ticker, LLMProvider: input.Provider, Model: input.Model, BackendURL: input.BackendURL, APIKey: input.APIKey,
 		PlanSnapshot: input.PlanSnapshot, ResearchEvidence: input.ResearchEvidence, CurrentEvidence: input.CurrentEvidence, BehaviorObservations: input.BehaviorObservations,
 		TradingProfile: input.TradingProfile, TradingPrinciples: input.TradingPrinciples, TradingPlaybooks: input.TradingPlaybooks,
+		TradingPolicies: input.TradingPolicies, MarketRegime: input.MarketRegime, PositionSizing: input.PositionSizing, ContextVersion: input.ContextVersion,
 	}
 	body, err := json.Marshal(wire)
 	if err != nil {

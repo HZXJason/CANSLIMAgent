@@ -50,6 +50,7 @@ type journalEntryResponse struct {
 	Market      string    `json:"market"`
 	Currency    string    `json:"currency"`
 	OrderID     *string   `json:"order_id"`
+	TradeID     *string   `json:"trade_id"`
 	TradePlanID *string   `json:"trade_plan_id"`
 	Source      string    `json:"source"`
 	Notes       *string   `json:"notes"`
@@ -184,7 +185,7 @@ func (h *JournalHandler) LatestReflection(c *gin.Context) {
 		scope = "all"
 	}
 	var reflection models.TradeJournalReflection
-	err := h.db.WithContext(c.Request.Context()).Where("scope = ?", scope).Order("created_at DESC").First(&reflection).Error
+	err := h.db.WithContext(c.Request.Context()).Where("user_id = ? AND scope = ?", models.DefaultUserID, scope).Order("created_at DESC").First(&reflection).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		OK(c, nil)
 		return
@@ -197,7 +198,7 @@ func (h *JournalHandler) LatestReflection(c *gin.Context) {
 }
 
 func (h *JournalHandler) listEntries(c *gin.Context, limit int) ([]models.TradeJournalEntry, error) {
-	query := h.db.WithContext(c.Request.Context()).Order("executed_at DESC")
+	query := h.db.WithContext(c.Request.Context()).Where("user_id = ?", models.DefaultUserID).Order("executed_at DESC")
 	if symbol := strings.ToUpper(strings.TrimSpace(c.Query("symbol"))); symbol != "" {
 		query = query.Where("symbol = ?", symbol)
 	}
@@ -226,6 +227,8 @@ func (h *JournalHandler) Create(c *gin.Context) {
 		Fail(c, http.StatusInternalServerError, "journal entry could not be saved")
 		return
 	}
+	_, _ = services.RebuildUserTrades(c.Request.Context(), h.db, models.DefaultUserID)
+	_ = h.db.WithContext(c.Request.Context()).First(&entry, "id = ?", entry.ID).Error
 	c.JSON(http.StatusCreated, APIResponse{Success: true, Data: newJournalEntryResponse(entry), Error: nil})
 }
 
@@ -277,7 +280,7 @@ func (h *JournalHandler) Patch(c *gin.Context) {
 		Fail(c, http.StatusInternalServerError, "journal entry could not be updated")
 		return
 	}
-	if err := h.db.WithContext(c.Request.Context()).First(&entry, "id = ?", entry.ID).Error; err != nil {
+	if err := h.db.WithContext(c.Request.Context()).Where("id = ? AND user_id = ?", entry.ID, models.DefaultUserID).First(&entry).Error; err != nil {
 		Fail(c, http.StatusInternalServerError, "journal entry could not be reloaded")
 		return
 	}
@@ -297,12 +300,13 @@ func (h *JournalHandler) Delete(c *gin.Context) {
 		Fail(c, http.StatusInternalServerError, "journal entry could not be deleted")
 		return
 	}
+	_, _ = services.RebuildUserTrades(c.Request.Context(), h.db, models.DefaultUserID)
 	OK(c, gin.H{"deleted": true})
 }
 
 func (h *JournalHandler) findEntry(c *gin.Context) (models.TradeJournalEntry, bool) {
 	var entry models.TradeJournalEntry
-	err := h.db.WithContext(c.Request.Context()).First(&entry, "id = ?", c.Param("id")).Error
+	err := h.db.WithContext(c.Request.Context()).Where("id = ? AND user_id = ?", c.Param("id"), models.DefaultUserID).First(&entry).Error
 	if err == nil {
 		return entry, true
 	}
@@ -453,6 +457,7 @@ func newJournalEntryResponse(entry models.TradeJournalEntry) journalEntryRespons
 		Market:      entry.Market,
 		Currency:    entry.Currency,
 		OrderID:     entry.OrderID,
+		TradeID:     formatUUIDPointer(entry.TradeID),
 		TradePlanID: formatUUIDPointer(entry.TradePlanID),
 		Source:      entry.Source,
 		Notes:       entry.Notes,

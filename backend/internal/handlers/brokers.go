@@ -64,7 +64,7 @@ func NewBrokerHandlerWithFrontendURL(database *gorm.DB, vault *services.BrokerCr
 
 func (h *BrokerHandler) List(c *gin.Context) {
 	var connections []models.BrokerConnection
-	if err := h.db.WithContext(c.Request.Context()).Order("broker asc").Find(&connections).Error; err != nil {
+	if err := h.db.WithContext(c.Request.Context()).Where("user_id = ?", models.DefaultUserID).Order("broker asc").Find(&connections).Error; err != nil {
 		Fail(c, http.StatusInternalServerError, "broker connections could not be loaded")
 		return
 	}
@@ -242,7 +242,7 @@ func (h *BrokerHandler) detectGateway(c *gin.Context, broker string) {
 		return
 	}
 	var connection models.BrokerConnection
-	if err := h.db.WithContext(c.Request.Context()).Where("broker = ?", broker).First(&connection).Error; err != nil {
+	if err := h.db.WithContext(c.Request.Context()).Where("user_id = ? AND broker = ?", models.DefaultUserID, broker).First(&connection).Error; err != nil {
 		Fail(c, http.StatusInternalServerError, "broker connection could not be loaded")
 		return
 	}
@@ -255,7 +255,7 @@ func (h *BrokerHandler) Delete(c *gin.Context) {
 		return
 	}
 	if err := h.db.WithContext(c.Request.Context()).Transaction(func(tx *gorm.DB) error {
-		if err := tx.Where("broker = ?", connection.Broker).Delete(&models.BrokerAuthorizationSession{}).Error; err != nil {
+		if err := tx.Where("user_id = ? AND broker = ?", connection.UserID, connection.Broker).Delete(&models.BrokerAuthorizationSession{}).Error; err != nil {
 			return err
 		}
 		return tx.Delete(&connection).Error
@@ -355,6 +355,7 @@ func (h *BrokerHandler) Import(c *gin.Context) {
 		Fail(c, http.StatusInternalServerError, "broker executions could not be imported")
 		return
 	}
+	_, _ = services.RebuildUserTrades(c.Request.Context(), h.db, models.DefaultUserID)
 	OK(c, gin.H{"created": created, "skipped": skipped, "warnings": warnings})
 }
 
@@ -365,7 +366,7 @@ func (h *BrokerHandler) findConnection(c *gin.Context) (models.BrokerConnection,
 		Fail(c, http.StatusNotFound, "broker connection not found")
 		return connection, false
 	}
-	err = h.db.WithContext(c.Request.Context()).First(&connection, "id = ?", id).Error
+	err = h.db.WithContext(c.Request.Context()).Where("user_id = ? AND id = ?", models.DefaultUserID, id).First(&connection).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		Fail(c, http.StatusNotFound, "broker connection not found")
 		return connection, false
@@ -423,7 +424,7 @@ func newBrokerConnectionResponse(connection models.BrokerConnection, secure bool
 
 func (h *BrokerHandler) setPendingOAuthConnection(tx *gorm.DB, broker string, sessionID uuid.UUID, now time.Time) error {
 	var connection models.BrokerConnection
-	err := tx.Where("broker = ?", broker).First(&connection).Error
+	err := tx.Where("user_id = ? AND broker = ?", models.DefaultUserID, broker).First(&connection).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return tx.Create(&models.BrokerConnection{
 			Broker:                        broker,
@@ -457,11 +458,11 @@ func (h *BrokerHandler) consumeOAuthSession(ctx context.Context, broker, rawStat
 	now := h.now()
 	var session models.BrokerAuthorizationSession
 	err := h.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		if err := tx.Where("broker = ? AND state_hash = ?", broker, digest[:]).First(&session).Error; err != nil {
+		if err := tx.Where("user_id = ? AND broker = ? AND state_hash = ?", models.DefaultUserID, broker, digest[:]).First(&session).Error; err != nil {
 			return err
 		}
 		result := tx.Model(&models.BrokerAuthorizationSession{}).
-			Where("id = ? AND consumed_at IS NULL AND expires_at > ?", session.ID, now).
+			Where("user_id = ? AND id = ? AND consumed_at IS NULL AND expires_at > ?", models.DefaultUserID, session.ID, now).
 			Updates(map[string]any{"consumed_at": now, "updated_at": now})
 		if result.Error != nil {
 			return result.Error
@@ -477,7 +478,7 @@ func (h *BrokerHandler) consumeOAuthSession(ctx context.Context, broker, rawStat
 func (h *BrokerHandler) clearPendingOAuthConnection(ctx context.Context, broker string, sessionID uuid.UUID) {
 	now := h.now()
 	_ = h.db.WithContext(ctx).Model(&models.BrokerConnection{}).
-		Where("broker = ? AND connection_status = ? AND pending_authorization_session_id = ?", broker, models.BrokerConnectionStatusPending, sessionID).
+		Where("user_id = ? AND broker = ? AND connection_status = ? AND pending_authorization_session_id = ?", models.DefaultUserID, broker, models.BrokerConnectionStatusPending, sessionID).
 		Updates(map[string]any{
 			"account_name":                     "",
 			"connection_method":                "",
@@ -496,7 +497,7 @@ func (h *BrokerHandler) completeOAuthConnection(ctx context.Context, broker stri
 	now := h.now()
 	return h.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		result := tx.Model(&models.BrokerConnection{}).
-			Where("broker = ? AND connection_status = ? AND pending_authorization_session_id = ?", broker, models.BrokerConnectionStatusPending, sessionID).
+			Where("user_id = ? AND broker = ? AND connection_status = ? AND pending_authorization_session_id = ?", models.DefaultUserID, broker, models.BrokerConnectionStatusPending, sessionID).
 			Updates(map[string]any{
 				"credential_ciphertext":            ciphertext,
 				"credential_nonce":                 nonce,
@@ -521,7 +522,7 @@ func (h *BrokerHandler) upsertConnectedConnection(ctx context.Context, broker, m
 	now := h.now()
 	return h.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var connection models.BrokerConnection
-		err := tx.Where("broker = ?", broker).First(&connection).Error
+		err := tx.Where("user_id = ? AND broker = ?", models.DefaultUserID, broker).First(&connection).Error
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return tx.Create(&models.BrokerConnection{
 				Broker:                 broker,
@@ -554,7 +555,7 @@ func (h *BrokerHandler) saveGatewayUnavailable(ctx context.Context, broker strin
 	now := h.now().UTC()
 	var connection models.BrokerConnection
 	err := h.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		err := tx.Where("broker = ?", broker).First(&connection).Error
+		err := tx.Where("user_id = ? AND broker = ?", models.DefaultUserID, broker).First(&connection).Error
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			connection = models.BrokerConnection{
 				Broker:               broker,

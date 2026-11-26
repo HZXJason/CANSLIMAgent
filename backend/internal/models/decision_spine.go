@@ -11,6 +11,7 @@ import (
 // particular point in time. It is intentionally immutable after creation.
 type CandidateSnapshot struct {
 	ID                 uuid.UUID      `gorm:"type:uuid;primaryKey"`
+	UserID             uuid.UUID      `gorm:"type:uuid;not null;index"`
 	CreatedAt          time.Time      `gorm:"index:idx_candidate_snapshots_created_at,sort:desc"`
 	Symbol             string         `gorm:"type:text;not null;index:idx_candidate_snapshots_symbol_created"`
 	Market             string         `gorm:"type:text;not null"`
@@ -23,6 +24,7 @@ type CandidateSnapshot struct {
 }
 
 func (snapshot *CandidateSnapshot) BeforeCreate(_ *gorm.DB) error {
+	ensureDefaultUserID(&snapshot.UserID)
 	if snapshot.ID == uuid.Nil {
 		snapshot.ID = uuid.New()
 	}
@@ -33,6 +35,7 @@ func (snapshot *CandidateSnapshot) BeforeCreate(_ *gorm.DB) error {
 // available when the session began.
 type ResearchCase struct {
 	ID                  uuid.UUID `gorm:"type:uuid;primaryKey"`
+	UserID              uuid.UUID `gorm:"type:uuid;not null;index"`
 	CreatedAt           time.Time `gorm:"index:idx_research_cases_created_at,sort:desc"`
 	UpdatedAt           time.Time
 	CandidateSnapshotID uuid.UUID      `gorm:"type:uuid;not null;index"`
@@ -43,6 +46,7 @@ type ResearchCase struct {
 }
 
 func (research *ResearchCase) BeforeCreate(_ *gorm.DB) error {
+	ensureDefaultUserID(&research.UserID)
 	if research.ID == uuid.Nil {
 		research.ID = uuid.New()
 	}
@@ -52,6 +56,7 @@ func (research *ResearchCase) BeforeCreate(_ *gorm.DB) error {
 // UserThesis is append-only: revisions create a new row linked by ParentID.
 type UserThesis struct {
 	ID                  uuid.UUID  `gorm:"type:uuid;primaryKey"`
+	UserID              uuid.UUID  `gorm:"type:uuid;not null;index"`
 	CreatedAt           time.Time  `gorm:"index:idx_user_theses_created_at,sort:desc"`
 	ResearchCaseID      uuid.UUID  `gorm:"type:uuid;not null;index"`
 	ParentID            *uuid.UUID `gorm:"type:uuid;index"`
@@ -66,6 +71,7 @@ type UserThesis struct {
 }
 
 func (thesis *UserThesis) BeforeCreate(_ *gorm.DB) error {
+	ensureDefaultUserID(&thesis.UserID)
 	if thesis.ID == uuid.Nil {
 		thesis.ID = uuid.New()
 	}
